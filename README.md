@@ -1,23 +1,12 @@
-# (仮称) NTFS Fast Triage
+# tool (working name)
 
-Windows NTFSの `$MFT` と `$UsnJrnl:$J` だけを使い、**Windows標準ベースラインとの差分**と**期間**で、
-調べるべきファイルとファイル活動を洗い出すファストフォレンジックツール（開発初期段階）。
+Fast forensic triage of Windows NTFS using only `$MFT` and `$UsnJrnl:$J`. It subtracts a Windows baseline and focuses on a time window to surface the files and file activity worth investigating, even when event logs were wiped. Early development.
 
-- イベントログが削除されていても解析できる
-- 収集データは数十〜数百MB。解析結果は、ブラウザで開くだけのHTML 1ファイル
-- 判定はSigmaルールの固定レベルだけで行う（計算スコアは使わない）
+- Small collection (tens to hundreds of MB); one self-contained HTML report
+- Detection by Sigma rules with fixed levels; no computed scores
 
-詳細は [docs/product-overview.md](docs/product-overview.md) を参照。
+See [docs/product.md](docs/product.md). Contributing: [AGENTS.md](AGENTS.md).
 
-## 開発
-開発の規約は [AGENTS.md](AGENTS.md) を参照。
-
-```sh
-cargo clippy --workspace --all-targets -- -D warnings
-cargo nextest run --workspace --no-tests=pass
-cargo deny check
-```
-
-## ライセンス
-- 本体: [AGPL-3.0-only](LICENSE)
-- 検知ルール: [Detection Rule License (DRL) 1.1](https://github.com/SigmaHQ/Detection-Rule-License)
+## License
+- Code: [AGPL-3.0-only](LICENSE)
+- Detection rules: [DRL 1.1](https://github.com/SigmaHQ/Detection-Rule-License)

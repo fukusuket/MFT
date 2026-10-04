@@ -1,7 +1,7 @@
-//! NTFSトリアージの各クレートで共有する値型。
+//! Value types shared across the crates. No I/O, no detection logic.
 //!
-//! I/Oも判定ロジックも持たない。予定している型（docs/adr/0002）:
-//! - `NtfsName`: 証拠から取ったファイル名。不正なUTF-16も失わずにUTF-16のまま持つ
-//! - `NormPath`: `$UpCase` で大文字にした比較用の正規化パス
-//! - `Filetime`: UTCの100ナノ秒単位の時刻（`u64`）
-//! - `FileRef`: MFTエントリ番号とシーケンス番号の組
+//! Planned types (docs/adr/0002-foundational-decisions.md):
+//! - `NtfsName`: a file name from evidence, kept as raw UTF-16 so unpaired surrogates survive.
+//! - `NormPath`: a comparison key, normalized and upper-cased with the `$UpCase` table.
+//! - `Filetime`: UTC time in 100 ns units (`u64`).
+//! - `FileRef`: MFT entry number plus sequence number.

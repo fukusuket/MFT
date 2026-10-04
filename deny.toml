@@ -1,4 +1,4 @@
-# cargo-deny の設定。ライセンスはAGPLv3と組み合わせられるものに限る（docs/adr/0001-license.md）。
+# cargo-deny config. Only licenses compatible with AGPL-3.0 are allowed (docs/adr/0001-license.md).
 
 [graph]
 all-features = true

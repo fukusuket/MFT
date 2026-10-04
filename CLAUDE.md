@@ -1,14 +1,9 @@
-# CLAUDE.md
-
 @AGENTS.md
 
-## Claude Code向けの補足
-- 複数のクレートにまたがる変更、データ形式の変更、新しい依存の追加は、プランモードで方針を
-  示してから着手する。
-- 編集した後は、少なくとも対象のクレートで
-  `cargo clippy -p <crate> --all-targets -- -D warnings` と `cargo nextest run -p <crate>` を実行する。
-  完了と報告する前に、ワークスペース全体のチェックを実行する。
-- insta のスナップショットが変わったときは、差分を確認して、意図した変更であることを報告に書く。
-  勝手に承認しない。
-- `testdata/` の外にある証拠ファイルやコーパスは、読むだけにする。移動、変更、削除をしない。
-- Sigmaルールを追加するときは、陽性と陰性のテストケース、ja / en の説明ファイルを同じ変更に含める。
+## Claude Code
+- Path-scoped rules in `.claude/rules/` load automatically; `.rs` files are auto-formatted by a hook.
+- Use plan mode for cross-crate, format or dependency changes. Skip it for one-sentence diffs.
+- During iteration run checks per crate (`cargo clippy -p <crate> --all-targets -- -D warnings`, `cargo nextest run -p <crate>`); run the full set before reporting done.
+- Before calling a phase item done, have a subagent review the diff against `docs/plan.md` and report only correctness or requirement gaps.
+- Skills: `/spike <S1-S4>` runs a Phase 0 spike; `adr` records a decision.
+- When compacting, keep: current plan item, files changed, commands run and their results.

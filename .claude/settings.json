@@ -1,0 +1,32 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cargo fmt *)",
+      "Bash(cargo clippy *)",
+      "Bash(cargo test *)",
+      "Bash(cargo nextest *)",
+      "Bash(cargo deny *)",
+      "Bash(cargo build *)",
+      "Bash(cargo check *)",
+      "Bash(cargo metadata *)",
+      "Bash(git status *)",
+      "Bash(git diff *)",
+      "Bash(git log *)",
+      "Bash(git show *)"
+    ]
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "jq -r '.tool_response.filePath // .tool_input.file_path' | { read -r f; case \"$f\" in *.rs) rustfmt --edition 2024 \"$f\";; esac; } 2>/dev/null || true",
+            "statusMessage": "rustfmt"
+          }
+        ]
+      }
+    ]
+  }
+}

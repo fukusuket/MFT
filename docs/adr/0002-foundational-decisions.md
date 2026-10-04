@@ -1,16 +1,14 @@
-# ADR 0002: 実装の基礎となる設計判断
+# ADR 0002: Foundational decisions
 
-- 状態: 採用
-- 日付: 2026-10-04
-- 詳細: docs/engineering-review.md の R1〜R6、R11、R12
+Status: accepted (2026-10-04)
 
-| # | 判断 | 理由 |
+| # | Decision | Reason |
 |---|---|---|
-| 1 | 証拠のファイル名は `NtfsName`（UTF-16のまま）で持ち、証拠のパスに `std::path::Path` を使わない | 対になっていないサロゲートを失わないため。解析するPCのOSに挙動を依存させないため |
-| 2 | パスの比較キーは、`$UpCase` で大文字にした `NormPath` に統一する | NTFSは大文字と小文字を区別しないため。ベースラインの生成時と解析時で同じ関数を使う |
-| 3 | 出力は明示的なキーで並べ替え、同じ入力からバイト単位で同じ出力を返す | 再現性と説明可能性が製品の根幹のため。CIで2回解析して比較する |
-| 4 | ファイル名を攻撃者の入力として扱う（HTML埋め込みはBase64、CSVは数式を無効化、ターミナルは制御文字をエスケープ） | XSS、CSVインジェクション、表示の改ざんを防ぐため |
-| 5 | クレートを10個に分け、依存の向きを固定する。`sigma` はNTFSに依存しない | 変更の影響範囲を限定するため。Sigmaエンジンを再利用できるようにするため |
-| 6 | `unsafe_code = "forbid"` を既定とし、`collector` のFFIモジュールだけを例外にする | パーサーの安全性を保証しつつ、WindowsのRawボリュームにアクセスするため |
-| 7 | 時刻は内部ではUTCの `Filetime(u64)` で持ち、タイムゾーンは表示の層でだけ適用する | 精度を落とさないため。層ごとに変換がばらばらにならないようにするため |
-| 8 | 中止するエラー（`Error`）と、レコード単位の診断（`Diagnostic`）を分ける | 破損したレコードがあっても、解析全体を止めないため |
+| 1 | Evidence file names are `NtfsName` (raw UTF-16). Never use `std::path::Path` for evidence paths | Unpaired surrogates must survive; `Path` follows the analysis host's OS rules |
+| 2 | Compare paths by `NormPath`: normalized and upper-cased with `$UpCase`; same function for baseline build and analysis | NTFS is case-insensitive; `fst` lookups are exact |
+| 3 | Sort all output by explicit keys; same input → byte-identical output, checked in CI | Reproducibility is a core product property; `rayon` and `HashMap` reorder results |
+| 4 | Treat file names as attacker input: Base64-embed report data, neutralize CSV formulas, escape control characters in terminal output | XSS, CSV injection, terminal spoofing |
+| 5 | Split into small crates with a fixed dependency direction; `sigma` does not depend on NTFS crates | Contain change; keep the Sigma engine replaceable |
+| 6 | `unsafe_code = "forbid"` workspace-wide; only a collector FFI module may be exempt (may become unnecessary, see ADR 0005) | Parsers handle untrusted input |
+| 7 | Time is UTC `Filetime(u64)` internally; time zones only in report/cli | No precision loss; one conversion point |
+| 8 | Separate fatal `Error` from per-record `Diagnostic`; parsers skip bad records and report them | Corruption must not stop the analysis |

@@ -2,12 +2,6 @@
 fail-fast = false
 slow-timeout = { period = "30s", terminate-after = 4 }
 
-# 大きなコーパスを使う差分テスト・精度評価（nightly で実行）。
-# 事前に `cargo xtask corpus fetch` でデータを取得する。
-[profile.corpus]
-default-filter = "test(/^corpus::/)"
-slow-timeout = { period = "300s", terminate-after = 6 }
-
 [profile.ci]
 fail-fast = false
 retries = 0

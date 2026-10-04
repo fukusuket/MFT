@@ -5,7 +5,7 @@
 /viewer/node_modules/
 /viewer/dist/
 
-# 証拠ファイル・コーパス・解析結果はコミットしない
+# Never commit evidence, corpora, or analysis output
 /corpus/
 *.zip
 *.E01

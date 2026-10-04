@@ -1,6 +1,7 @@
 [workspace]
 resolver = "3"
 members = ["crates/*"]
+exclude = ["spikes"]  # Phase 0 spikes are not part of the workspace
 
 [workspace.package]
 version = "0.0.0"
@@ -15,7 +16,7 @@ missing_debug_implementations = "warn"
 unreachable_pub = "warn"
 
 [workspace.lints.clippy]
-# 信頼できない入力（証拠ファイル）でpanicしないための規約（AGENTS.md「unsafeとpanic」）
+# Never panic on untrusted input (evidence files). See AGENTS.md.
 unwrap_used = "deny"
 expect_used = "deny"
 panic = "deny"
@@ -30,7 +31,7 @@ print_stdout = "warn"
 print_stderr = "warn"
 
 [profile.release]
-# パーサーの算術オーバーフローを見逃さない
+# Catch arithmetic overflow in parsers.
 overflow-checks = true
 lto = "thin"
 codegen-units = 1
