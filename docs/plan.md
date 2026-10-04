@@ -19,7 +19,7 @@ Run spikes with the `/spike` skill. Spike code lives in `spikes/<name>/` and is 
   - Done when: `cargo vet` passes in CI and is listed in AGENTS.md verify commands.
   - Out of scope: auditing spike-only crates.
 
-- [ ] **S1 `rsigma-eval`** → ADR 0003
+- [x] **S1 `rsigma-eval`** → ADR 0003
   - Done when: `Event` implemented directly on an NTFS event type (no JSON); ~120 SigmaHQ `file_*` rules × 1M events ≤ 10 s; `temporal_ordered` works via `process_event_at` with USN times; identical output on two runs after sorting; `explain` usable as finding evidence; routing by `service: baseline_outside`.
   - Out of scope: real NTFS parsing (use synthetic events), report output.
   - Fallback: extract Hayabusa's engine.

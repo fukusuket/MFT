@@ -49,7 +49,7 @@ Only `ntfs-types` exists so far.
 | `usn-parse` | `$J` → `UsnEvent` (V2–V4) | ntfs-types | ported from `ntfs-core` |
 | `resolve` | MFT↔USN join, Rewind | mft-parse, usn-parse | ported from `ntfs-core` |
 | `baseline` | Normalize, `fst` lookup, manifest | ntfs-types | `fst`, `zstd` |
-| `sigma` | Thin adapter over the Sigma engine; NTFS-agnostic | — | `rsigma-eval` (pending ADR 0003) |
+| `sigma` | Thin adapter over the Sigma engine; NTFS-agnostic | — | `rsigma-eval` `=0.23.0`, no default features (ADR 0003) |
 | `detect` | NTFS events → Sigma events, logsource mapping | sigma, resolve, baseline | — |
 | `analyze` | Pipeline, facts, findings, sorting | detect, baseline, resolve | `rayon`, `indexmap` |
 | `report` | HTML, JSONL, CSV | analyze | Svelte viewer, `csv` |
