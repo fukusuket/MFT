@@ -10,4 +10,8 @@ Add an entry here whenever code from another project is copied or adapted:
   - <project name> (<URL>), <license>, Copyright (c) <holders>
     Used in: <path>
 
-(none yet)
+  - ntfs-3g (https://github.com/tuxera/ntfs-3g, libntfs-3g/unistr.c,
+    ntfs_upcase_table_build(), commit 7f0f841fc52c), GPL-2.0-or-later,
+    Copyright (c) 2000-2004 Anton Altaparmakov, 2002-2009 Szabolcs Szakacsits,
+    2008-2015 Jean-Pierre Andre, 2008 Bernhard Kaindl
+    Used in: crates/ntfs-types/src/upcase.rs (default $UpCase table, ADR 0009)
