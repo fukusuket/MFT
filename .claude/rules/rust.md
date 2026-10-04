@@ -18,7 +18,6 @@ paths:
 
 # Tests
 
-- Write a failing test before fixing a bug.
 - Build NTFS records with a test builder; keep `testdata/` files ≤ 1 MB and free of real evidence.
 - Parsers: valid, boundary, corrupt (fixup mismatch, truncation, bad lengths), 4Kn; proptest that arbitrary bytes never panic; a fuzz target per new parser entry point.
 - Path resolution: deleted parents, reused entries, renames; never invent a path.

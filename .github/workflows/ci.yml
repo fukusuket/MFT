@@ -37,6 +37,19 @@ jobs:
       - run: cargo nextest run --workspace --profile ci --no-tests=pass
       - run: cargo test --doc --workspace
 
+  coverage:
+    runs-on: ubuntu-latest
+    # Non-blocking until ntfs-types has code (docs/plan.md, Phase 0).
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup show
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-llvm-cov
+      - run: cargo llvm-cov --workspace --fail-under-lines 90
+
   deny:
     runs-on: ubuntu-latest
     steps:

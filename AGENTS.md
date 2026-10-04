@@ -8,6 +8,15 @@ Rust CLI that triages Windows NTFS (`$MFT`, `$UsnJrnl:$J`): subtract a Windows b
 - **Same input → byte-identical output.**
 - **No network access** in analysis or reporting.
 - Inputs are `$MFT`, `$J`, `$Boot`, `$Secure:$SDS` only.
+- **TDD:** Red → Green → Refactor for every behavior change; the refactor step is never skipped (`.claude/rules/tdd.md`).
+
+## Scope discipline
+- Do exactly the current plan item. Anything else goes in your report as a suggestion, not into code.
+- No abstraction (trait, generic, config, feature flag) until a second real use exists.
+- No new `pub` items, crates, CLI flags or dependencies unless the plan item names them.
+- Don't touch files unrelated to the item (no drive-by renames or reformatting).
+- Validate only at trust boundaries (evidence bytes, CLI args); don't re-check what types guarantee.
+- Prefer deleting code to adding it. A smaller correct diff wins.
 
 ## Verify before you say done
 ```sh
@@ -15,8 +24,9 @@ cargo fmt --all
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo nextest run --workspace --no-tests=pass
 cargo deny check
+cargo llvm-cov --workspace --fail-under-lines 90   # untested lines = code nobody asked for
 ```
-Install once: `cargo install --locked cargo-nextest cargo-deny`. Report the commands you ran and their result.
+Install once: `cargo install --locked cargo-nextest cargo-deny cargo-llvm-cov`. Report the commands you ran and their result.
 
 ## Where to look
 | Need | Read |
@@ -26,6 +36,7 @@ Install once: `cargo install --locked cargo-nextest cargo-deny`. Report the comm
 | Current phase, next tasks, done criteria | `docs/plan.md` |
 | Why a decision was made | `docs/adr/` |
 | Library choices | `docs/research/oss-reuse.md` |
+| TDD cycle | `.claude/rules/tdd.md` |
 | Rust coding and test rules | `.claude/rules/rust.md` |
 | Dependency and license rules | `.claude/rules/dependencies.md` |
 | Doc conventions | `.claude/rules/docs.md` |

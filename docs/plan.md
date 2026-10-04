@@ -1,6 +1,6 @@
 # Plan
 
-Current phase: **0**. Tick items as they land (same change). Scope: [product.md](product.md). Design: [architecture.md](architecture.md).
+Current phase: **0**. Tick items as they land (same change). Every item states **Done when** (checkable) and **Out of scope**; agents do nothing outside it. Scope: [product.md](product.md). Design: [architecture.md](architecture.md).
 
 ## Phases
 
@@ -16,23 +16,32 @@ Current phase: **0**. Tick items as they land (same change). Scope: [product.md]
 Run spikes with the `/spike` skill. Spike code lives in `spikes/<name>/` and is never moved into `crates/`.
 
 - [ ] **S1 `rsigma-eval`** → ADR 0003
-  - Verify: `Event` implemented directly on an NTFS event type (no JSON); ~120 SigmaHQ `file_*` rules × 1M events ≤ 10 s; `temporal_ordered` works via `process_event_at` with USN times; identical output on two runs after sorting; `explain` usable as finding evidence; routing by `service: baseline_outside`.
+  - Done when: `Event` implemented directly on an NTFS event type (no JSON); ~120 SigmaHQ `file_*` rules × 1M events ≤ 10 s; `temporal_ordered` works via `process_event_at` with USN times; identical output on two runs after sorting; `explain` usable as finding evidence; routing by `service: baseline_outside`.
+  - Out of scope: real NTFS parsing (use synthetic events), report output.
   - Fallback: extract Hayabusa's engine.
 - [ ] **S2 `mft` crate (`master`)** → ADR 0004
-  - Verify: unpaired surrogates survive via `Utf16LeStr`; 4Kn records parse; 30 min `cargo fuzz` without panic (issue #129); deleted entries, ADS, resident data readable. Ask the maintainer about a release.
+  - Done when: unpaired surrogates survive via `Utf16LeStr`; 4Kn records parse; 30 min `cargo fuzz` without panic (issue #129); deleted entries, ADS, resident data readable. Ask the maintainer about a release.
+  - Out of scope: path building, USN, wrapping it as `mft-parse`.
   - Fallback: pin git commit → fork → port from `ntfs-core`.
 - [ ] **S3 `ntfs-reader`** (Windows, admin) → ADR 0005
-  - Verify: raw `$MFT`; `$UsnJrnl:$J` without the sparse region; `$Secure:$SDS`, `$Boot`; no `unsafe` in our code; 4Kn (record as a known limit if untested).
+  - Done when: raw `$MFT`; `$UsnJrnl:$J` without the sparse region; `$Secure:$SDS`, `$Boot`; no `unsafe` in our code; 4Kn (record as a known limit if untested).
+  - Out of scope: zip packaging, `meta.json`, CLI, code signing.
   - Fallback: `std::fs::File` on `\\.\C:` + aligned reader + `ntfs-core` `NtfsFs`.
 - [ ] **S4 VanillaWindowsReference → `fst`** → `docs/research/baseline-poc.md`
-  - Verify: outside-baseline < 10 % on a real Win11 24H2 `$MFT`; list what VWR misses (hidden, `$` files, ADS) against a clean VM.
+  - Done when: outside-baseline < 10 % on a real Win11 24H2 `$MFT`; list what VWR misses (hidden, `$` files, ADS) against a clean VM.
+  - Out of scope: other Windows builds, baseline CI, distribution format.
   - Fallback: more normalization rules, or bring the baseline CI forward.
 - [ ] **ADR 0006**: GPL-3.0 data (LOLBAS, HijackLibs, winbindex) is AGPL-side data matched at runtime, never compiled into DRL rules.
-- [ ] **`ntfs-types`** (independent of spikes). Done when `cargo nextest run -p ntfs-types` passes with:
-  - `NtfsName` (`Box<[u16]>`, escaped display): proptest round-trip of any `u16` sequence
-  - `NormPath` (built-in default `$UpCase`): case folding incl. non-ASCII
-  - `Filetime` (`u64`, UTC): 0, `u64::MAX`, pre-1601
-  - `FileRef` (48-bit entry + 16-bit sequence): `u64` round-trip
+  - Done when: ADR accepted and consistent with `.claude/rules/dependencies.md`.
+  - Out of scope: importing the data.
+- [ ] **`ntfs-types`** (independent of spikes; one TDD cycle per bullet)
+  - [ ] `FileRef`: 48-bit entry + 16-bit sequence; `u64` round-trip
+  - [ ] `Filetime`: `u64` newtype, UTC; ordering; tests for 0, `u64::MAX`, pre-1601
+  - [ ] `NtfsName`: `Box<[u16]>`; escaped display; proptest round-trip of any `u16` sequence
+  - [ ] `NormPath`: built-in default `$UpCase`; case folding incl. non-ASCII
+  - [ ] Make the CI `coverage` job blocking (remove `continue-on-error`)
+  - Done when: `cargo nextest run -p ntfs-types` and `cargo llvm-cov --workspace --fail-under-lines 90` pass.
+  - Out of scope: serde, string parsing, time-zone conversion, path normalization beyond `$UpCase` (belongs to `baseline`).
 
 Inputs needed: a Win11 24H2 `$MFT` (S4); a Windows host with admin rights (S3); a 4Kn disk/image or synthesized records (S2, S3).
 
