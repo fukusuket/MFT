@@ -1,0 +1,16 @@
+# gitleaks config (ADR 0007 P1/P2). Default rules plus project-specific ones.
+title = "tool"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "personal-home-path"
+description = "Absolute path into a personal home directory (leaks a local user name)"
+regex = '''(?:/Users/|/home/|[A-Za-z]:\\{1,2}Users\\{1,2})([A-Za-z0-9][A-Za-z0-9._-]*)'''
+secretGroup = 1
+keywords = ["/users/", "/home/", "users\\"]
+
+[[rules.allowlists]]
+description = "Generic or built-in account names used in examples"
+regexes = ['''(?i)^(public|default|shared|all|administrator|user|username|runner|example|alice|bob|taro|networkservice|localservice)$''']

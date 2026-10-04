@@ -13,7 +13,11 @@ Current phase: **0**. Tick items as they land (same change). Every item states *
 
 ## Phase 0
 
-Run spikes with the `/spike` skill. Spike code lives in `spikes/<name>/` and is never moved into `crates/`.
+Run spikes with the `/spike` skill. Spike code lives in `spikes/<name>/` and is never moved into `crates/`. Spike dependencies are H2 decisions too ([ADR 0007](adr/0007-security-and-supply-chain.md) P5).
+
+- [ ] **`cargo-vet` init** with the first dependency added to the workspace (ADR 0007 P5)
+  - Done when: `cargo vet` passes in CI and is listed in AGENTS.md verify commands.
+  - Out of scope: auditing spike-only crates.
 
 - [ ] **S1 `rsigma-eval`** → ADR 0003
   - Done when: `Event` implemented directly on an NTFS event type (no JSON); ~120 SigmaHQ `file_*` rules × 1M events ≤ 10 s; `temporal_ordered` works via `process_event_at` with USN times; identical output on two runs after sorting; `explain` usable as finding evidence; routing by `service: baseline_outside`.

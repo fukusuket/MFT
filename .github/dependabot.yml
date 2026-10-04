@@ -1,0 +1,15 @@
+version: 2
+updates:
+  # Keep SHA-pinned actions current (ADR 0007 P8). A human reviews every update.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7

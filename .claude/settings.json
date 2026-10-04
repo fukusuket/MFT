@@ -21,13 +21,58 @@
       "Bash(cargo yank *)",
       "Bash(cargo owner *)",
       "Bash(cargo login *)",
-      "Bash(npm publish *)"
+      "Bash(npm publish *)",
+      "Read(~/.ssh/**)",
+      "Read(~/.aws/**)",
+      "Read(~/.gnupg/**)",
+      "Read(~/.config/gh/**)",
+      "Read(~/.cargo/credentials)",
+      "Read(~/.cargo/credentials.toml)",
+      "Read(~/.netrc)",
+      "Read(~/.docker/config.json)",
+      "Read(**/.env)",
+      "Read(**/.env.*)"
     ]
+  },
+  "sandbox": {
+    "enabled": true,
+    "autoAllowBashIfSandboxed": false,
+    "network": {
+      "allowedDomains": [
+        "crates.io",
+        "index.crates.io",
+        "static.crates.io",
+        "static.rust-lang.org",
+        "github.com",
+        "api.github.com",
+        "codeload.github.com",
+        "raw.githubusercontent.com",
+        "objects.githubusercontent.com",
+        "release-assets.githubusercontent.com"
+      ]
+    },
+    "filesystem": {
+      "allowWrite": [
+        "~/.cargo/registry",
+        "~/.cargo/git",
+        "~/.rustup"
+      ],
+      "denyRead": [
+        "~/.ssh",
+        "~/.aws",
+        "~/.gnupg",
+        "~/.config/gh",
+        "~/.cargo/credentials",
+        "~/.cargo/credentials.toml",
+        "~/.netrc",
+        "~/.docker/config.json"
+      ]
+    }
   },
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "Bash|Artifact|mcp__.*",
+        "matcher": "Bash|Edit|Write|NotebookEdit|Artifact|mcp__.*",
         "hooks": [
           {
             "type": "command",

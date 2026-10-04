@@ -25,3 +25,13 @@ timeline*.csv
 /fuzz/artifacts/
 
 .DS_Store
+
+# Local secrets and per-user agent config (ADR 0007 P3)
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
+CLAUDE.local.md
+.claude/settings.local.json

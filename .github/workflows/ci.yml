@@ -5,8 +5,8 @@ on:
     branches: [main]
   pull_request:
 
-permissions:
-  contents: read
+# Least privilege (ADR 0007 P8): jobs get only what they need.
+permissions: {}
 
 env:
   CARGO_TERM_COLOR: always
@@ -15,8 +15,12 @@ env:
 jobs:
   fmt:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - run: rustup show
       - run: cargo fmt --all -- --check
 
@@ -26,32 +30,89 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - run: rustup show
-      - uses: Swatinem/rust-cache@v2
-      - uses: taiki-e/install-action@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: taiki-e/install-action@861a07ce7084f55488e375df125cdc99bba60eb7 # v2.87.23
         with:
           tool: cargo-nextest
-      - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
-      - run: cargo nextest run --workspace --profile ci --no-tests=pass
-      - run: cargo test --doc --workspace
+      - run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+      - run: cargo nextest run --workspace --profile ci --no-tests=pass --locked
+      - run: cargo test --doc --workspace --locked
 
   coverage:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     # Non-blocking until ntfs-types has code (docs/plan.md, Phase 0).
     continue-on-error: true
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - run: rustup show
-      - uses: Swatinem/rust-cache@v2
-      - uses: taiki-e/install-action@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: taiki-e/install-action@861a07ce7084f55488e375df125cdc99bba60eb7 # v2.87.23
         with:
           tool: cargo-llvm-cov
-      - run: cargo llvm-cov --workspace --fail-under-lines 90
+      - run: cargo llvm-cov --workspace --locked --fail-under-lines 90
 
   deny:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v4
-      - uses: EmbarkStudios/cargo-deny-action@v2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+
+  # D1: secrets and personal paths over the full history (backstop for local hooks).
+  gitleaks:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      GITLEAKS_VERSION: 8.30.1
+      GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Install gitleaks (pinned, checksum-verified)
+        run: |
+          f="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          curl -sSfL -o "$f" "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/$f"
+          echo "${GITLEAKS_SHA256}  $f" | sha256sum -c -
+          tar -xzf "$f" gitleaks
+      - run: ./gitleaks git --no-banner --redact --config .gitleaks.toml -v .
+
+  # P8: lint workflows for injection, unpinned actions, excessive permissions.
+  zizmor:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: zizmorcore/zizmor-action@cc914d7f3750a2d13d75c7f184a1060aa0e9d482 # v0.6.4
+        with:
+          advanced-security: false
+
+  # Regression cases for the agent guard hook.
+  agent-guard:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: bash .claude/hooks/test-guard.sh
