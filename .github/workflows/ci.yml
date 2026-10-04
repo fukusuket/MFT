@@ -49,8 +49,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-    # Non-blocking until ntfs-types has code (docs/plan.md, Phase 0).
-    continue-on-error: true
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
