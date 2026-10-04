@@ -35,7 +35,7 @@ Run spikes with the `/spike` skill. Spike code lives in `spikes/<name>/` and is 
   - Done when: outside-baseline < 10 % on a real Win11 24H2 `$MFT`; list what VWR misses (hidden, `$` files, ADS) against a clean VM; the VM's `$UpCase` has MD5 `7ff498a44e45e77374cc7c962b1b92f2` (ADR 0009; if not, supersede it).
   - Out of scope: other Windows builds, baseline CI, distribution format.
   - Fallback: more normalization rules, or bring the baseline CI forward.
-- [ ] **ADR 0006**: GPL-3.0 data (LOLBAS, HijackLibs, winbindex) is AGPL-side data matched at runtime, never compiled into DRL rules.
+- [x] **ADR 0006**: GPL-3.0 data (LOLBAS, HijackLibs, winbindex) is AGPL-side data matched at runtime, never compiled into DRL rules.
   - Done when: ADR accepted and consistent with `.claude/rules/dependencies.md`.
   - Out of scope: importing the data.
 - [ ] **`ntfs-types`** (independent of spikes; one TDD cycle per bullet)
