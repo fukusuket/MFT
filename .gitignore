@@ -35,3 +35,6 @@ timeline*.csv
 *.pfx
 CLAUDE.local.md
 .claude/settings.local.json
+
+# IDE
+.idea/
