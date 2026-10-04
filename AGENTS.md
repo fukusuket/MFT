@@ -7,6 +7,7 @@ Rust CLI that triages Windows NTFS (`$MFT`, `$UsnJrnl:$J`): subtract a Windows b
 - **No detection logic in Rust.** Rules decide; code exposes facts.
 - **Same input → byte-identical output.**
 - **No network access** in analysis or reporting.
+- **No internet writes by agents.** Pushing, publishing, PRs/issues/comments, uploads, non-GET requests, publishing artifacts and sending messages are human-only (enforced by `.claude/hooks/guard.sh`). Reading (docs, crates.io, GitHub GET) is fine.
 - Inputs are `$MFT`, `$J`, `$Boot`, `$Secure:$SDS` only.
 - **TDD:** Red → Green → Refactor for every behavior change; the refactor step is never skipped (`.claude/rules/tdd.md`).
 
@@ -43,7 +44,15 @@ Install once: `cargo install --locked cargo-nextest cargo-deny cargo-llvm-cov`. 
 
 Other agents: read the matching `.claude/rules/*.md` before editing files it covers (see its `paths:`).
 
+## Human checkpoints
+Work autonomously inside a plan item. Stop for a human only at:
+- **H1 Start of an item**: present the approach and the list of behaviors/tests to write; wait for approval.
+- **H2 Decisions**: write ADRs as `Status: proposed`; only a human sets `accepted`.
+- **H3 End of an item**: hand over the branch with per-cycle reports, verify output and out-of-scope suggestions. A human reviews, merges to `main` and pushes. Never commit or merge on `main` (blocked by hook).
+- **H4 Phase gates**: only a human ticks a gate in `docs/plan.md`.
+- **H5 Exceptions**: stop and ask before changing an existing test's expectation or touching anything out of scope.
+
 ## Workflow
-- Explore and plan before cross-crate, format or dependency changes; record decisions as ADRs (`docs/adr/`).
+- Work on a branch per plan item (`<type>/<item>`, e.g. `feat/ntfs-types-fileref`).
 - One purpose per change. Conventional Commits (`feat(resolve): ...`).
 - Evidence files and corpora outside `testdata/` are read-only and never committed.

@@ -5,10 +5,10 @@ paths:
 
 # TDD cycle (every behavior change)
 
-One cycle = one behavior. Split a task until each step has exactly one failing test.
+One cycle = one behavior. Split a task until each step has exactly one failing test. The list of behaviors is approved by a human before the first cycle (H1).
 
 1. **Red**: write one test for the next behavior. Run it and show it fails *for the expected reason* (an assertion, not an unrelated compile error). No production code yet.
-2. **Green**: write the *minimum* code that passes. No code that no failing test demands. Run the crate's tests; all must pass. Never edit or weaken an existing test to get green.
+2. **Green**: write the *minimum* code that passes. No code that no failing test demands. Run the crate's tests; all must pass. Never edit or weaken an existing test to get green; if an expectation really must change, stop and ask (H5).
 3. **Refactor**: mandatory, even when the answer is "nothing to change". Tests stay green; behavior does not change. Check:
    - code this cycle added that no test exercises → delete it
    - duplication, unclear names, functions doing more than one thing

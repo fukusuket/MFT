@@ -1,10 +1,10 @@
 # Plan
 
-Current phase: **0**. Tick items as they land (same change). Every item states **Done when** (checkable) and **Out of scope**; agents do nothing outside it. Scope: [product.md](product.md). Design: [architecture.md](architecture.md).
+Current phase: **0**. Tick items as they land (same change). Every item states **Done when** (checkable) and **Out of scope**; agents do nothing outside it. Flow per item: H1 tests approved → TDD cycles on a branch → H3 human review and merge (AGENTS.md). Scope: [product.md](product.md). Design: [architecture.md](architecture.md).
 
 ## Phases
 
-| Phase | Scope | Gate (done when) | Estimate |
+| Phase | Scope | Gate (ticked by a human, H4) | Estimate |
 |---|---|---|---|
 | **0** | Spikes S1–S4, `ntfs-types` | ADR 0003–0006 accepted; AGENTS.md, `deny.toml`, `NOTICE` updated | 1–1.5 wk |
 | 1 (v0.1) | Walking skeleton: `$MFT` → baseline (VanillaWindowsReference Win11 24H2) → a few Sigma rules → minimal HTML + CSV | Outside-baseline < 10 % on a real host; 1 GB `$MFT` in ≤ 1 min, ≤ 2 GB RAM | 2–3 wk |

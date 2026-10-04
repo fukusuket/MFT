@@ -13,9 +13,29 @@
       "Bash(git diff *)",
       "Bash(git log *)",
       "Bash(git show *)"
+    ],
+    "deny": [
+      "Bash(git push)",
+      "Bash(git push *)",
+      "Bash(cargo publish *)",
+      "Bash(cargo yank *)",
+      "Bash(cargo owner *)",
+      "Bash(cargo login *)",
+      "Bash(npm publish *)"
     ]
   },
   "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|Artifact|mcp__.*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/guard.sh"
+          }
+        ]
+      }
+    ],
     "PostToolUse": [
       {
         "matcher": "Write|Edit",
