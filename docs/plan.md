@@ -40,7 +40,7 @@ Run spikes with the `/spike` skill. Spike code lives in `spikes/<name>/` and is 
   - Out of scope: importing the data.
 - [ ] **`ntfs-types`** (independent of spikes; one TDD cycle per bullet)
   - [x] `FileRef`: 48-bit entry + 16-bit sequence; `u64` round-trip
-  - [ ] `Filetime`: `u64` newtype, UTC; ordering; tests for 0, `u64::MAX`, pre-1601
+  - [x] `Filetime`: `u64` newtype (UTC, 100 ns since 1601); ordering; tests for 0, `u64::MAX`. Unix-time conversion deferred until a consumer needs it
   - [ ] `NtfsName`: `Box<[u16]>`; escaped display; proptest round-trip of any `u16` sequence
   - [ ] `NormPath`: built-in default `$UpCase`; case folding incl. non-ASCII
   - [ ] Make the CI `coverage` job blocking (remove `continue-on-error`)
