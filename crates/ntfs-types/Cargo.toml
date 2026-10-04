@@ -9,5 +9,8 @@ publish.workspace = true
 
 [dependencies]
 
+[dev-dependencies]
+proptest = { version = "=1.11.0", default-features = false, features = ["std"] } # ADR 0008
+
 [lints]
 workspace = true

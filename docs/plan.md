@@ -15,7 +15,7 @@ Current phase: **0**. Tick items as they land (same change). Every item states *
 
 Run spikes with the `/spike` skill. Spike code lives in `spikes/<name>/` and is never moved into `crates/`. Spike dependencies are H2 decisions too ([ADR 0007](adr/0007-security-and-supply-chain.md) P5).
 
-- [ ] **`cargo-vet` init** with the first dependency added to the workspace (ADR 0007 P5)
+- [x] **`cargo-vet` init** with the first dependency added to the workspace (ADR 0007 P5, ADR 0008)
   - Done when: `cargo vet` passes in CI and is listed in AGENTS.md verify commands.
   - Out of scope: auditing spike-only crates.
 

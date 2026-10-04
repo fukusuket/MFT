@@ -26,9 +26,10 @@ cargo fmt --all
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo nextest run --workspace --no-tests=pass
 cargo deny check
+cargo vet --locked                                  # every dependency audited or exempted (ADR 0008)
 cargo llvm-cov --workspace --fail-under-lines 90   # untested lines = code nobody asked for
 ```
-Setup once: `cargo install --locked cargo-nextest cargo-deny cargo-llvm-cov`, then `git config core.hooksPath .githooks` (secret/evidence scan on commit; see `docs/security.md`). Report the commands you ran and their result.
+Setup once: `cargo install --locked cargo-nextest cargo-deny cargo-llvm-cov cargo-vet`, then `git config core.hooksPath .githooks` (secret/evidence scan on commit; see `docs/security.md`). Report the commands you ran and their result.
 
 ## Where to look
 | Need | Read |
