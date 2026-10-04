@@ -6,7 +6,7 @@ Surveyed 2026-10-04 (GitHub/crates.io metadata, READMEs, source). Criteria: AGPL
 
 | Area | Choice | Why / caveat |
 |---|---|---|
-| `$MFT` parsing | `mft` crate (MIT/Apache-2.0) | Most mature. Lossless `Utf16LeStr` names are on `master` (PR #147) but not in 0.7.0. Fixup bounds-check panic issue #129 still open |
+| `$MFT` parsing | `mft` crate (MIT/Apache-2.0) at commit `18b6c05`; decided in ADR 0004 | Most mature. Lossless `Utf16LeStr` names are on `master` (PR #147) but not in 0.7.0. Fixup bounds-check panic issue #129 still open |
 | `$J` parsing, Rewind | Own implementation, ported from `ntfs-core` (Apache-2.0) | `ntfs-core` has everything (MFT, USN V2–V4, Rewind, carving) but stores names via `from_utf16_lossy`, has 1 star and a single maintainer. Use it as port source and test oracle; credit in `NOTICE` |
 | Sigma engine | `rsigma-eval` (MIT), behind our own adapter; decided in ADR 0003 (Hayabusa's engine as fallback) | All 8 correlation types, `Event` trait, explicit timestamps (`process_event_at`), `explain` traces. 0.x with frequent minor bumps; uses `HashMap`, so we sort output |
 | Collector | `ntfs-reader` (MIT/Apache-2.0) | Reads the raw volume and named streams on Windows; its `unsafe` stays inside the dependency. Sparse `$J` handling unverified |

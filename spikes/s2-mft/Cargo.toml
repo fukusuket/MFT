@@ -1,0 +1,17 @@
+[package]
+name = "s2-mft"
+version = "0.0.0"
+edition = "2024"
+publish = false
+description = "Phase 0 spike S2: mft crate (master) on synthetic FILE records (throwaway)"
+
+# Standalone: excluded from the main workspace (Cargo.toml `exclude = ["spikes"]`).
+[workspace]
+
+[dependencies]
+# Approved for this spike (H2, 2026-10-04): pinned master commit, CLI feature off.
+mft = { git = "https://github.com/omerbenamram/mft", rev = "18b6c05dcff93e9f5ea6a7c4ec743a88a95dddb4", default-features = false }
+
+[dev-dependencies]
+proptest = { version = "=1.11.0", default-features = false, features = ["std"] } # ADR 0008
+serde_json = "1" # already a dependency of mft

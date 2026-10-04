@@ -45,7 +45,7 @@ Only `ntfs-types` exists so far.
 | Crate | Role | Depends on | Built on |
 |---|---|---|---|
 | `ntfs-types` | `NtfsName`, `NormPath`, `Filetime`, `FileRef`. No I/O, no logic | — | — |
-| `mft-parse` | `$MFT` → `Entry` + `Diagnostic` | ntfs-types | `mft` crate |
+| `mft-parse` | `$MFT` → `Entry` + `Diagnostic` | ntfs-types | `mft` @ `18b6c05`, no default features (ADR 0004) |
 | `usn-parse` | `$J` → `UsnEvent` (V2–V4) | ntfs-types | ported from `ntfs-core` |
 | `resolve` | MFT↔USN join, Rewind | mft-parse, usn-parse | ported from `ntfs-core` |
 | `baseline` | Normalize, `fst` lookup, manifest | ntfs-types | `fst`, `zstd` |

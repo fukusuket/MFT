@@ -23,7 +23,7 @@ Run spikes with the `/spike` skill. Spike code lives in `spikes/<name>/` and is 
   - Done when: `Event` implemented directly on an NTFS event type (no JSON); ~120 SigmaHQ `file_*` rules × 1M events ≤ 10 s; `temporal_ordered` works via `process_event_at` with USN times; identical output on two runs after sorting; `explain` usable as finding evidence; routing by `service: baseline_outside`.
   - Out of scope: real NTFS parsing (use synthetic events), report output.
   - Fallback: extract Hayabusa's engine.
-- [ ] **S2 `mft` crate (`master`)** → ADR 0004
+- [x] **S2 `mft` crate (`master`)** → ADR 0004
   - Done when: unpaired surrogates survive via `Utf16LeStr`; 4Kn records parse; 30 min `cargo fuzz` without panic (issue #129); deleted entries, ADS, resident data readable. Ask the maintainer about a release.
   - Out of scope: path building, USN, wrapping it as `mft-parse`.
   - Fallback: pin git commit → fork → port from `ntfs-core`.
