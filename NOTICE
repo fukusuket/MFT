@@ -1,0 +1,13 @@
+This project is licensed under the GNU Affero General Public License v3.0 only
+(AGPL-3.0-only). See LICENSE for the full text.
+
+Detection rules distributed with or for this project are licensed under the
+Detection Rule License (DRL) 1.1: https://github.com/SigmaHQ/Detection-Rule-License
+
+Third-party code incorporated into this project
+-----------------------------------------------
+Add an entry here whenever code from another project is copied or adapted:
+  - <project name> (<URL>), <license>, Copyright (c) <holders>
+    Used in: <path>
+
+(none yet)

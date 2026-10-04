@@ -1,0 +1,27 @@
+/target/
+**/*.rs.bk
+
+# viewer
+/viewer/node_modules/
+/viewer/dist/
+
+# 証拠ファイル・コーパス・解析結果はコミットしない
+/corpus/
+*.zip
+*.E01
+*.dd
+*.raw
+*.vhd
+*.vhdx
+$MFT
+$J
+report*.html
+findings*.jsonl
+timeline*.csv
+
+# fuzz
+/fuzz/target/
+/fuzz/corpus/
+/fuzz/artifacts/
+
+.DS_Store

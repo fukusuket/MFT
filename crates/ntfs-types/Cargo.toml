@@ -1,0 +1,13 @@
+[package]
+name = "ntfs-types"
+description = "Value types shared across the NTFS triage crates (no I/O, no logic)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+
+[lints]
+workspace = true
