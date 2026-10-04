@@ -41,7 +41,7 @@ Run spikes with the `/spike` skill. Spike code lives in `spikes/<name>/` and is 
 - [ ] **`ntfs-types`** (independent of spikes; one TDD cycle per bullet)
   - [x] `FileRef`: 48-bit entry + 16-bit sequence; `u64` round-trip
   - [x] `Filetime`: `u64` newtype (UTC, 100 ns since 1601); ordering; tests for 0, `u64::MAX`. Unix-time conversion deferred until a consumer needs it
-  - [ ] `NtfsName`: `Box<[u16]>`; escaped display; proptest round-trip of any `u16` sequence
+  - [x] `NtfsName`: `Box<[u16]>`; escaped display; proptest round-trip of any `u16` sequence
   - [ ] `NormPath`: built-in default `$UpCase`; case folding incl. non-ASCII
   - [ ] Make the CI `coverage` job blocking (remove `continue-on-error`)
   - Done when: `cargo nextest run -p ntfs-types` and `cargo llvm-cov --workspace --fail-under-lines 90` pass.
