@@ -28,13 +28,16 @@ Run spikes with the `/spike` skill. Spike code lives in `spikes/<name>/` and is 
   - Out of scope: path building, USN, wrapping it as `mft-parse`.
   - Fallback: pin git commit → fork → port from `ntfs-core`.
 - [ ] **S3 `ntfs-reader`** (Windows, admin) → ADR 0005
-  - Done when: raw `$MFT`; `$UsnJrnl:$J` without the sparse region; `$Secure:$SDS`, `$Boot`; no `unsafe` in our code; 4Kn (record as a known limit if untested).
-  - Out of scope: zip packaging, `meta.json`, CLI, code signing.
-  - Fallback: `std::fs::File` on `\\.\C:` + aligned reader + `ntfs-core` `NtfsFs`.
-- [ ] **S4 VanillaWindowsReference → `fst`** → `docs/research/baseline-poc.md`
-  - Done when: outside-baseline < 10 % on a real Win11 24H2 `$MFT`; list what VWR misses (hidden, `$` files, ADS) against a clean VM; the VM's `$UpCase` has MD5 `7ff498a44e45e77374cc7c962b1b92f2` (ADR 0009; if not, supersede it).
-  - Out of scope: other Windows builds, baseline CI, distribution format.
+  - Done when: on a GitHub-hosted Windows runner (admin, disposable): raw `$MFT`; `$UsnJrnl:$J` without the sparse region; `$Secure:$SDS`, `$Boot`; no `unsafe` in our code; outputs uploaded as a workflow artifact. 4Kn recorded as a known limit.
+  - Out of scope: zip packaging, `meta.json`, CLI, code signing, client Windows (runners are Windows Server).
+  - Fallback: `std::fs::File` on `\\.\C:` + aligned reader + `ntfs-core` `NtfsFs`; or run the spike on the Windows VM.
+  - Human steps: approve `ntfs-reader` (H2, agent vets it first); create a remote (private is fine), push the spike branch and trigger the `workflow_dispatch` job; download the artifact outside the repo.
+- [ ] **S4 VanillaWindowsReference → `fst`** (public images) → `docs/research/baseline-poc.md`
+  - Done when, on public images matched to VWR builds (Windows 11: Magnet Virtual Summit 2023 `PC-MUS-001.E01`; Windows 10 22H2 (19045): a smaller public image or triage set): the image's build is identified; outside-baseline ratio measured (< 10 % target); `$UpCase` MD5 recorded per build (ADR 0009 expects `7ff498a4…` for Win7 and later; if not, supersede it).
+  - Out of scope: other Windows builds, baseline CI, distribution format; clean-install comparison and Win11 24H2 (moved to the Phase 1 gate).
   - Fallback: more normalization rules, or bring the baseline CI forward.
+  - Human steps: `brew install sleuthkit` (reads E01 via libewf); download the images outside the repo (e.g. `~/evidence/public/`) and tell the agent the path. Never commit them; use them under their publishers' terms (training/research).
+
 - [x] **ADR 0006**: GPL-3.0 data (LOLBAS, HijackLibs, winbindex) is AGPL-side data matched at runtime, never compiled into DRL rules.
   - Done when: ADR accepted and consistent with `.claude/rules/dependencies.md`.
   - Out of scope: importing the data.
@@ -47,7 +50,38 @@ Run spikes with the `/spike` skill. Spike code lives in `spikes/<name>/` and is 
   - Done when: `cargo nextest run -p ntfs-types` and `cargo llvm-cov --workspace --fail-under-lines 90` pass.
   - Out of scope: serde, string parsing, time-zone conversion, path normalization beyond `$UpCase` (belongs to `baseline`).
 
-Inputs needed: a Win11 24H2 `$MFT` (S4); a Windows host with admin rights (S3); a 4Kn disk/image or synthesized records (S2, S3).
+Inputs needed: public Windows 11 and 10 images (S4); a GitHub remote for the runner (S3); a Win11 24H2 x64 VM before the Phase 1 gate.
+
+**Windows VM (Phase 1 gate)**: Windows 11 24H2 **x64** (VanillaWindowsReference is x64; an ARM64 VM on Apple Silicon has a different file layout). Options: a spare x64 PC, a cloud Windows 11 VM, or UTM with x64 emulation (slow but enough). Install from the Microsoft Evaluation Center ISO, no extra software, record the build (`winver`, UBR). Collect `$MFT` and `$UpCase` right after install and after normal use, with the S3 spike `.exe`, FTK Imager or Velociraptor.
+
+## Phase 1 (v0.1): walking skeleton
+
+Goal: one end-to-end path from a `$MFT` file to a report, then widen it. Each slice is one branch; each slice keeps `tool analyze` working end to end. Gate (H4): outside-baseline < 10 % on a Win11 24H2 `$MFT` after normal use (Windows VM); VWR gaps listed against the same VM right after a clean install; that VM's `$UpCase` MD5 checked (ADR 0009); 1 GB `$MFT` in ≤ 1 min and ≤ 2 GB RAM (measured on a synthetic 1 GB `$MFT` built with the test builder, on the Mac).
+
+Decisions before the first slice (H2):
+- [ ] **Dependencies for Phase 1**: `thiserror` (libs), `clap` + `anyhow` (cli), `csv` (report), `fst` (baseline), `serde_json` (report data). Vet each like ADR 0008; `cargo vet` exemptions or audits; `deny.toml` `allow-git` for `mft` (ADR 0004).
+- [ ] **ADR: which time is "created" for an MFT entry** (product open question 1). Leaning: emit `CreationUtcTime` from `$SI`, keep `$FN` as a fact, window filter uses either. Needed before slice P1-4.
+- [ ] **ADR: normalization rules format** (`%USERPROFILE%`, SIDs, GUIDs): Rust table now vs declarative YAML in `tool-rules`. Leaning: small Rust table in Phase 1, YAML when the baseline CI arrives (Phase 3). Needed before slice P1-3.
+- [ ] **ADR: fuzzing in CI**: nightly toolchain for `cargo-fuzz` (ADR 0004 rule 3). Needed before P1-1 is ticked.
+
+- [ ] **P1-1 `mft-parse` + skeleton CLI** (crates `mft-parse`, `analyze`, `report`, `cli`)
+  - Done when: `tool analyze -i <$MFT> --csv out.csv` writes one row per FILE record (entry, sequence, in-use, `$FN` names via `NtfsName`, `$SI`/`$FN` created times); corrupt records become `Diagnostic` rows, never a panic; names built only from `as_utf16le_bytes()` (ADR 0004); test builder moved from `spikes/s2-mft` into `mft-parse` tests; proptest no-panic properties; a `cargo fuzz` target.
+  - Out of scope: paths, baseline, Sigma, HTML, non-resident data, `$ATTRIBUTE_LIST`.
+- [ ] **P1-2 Paths from `$MFT`** (crate `resolve`, MFT-only)
+  - Done when: each entry gets a full path from parent references with sequence checks; state `resolved` / `unknown` (parent missing, deleted or reused); never invents a path; CSV gains a `path` column.
+  - Out of scope: USN, Rewind, `inferred` (Phase 2).
+- [ ] **P1-3 Baseline** (crate `baseline`, `tool baseline build`)
+  - Done when: `tool baseline build --vwr <csv> -o win11-24h2.fst` builds an fst of `NormPath` keys from VanillaWindowsReference Win11 24H2; normalization covers user profile, SIDs, GUIDs, WinSxS version parts; lookup gives `standard` / `outside`; CSV gains a `baseline` column; S4's outside-baseline ratio reproduced by the real code.
+  - Out of scope: other builds, UBR fallback, zstd packaging, baseline CI, `tool baseline update`.
+- [ ] **P1-4 Sigma** (crates `sigma`, `detect`)
+  - Done when: rules from a directory load through `rsigma-eval` (ADR 0003 rules: every rule has an `id`; route with `evaluate_with_logsource`); MFT entries emitted as `file_event` with standard fields, plus `service: baseline_outside` for outside entries; findings carry rule `id`, `title`, `level`, `author` (DRL) and the `explain` trace; results sorted (ADR 0002 #3); 3–5 sample rules in `testdata/rules/`.
+  - Out of scope: correlations, USN categories (`file_delete` etc.), SigmaHQ import at scale, `tool rules update`.
+- [ ] **P1-5 Minimal HTML report** (crate `report`)
+  - Done when: `-o report.html` writes one self-contained file: host/input summary, findings table (level → time), outside-baseline list; data embedded Base64, no `innerHTML`; CSV formula neutralization; AGPL footer with source URL and commit; rule `author` shown (ADR 0001); attacker-name tests (`</script>`, `=cmd|…`, control chars, unpaired surrogates).
+  - Out of scope: Svelte viewer, timeline, filters, en/ja.
+- [ ] **P1-6 Gate measurements**
+  - Done when: synthetic 1 GB `$MFT` (≈1M records) generator in `xtask` or a test helper; `tool analyze` on it ≤ 1 min and ≤ 2 GB peak RSS on the Mac; determinism test (two runs, byte-identical outputs) in CI; outside-baseline ratio, VWR gaps and `$UpCase` MD5 on the Windows VM recorded in `docs/research/baseline-poc.md`.
+  - Out of scope: optimization beyond the gate.
 
 ## Risks
 
