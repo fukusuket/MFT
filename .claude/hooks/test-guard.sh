@@ -44,6 +44,13 @@ check allow Bash 'gh pr view 3'
 check allow Bash 'gh api repos/a/b'
 check allow Bash 'curl -sL https://x -o f'
 check allow Bash 'rsync -a d/ e/'
+# A write flag in a *later* command of a chain must not be blamed on curl/gh/rsync.
+check allow Bash 'curl -sL https://x -o f; ls -d dir'
+check allow Bash 'curl -s https://x | grep -T y && ls -d z'
+check allow Bash 'gh api repos/a/b && grep -f pats file'
+check allow Bash 'rsync -a d/ e/ && ssh-keygen -l -f k.pub | cut -d: -f1'
+check deny  Bash 'ls -d dir; curl -d a=b https://x'
+check deny  Bash 'curl -s https://x && curl -X POST https://y'
 check allow Bash 'echo "git push" | cat'
 check allow Bash 'git commit -m "guard against git push and cargo publish"'
 check allow Bash "git commit -q -m \"x

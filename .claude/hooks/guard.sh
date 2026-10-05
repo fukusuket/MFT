@@ -30,9 +30,10 @@ case "$tool" in
     fi
     net_write='(^|[;&|(`"'"'"' ])(git[[:space:]]+push|cargo[[:space:]]+(publish|yank|owner|login)|(npm|pnpm|yarn)[[:space:]]+(publish|unpublish)|twine[[:space:]]+upload|docker[[:space:]]+push|scp|sftp)([[:space:]`;&|)"'"'"']|$)'
     gh_write='(^|[;&|(`"'"'"' ])gh[[:space:]]+[a-z-]+[[:space:]]+(create|merge|comment|close|reopen|edit|delete|review|ready|upload|run|sync|fork|transfer|archive)([[:space:]`;&|)"'"'"']|$)'
-    gh_api_write='(^|[;&|(`"'"'"' ])gh[[:space:]]+api[[:space:]].*(-X|--method|-f[[:space:]]|-F[[:space:]]|--field|--raw-field|--input)'
-    http_write='(^|[;&|(`"'"'"' ])(curl|wget)[[:space:]].*(-X[[:space:]]*(POST|PUT|PATCH|DELETE)|--request[[:space:]]+(POST|PUT|PATCH|DELETE)|-d[[:space:]]|--data|-F[[:space:]]|--form|-T[[:space:]]|--upload-file|--json|--post-data|--post-file|--method=(POST|PUT|PATCH|DELETE))'
-    rsync_remote='(^|[;&|(`"'"'"' ])rsync[[:space:]].*[^[:space:]]+:'
+    # Flags are matched only within the same command ([^;&|]*), not in later commands of a chain.
+    gh_api_write='(^|[;&|(`"'"'"' ])gh[[:space:]]+api[[:space:]][^;&|]*(-X|--method|-f[[:space:]]|-F[[:space:]]|--field|--raw-field|--input)'
+    http_write='(^|[;&|(`"'"'"' ])(curl|wget)[[:space:]][^;&|]*(-X[[:space:]]*(POST|PUT|PATCH|DELETE)|--request[[:space:]]+(POST|PUT|PATCH|DELETE)|-d[[:space:]]|--data|-F[[:space:]]|--form|-T[[:space:]]|--upload-file|--json|--post-data|--post-file|--method=(POST|PUT|PATCH|DELETE))'
+    rsync_remote='(^|[;&|(`"'"'"' ])rsync[[:space:]][^;&|]*[^[:space:];&|]+:'
     if printf '%s' "$scan" | grep -Eq "$net_write|$gh_write|$gh_api_write|$http_write|$rsync_remote"; then
       deny "Internet writes (push, publish, PR/issue/comment, upload, non-GET requests) are human-only. Prepare the change locally and hand it over."
     fi
