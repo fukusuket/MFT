@@ -1,0 +1,13 @@
+[package]
+name = "s3-ntfs-reader"
+version = "0.0.0"
+edition = "2024"
+publish = false
+description = "Phase 0 spike S3: collect $MFT, $J, $SDS, $Boot from a live Windows volume with ntfs-reader (throwaway)"
+
+# Standalone: excluded from the main workspace (Cargo.toml `exclude = ["spikes"]`).
+[workspace]
+
+# Approved for this spike (H2, 2026-10-05). Windows only: the crate refuses to build elsewhere.
+[target.'cfg(windows)'.dependencies]
+ntfs-reader = "=0.6.0"

@@ -1,0 +1,35 @@
+name: Spike S3 (ntfs-reader on a live Windows volume)
+
+# Phase 0 spike S3 (docs/plan.md). Manual only. The runner is a disposable
+# GitHub-hosted VM, so its C: holds no evidence or personal data.
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  collect:
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build
+        working-directory: spikes/s3-ntfs-reader
+        run: cargo build --release --locked
+      - name: "Collect from C:"
+        working-directory: spikes/s3-ntfs-reader
+        shell: pwsh
+        run: |
+          [Security.Principal.WindowsPrincipal]::new([Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator) | ForEach-Object { "elevated: $_" }
+          (Get-CimInstance Win32_OperatingSystem) | Select-Object Caption, Version, BuildNumber | Format-List
+          .\target\release\s3-ntfs-reader.exe '\\.\C:' out | Tee-Object out\run.log
+          Get-ChildItem out | Select-Object Name, Length | Format-Table
+          Get-FileHash out\* -Algorithm MD5 | Format-Table Algorithm, Hash, Path
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: s3-ntfs-reader-output
+          path: spikes/s3-ntfs-reader/out
+          retention-days: 3
