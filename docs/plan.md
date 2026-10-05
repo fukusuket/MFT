@@ -38,7 +38,7 @@ Run spikes with the `/spike` skill. Spike code lives in `spikes/<name>/` and is 
 - [x] **ADR 0006**: GPL-3.0 data (LOLBAS, HijackLibs, winbindex) is AGPL-side data matched at runtime, never compiled into DRL rules.
   - Done when: ADR accepted and consistent with `.claude/rules/dependencies.md`.
   - Out of scope: importing the data.
-- [ ] **`ntfs-types`** (independent of spikes; one TDD cycle per bullet)
+- [x] **`ntfs-types`** (independent of spikes; one TDD cycle per bullet)
   - [x] `FileRef`: 48-bit entry + 16-bit sequence; `u64` round-trip
   - [x] `Filetime`: `u64` newtype (UTC, 100 ns since 1601); ordering; tests for 0, `u64::MAX`. Unix-time conversion deferred until a consumer needs it
   - [x] `NtfsName`: `Box<[u16]>`; escaped display; proptest round-trip of any `u16` sequence
