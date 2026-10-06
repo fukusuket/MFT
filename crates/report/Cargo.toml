@@ -1,0 +1,18 @@
+[package]
+name = "report"
+description = "Report writers (CSV in Phase 1)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+analyze = { path = "../analyze" }
+mft-parse = { path = "../mft-parse" }
+ntfs-types = { path = "../ntfs-types" }
+csv = "=1.4.0" # ADR 0010
+thiserror = "=2.0.21" # ADR 0010
+
+[lints]
+workspace = true
