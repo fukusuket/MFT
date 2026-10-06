@@ -12,6 +12,7 @@ name = "tool" # placeholder until the tool is named (product.md §7)
 path = "src/main.rs"
 
 [dependencies]
+analyze = { path = "../analyze" }
 mft-parse = { path = "../mft-parse" }
 report = { path = "../report" }
 anyhow = "=1.0.104" # ADR 0010

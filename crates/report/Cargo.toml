@@ -11,6 +11,7 @@ publish.workspace = true
 analyze = { path = "../analyze" }
 mft-parse = { path = "../mft-parse" }
 ntfs-types = { path = "../ntfs-types" }
+resolve = { path = "../resolve" }
 csv = "=1.4.0" # ADR 0010
 thiserror = "=2.0.21" # ADR 0010
 

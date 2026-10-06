@@ -38,8 +38,10 @@ fn analyze(input: &Path, csv: &Path) -> anyhow::Result<()> {
     let mft = File::open(input).with_context(|| format!("opening {}", input.display()))?;
     let out = File::create(csv).with_context(|| format!("creating {}", csv.display()))?;
     let mut writer = CsvWriter::new(BufWriter::new(out))?;
-    for entry in mft_parse::records(BufReader::new(mft))? {
-        writer.write(&entry?)?;
+    // Paths need every parent, so all records are read before the first row is written.
+    let entries = mft_parse::records(BufReader::new(mft))?.collect::<Result<Vec<_>, _>>()?;
+    for row in analyze::rows(&entries) {
+        writer.write(&row)?;
     }
     writer.finish()?.flush()?;
     Ok(())
