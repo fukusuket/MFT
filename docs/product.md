@@ -129,7 +129,6 @@ Severity is shown as text, not color alone. Filter state is kept in the URL hash
 
 | # | Question | Current leaning |
 |---|---|---|
-| 1 | Which timestamp makes an MFT entry "in window" | In window if either `$SI` or `$FN` created time is |
 | 2 | Baseline granularity | Per build, nearest UBR fallback; normalize language differences |
 | 3 | Rule level criteria | Based on the privilege needed to write the path; document in `docs/rule-levels.md` |
 | 4 | Collector code signing | Sign from MVP |
