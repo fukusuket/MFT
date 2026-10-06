@@ -27,7 +27,7 @@ Run spikes with the `/spike` skill. Spike code lives in `spikes/<name>/` and is 
   - Done when: unpaired surrogates survive via `Utf16LeStr`; 4Kn records parse; 30 min `cargo fuzz` without panic (issue #129); deleted entries, ADS, resident data readable. Ask the maintainer about a release.
   - Out of scope: path building, USN, wrapping it as `mft-parse`.
   - Fallback: pin git commit → fork → port from `ntfs-core`.
-- [ ] **S3 `ntfs-reader`** (Windows, admin) → ADR 0005
+- [x] **S3 `ntfs-reader`** (Windows, admin) → ADR 0005
   - Done when: on a GitHub-hosted Windows runner (admin, disposable): raw `$MFT`; `$UsnJrnl:$J` without the sparse region; `$Secure:$SDS`, `$Boot`; no `unsafe` in our code; outputs uploaded as a workflow artifact. 4Kn recorded as a known limit.
   - Out of scope: zip packaging, `meta.json`, CLI, code signing, client Windows (runners are Windows Server).
   - Fallback: `std::fs::File` on `\\.\C:` + aligned reader + `ntfs-core` `NtfsFs`; or run the spike on the Windows VM.
