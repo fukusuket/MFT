@@ -33,7 +33,7 @@ jobs:
           MATRIX_TARGET: ${{ matrix.target }}
       - name: Fuzz for 10 minutes
         working-directory: fuzz
-        run: cargo fuzz run "${MATRIX_TARGET}" -- -max_total_time=600
+        run: cargo fuzz run -O "${MATRIX_TARGET}" -- -max_total_time=600 # -O: see fuzz/Cargo.toml
         env:
           MATRIX_TARGET: ${{ matrix.target }}
       - name: Upload crashes

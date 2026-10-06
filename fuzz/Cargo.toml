@@ -29,6 +29,11 @@ test = false
 doc = false
 bench = false
 
+# Run with `cargo fuzz run -O`: cargo-fuzz's default (`-a`) forces overflow checks on every
+# crate through RUSTFLAGS, which overrides the mft exception below. Our crates keep the checks.
+[profile.release]
+overflow-checks = true
+
 # ADR 0014: same as the root workspace.
 [profile.release.package.mft]
 overflow-checks = false
