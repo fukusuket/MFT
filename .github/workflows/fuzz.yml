@@ -1,0 +1,45 @@
+name: Fuzz
+
+# ADR 0013: coverage-guided fuzzing on a pinned nightly. Weekly and on demand; never blocks PRs.
+on:
+  schedule:
+    - cron: "41 4 * * 1"
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  fuzz:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [mft_records]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install toolchain (fuzz/rust-toolchain.toml) and cargo-fuzz
+        working-directory: fuzz
+        run: |
+          rustup show
+          cargo install --locked cargo-fuzz@0.13.2
+      - name: Seeds from the test builder
+        working-directory: fuzz
+        run: cargo run --locked --bin seeds -- "corpus/${MATRIX_TARGET}"
+        env:
+          MATRIX_TARGET: ${{ matrix.target }}
+      - name: Fuzz for 10 minutes
+        working-directory: fuzz
+        run: cargo fuzz run "${MATRIX_TARGET}" -- -max_total_time=600
+        env:
+          MATRIX_TARGET: ${{ matrix.target }}
+      - name: Upload crashes
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: fuzz-artifacts-${{ matrix.target }}
+          path: fuzz/artifacts/
+          retention-days: 3

@@ -1,0 +1,37 @@
+[package]
+name = "mft-parse-fuzz"
+version = "0.0.0"
+edition = "2024"
+publish = false
+description = "cargo-fuzz targets for the parsers (ADR 0013); never shipped"
+
+[package.metadata]
+cargo-fuzz = true
+
+# Own workspace: nightly toolchain and libFuzzer stay out of the main build.
+[workspace]
+
+[dependencies]
+libfuzzer-sys = "=0.4.13" # ADR 0013
+mft-parse = { path = "../crates/mft-parse" }
+
+[[bin]]
+name = "mft_records"
+path = "fuzz_targets/mft_records.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "seeds"
+path = "src/seeds.rs"
+test = false
+doc = false
+bench = false
+
+# ADR 0014: same as the root workspace.
+[profile.release.package.mft]
+overflow-checks = false
+
+[profile.dev.package.mft]
+overflow-checks = false
