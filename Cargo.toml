@@ -1,7 +1,7 @@
 [workspace]
 resolver = "3"
 members = ["crates/*"]
-exclude = ["spikes"]  # Phase 0 spikes are not part of the workspace
+exclude = ["spikes", "fuzz"]  # Phase 0 spikes; fuzz/ is its own workspace (ADR 0013)
 
 [workspace.package]
 version = "0.0.0"
@@ -39,3 +39,12 @@ strip = "symbols"
 
 [profile.dev.package."*"]
 opt-level = 2
+
+# ADR 0014: mft @ 18b6c05 can overflow while decoding data runs (unused by mft-parse).
+# Wrap instead of panic in that crate only; our crates keep overflow checks.
+[profile.release.package.mft]
+overflow-checks = false
+
+[profile.dev.package.mft]
+opt-level = 2
+overflow-checks = false
