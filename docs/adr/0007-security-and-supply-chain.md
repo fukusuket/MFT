@@ -1,6 +1,6 @@
 # ADR 0007: Security and supply-chain policy
 
-Status: proposed (2026-10-04)  <!-- a human changes this to accepted (AGENTS.md H2) -->
+Status: accepted (2026-10-04, approved by the maintainer)
 
 ## Context
 The repo will hold forensic tooling, agents run `cargo build` unprompted, and 2026 attacks target exactly this: malicious crates running `build.rs` at build time (TrapDoor), hijacked GitHub Actions and OIDC-signed trojan releases, poisoned agent config (CLAUDE.md, hooks, MCP), and prompt injection that makes agents leak secrets. Today we only guard internet writes and dependency licenses/sources; nothing stops secrets or evidence from being committed.
