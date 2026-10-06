@@ -1,6 +1,6 @@
 [package]
-name = "analyze"
-description = "Pipeline from parsed $MFT entries to report rows"
+name = "resolve"
+description = "Paths for $MFT entries from parent references (MFT only in Phase 1)"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -9,10 +9,10 @@ publish.workspace = true
 
 [dependencies]
 mft-parse = { path = "../mft-parse" }
-resolve = { path = "../resolve" }
+ntfs-types = { path = "../ntfs-types" }
 
 [dev-dependencies]
-ntfs-types = { path = "../ntfs-types" }
+proptest = { version = "=1.11.0", default-features = false, features = ["std"] } # ADR 0008
 
 [lints]
 workspace = true

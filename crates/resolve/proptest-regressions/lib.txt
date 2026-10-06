@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 703077f17ceb97651a6c21b49926da3023f65221e25460e9c685c22035227dd2 # shrinks to entries = [Entry { file_ref: FileRef(0), in_use: false, si_created: None, names: [], diagnostics: [] }, Entry { file_ref: FileRef(1), in_use: false, si_created: None, names: [], diagnostics: [] }, Entry { file_ref: FileRef(2), in_use: false, si_created: None, names: [], diagnostics: [] }, Entry { file_ref: FileRef(3), in_use: false, si_created: None, names: [], diagnostics: [] }, Entry { file_ref: FileRef(4), in_use: false, si_created: None, names: [], diagnostics: [] }, Entry { file_ref: FileRef(562949953421317), in_use: true, si_created: None, names: [], diagnostics: [] }, Entry { file_ref: FileRef(6), in_use: false, si_created: None, names: [FileName { name: NtfsName([110]), parent: FileRef(5), namespace: Win32, created: Filetime(0) }], diagnostics: [] }]
