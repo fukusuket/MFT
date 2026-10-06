@@ -1,6 +1,6 @@
 # ADR 0005: Collector — `ntfs-reader` for live raw-volume reads
 
-Status: proposed (2026-10-06)  <!-- a human changes this to accepted (AGENTS.md H2) -->
+Status: accepted (2026-10-06, approved by the maintainer)
 
 ## Context
 `collector` must copy `$MFT`, `$UsnJrnl:$J` (without its sparse region), `$Secure:$SDS` and `$Boot` from a live Windows volume, with no `unsafe` in our code (ADR 0002). Spike S3 (docs/plan.md) ran `ntfs-reader =0.6.0` on a disposable GitHub `windows-latest` runner. Evidence and commands: [spikes/s3-ntfs-reader/README.md](../../spikes/s3-ntfs-reader/README.md). The fallback was `std::fs::File` on `\\.\C:` plus `ntfs-core`.

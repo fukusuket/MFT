@@ -53,7 +53,7 @@ Only `ntfs-types` exists so far.
 | `detect` | NTFS events → Sigma events, logsource mapping | sigma, resolve, baseline | — |
 | `analyze` | Pipeline, facts, findings, sorting | detect, baseline, resolve | `rayon`, `indexmap` |
 | `report` | HTML, JSONL, CSV | analyze | Svelte viewer, `csv` |
-| `collector` | Raw volume read (Windows) | ntfs-types | `ntfs-reader` (pending ADR 0005) |
+| `collector` | Raw volume read (Windows) | ntfs-types | `ntfs-reader =0.6.0`, Windows only (ADR 0005) |
 | `cli` | `collect`, `analyze`, `baseline`, `rules` | all | `clap` |
 
 Repositories: this one (code, AGPL-3.0); `tool-rules` (Sigma rules + `explain/{en,ja}/`, DRL 1.1); `tool-baselines` (fst files + generation CI).
