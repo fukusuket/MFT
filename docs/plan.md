@@ -7,7 +7,7 @@ Current phase: **0**. Tick items as they land (same change). Every item states *
 | Phase | Scope | Gate (ticked by a human, H4) | Estimate |
 |---|---|---|---|
 | **0** | Spikes S1–S4, `ntfs-types` | ADR 0003–0006 accepted; AGENTS.md, `deny.toml`, `NOTICE` updated | 1–1.5 wk |
-| 1 (v0.1) | Walking skeleton: `$MFT` → baseline (VanillaWindowsReference Win11 24H2) → a few Sigma rules → minimal HTML + CSV | Outside-baseline < 10 % on a real host; 1 GB `$MFT` in ≤ 1 min, ≤ 2 GB RAM | 2–3 wk |
+| 1 (v0.1) | Walking skeleton: `$MFT` → baseline (VanillaWindowsReference Win11 24H2) → a few Sigma rules → minimal HTML + CSV | Outside-baseline files in the window < 10 % of all files on a real host; 1 GB `$MFT` in ≤ 1 min, ≤ 2 GB RAM | 2–3 wk |
 | 2 (v0.2) | USN + Rewind (ported from `ntfs-core`), facts, time window, ~120 SigmaHQ + own rules, Svelte viewer (Summary, Findings, Outside-baseline) | A non-expert decides the next step from a report; Rewind resolution ≥ usnjrnl_rewind | 4–6 wk |
 | 3 (v0.3, MVP) | `collect`, own baseline CI, Win10 22H2 / Win11 25H2, correlations, Timeline, File detail, en/ja, accuracy CI | MVP success criteria in [product.md §4](product.md#4-mvp) | 6–8 wk |
 
@@ -32,8 +32,8 @@ Run spikes with the `/spike` skill. Spike code lives in `spikes/<name>/` and is 
   - Out of scope: zip packaging, `meta.json`, CLI, code signing, client Windows (runners are Windows Server).
   - Fallback: `std::fs::File` on `\\.\C:` + aligned reader + `ntfs-core` `NtfsFs`; or run the spike on the Windows VM.
   - Human steps: approve `ntfs-reader` (H2, agent vets it first); create a remote (private is fine), push the spike branch and trigger the `workflow_dispatch` job; download the artifact outside the repo.
-- [ ] **S4 VanillaWindowsReference → `fst`** (public images) → `docs/research/baseline-poc.md`
-  - Done when, on public images matched to VWR builds (Windows 11: Magnet Virtual Summit 2023 `PC-MUS-001.E01`; Windows 10 22H2 (19045): a smaller public image or triage set): the image's build is identified; outside-baseline ratio measured (< 10 % target); `$UpCase` MD5 recorded per build (ADR 0009 expects `7ff498a4…` for Win7 and later; if not, supersede it).
+- [x] **S4 VanillaWindowsReference → `fst`** (public images) → `docs/research/baseline-poc.md`
+  - Done when, on public images matched to VWR builds (Windows 11: Magnet Virtual Summit 2023 `PC-MUS-001.E01`; Windows 10 22H2 (19045): a smaller public image or triage set): the image's build is identified; outside-baseline files created in the time window (7 days) measured as a share of all files (< 10 % target; `product.md` §4 metric); `$UpCase` MD5 recorded per build (ADR 0009 expects `7ff498a4…` for Win7 and later; if not, supersede it).
   - Out of scope: other Windows builds, baseline CI, distribution format; clean-install comparison and Win11 24H2 (moved to the Phase 1 gate).
   - Fallback: more normalization rules, or bring the baseline CI forward.
   - Human steps: `brew install sleuthkit` (reads E01 via libewf); download the images outside the repo (e.g. `~/evidence/public/`) and tell the agent the path. Never commit them; use them under their publishers' terms (training/research).
@@ -56,7 +56,7 @@ Inputs needed: public Windows 11 and 10 images (S4); a GitHub remote for the run
 
 ## Phase 1 (v0.1): walking skeleton
 
-Goal: one end-to-end path from a `$MFT` file to a report, then widen it. Each slice is one branch; each slice keeps `tool analyze` working end to end. Gate (H4): outside-baseline < 10 % on a Win11 24H2 `$MFT` after normal use (Windows VM); VWR gaps listed against the same VM right after a clean install; that VM's `$UpCase` MD5 checked (ADR 0009); 1 GB `$MFT` in ≤ 1 min and ≤ 2 GB RAM (measured on a synthetic 1 GB `$MFT` built with the test builder, on the Mac).
+Goal: one end-to-end path from a `$MFT` file to a report, then widen it. Each slice is one branch; each slice keeps `tool analyze` working end to end. Gate (H4): outside-baseline files in the window < 10 % of all files on a Win11 24H2 `$MFT` after normal use (Windows VM), and the `product.md` §4 target (< 5 %) revisited with that result; VWR gaps listed against the same VM right after a clean install; that VM's `$UpCase` MD5 checked (ADR 0009); 1 GB `$MFT` in ≤ 1 min and ≤ 2 GB RAM (measured on a synthetic 1 GB `$MFT` built with the test builder, on the Mac).
 
 Decisions before the first slice (H2):
 - [ ] **Dependencies for Phase 1**: `thiserror` (libs), `clap` + `anyhow` (cli), `csv` (report), `fst` (baseline), `serde_json` (report data). Vet each like ADR 0008; `cargo vet` exemptions or audits; `deny.toml` `allow-git` for `mft` (ADR 0004).
