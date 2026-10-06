@@ -1,6 +1,6 @@
 # ADR 0014: Overflow checks off for the `mft` crate
 
-Status: proposed (2026-10-07)  <!-- a human changes this to accepted (AGENTS.md H2) -->
+Status: accepted (2026-10-07, approved by the maintainer)
 
 ## Context
 P1-1's proptest (`crates/mft-parse/tests/no_panic.rs`, corrupted valid records) found a panic in `mft` @ `18b6c05`:
