@@ -1,54 +1,63 @@
-//! Pipeline from parsed `$MFT` entries to report rows. Phase 1: name choice only.
+//! Pipeline from parsed `$MFT` entries to report rows.
 
-use mft_parse::{FileName, Namespace};
+use mft_parse::Entry;
+use resolve::{Resolution, Resolver};
 
-/// The name shown for an entry, and whose `$FN` created time is reported (ADR 0011):
-/// Win32 or Win32+DOS first, then POSIX, then DOS; ties go to the earlier attribute.
-pub fn chosen_name(names: &[FileName]) -> Option<&FileName> {
-    names.iter().min_by_key(|n| match n.namespace {
-        Namespace::Win32 | Namespace::Win32AndDos => 0,
-        Namespace::Posix => 1,
-        Namespace::Dos => 2,
+/// One report row: an entry and where it sits in the tree.
+#[derive(Debug)]
+pub struct Row<'a> {
+    pub entry: &'a Entry,
+    pub resolution: Resolution<'a>,
+}
+
+/// One row per entry, in entry order. Lazy, so only one path is held at a time.
+pub fn rows(entries: &[Entry]) -> impl Iterator<Item = Row<'_>> {
+    let resolver = Resolver::new(entries);
+    entries.iter().map(move |entry| Row {
+        entry,
+        resolution: resolver.path(entry),
     })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use mft_parse::{FileName, Namespace};
     use ntfs_types::{FileRef, Filetime, NtfsName};
 
-    fn name(text: &str, namespace: Namespace) -> FileName {
-        FileName {
-            name: NtfsName::from_units(&text.encode_utf16().collect::<Vec<_>>()),
-            parent: FileRef::from_raw(5),
-            namespace,
-            created: Filetime::from_raw(0),
+    fn entry(number: u64, parent: u64, name: &str) -> Entry {
+        Entry {
+            file_ref: FileRef::from_raw(number | (1 << 48)),
+            in_use: true,
+            si_created: None,
+            names: vec![FileName {
+                name: NtfsName::from_units(&name.encode_utf16().collect::<Vec<_>>()),
+                parent: FileRef::from_raw(parent | (1 << 48)),
+                namespace: Namespace::Win32,
+                created: Filetime::from_raw(0),
+            }],
+            diagnostics: vec![],
         }
-    }
-
-    fn chosen(names: &[FileName]) -> Option<String> {
-        chosen_name(names).map(|n| n.name.to_string())
     }
 
     #[test]
-    fn prefers_win32_then_posix_then_dos_and_keeps_attribute_order_on_ties() {
-        use Namespace::*;
-        let cases: [(&[FileName], Option<&str>); 6] = [
-            (&[], None),
-            (&[name("DOS~1", Dos), name("long", Win32)], Some("long")),
-            (
-                &[name("DOS~1", Dos), name("both", Win32AndDos)],
-                Some("both"),
-            ),
-            (&[name("DOS~1", Dos), name("posix", Posix)], Some("posix")),
-            (&[name("posix", Posix), name("win", Win32)], Some("win")),
-            (
-                &[name("first", Win32), name("second", Win32AndDos)],
-                Some("first"),
-            ),
+    fn pairs_each_entry_with_its_resolution_in_entry_order() {
+        let entries = [
+            entry(5, 5, "."),
+            entry(40, 5, "a.txt"),
+            entry(41, 77, "orphan"),
         ];
-        for (names, expected) in cases {
-            assert_eq!(chosen(names).as_deref(), expected);
-        }
+
+        let shown: Vec<(u64, Option<usize>)> = rows(&entries)
+            .map(|r| {
+                let depth = match &r.resolution {
+                    Resolution::Resolved(segments) => Some(segments.len()),
+                    Resolution::Unknown => None,
+                };
+                (r.entry.file_ref.entry(), depth)
+            })
+            .collect();
+
+        assert_eq!(shown, [(5, Some(0)), (40, Some(1)), (41, None)]);
     }
 }

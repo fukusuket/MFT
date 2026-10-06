@@ -14,6 +14,7 @@ version = "0.0.0"
 dependencies = [
  "mft-parse",
  "ntfs-types",
+ "resolve",
 ]
 
 [[package]]
@@ -110,6 +111,7 @@ checksum = "1c133bc6a41be0d194c306b5506d15e6feeea7b1d6604bd3f8310dfb2ca96486"
 name = "cli"
 version = "0.0.0"
 dependencies = [
+ "analyze",
  "anyhow",
  "clap",
  "mft-parse",
@@ -479,7 +481,17 @@ dependencies = [
  "csv",
  "mft-parse",
  "ntfs-types",
+ "resolve",
  "thiserror 2.0.21",
+]
+
+[[package]]
+name = "resolve"
+version = "0.0.0"
+dependencies = [
+ "mft-parse",
+ "ntfs-types",
+ "proptest",
 ]
 
 [[package]]

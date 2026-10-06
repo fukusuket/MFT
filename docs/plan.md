@@ -67,7 +67,7 @@ Decisions before the first slice (H2):
 - [x] **P1-1 `mft-parse` + skeleton CLI** (crates `mft-parse`, `analyze`, `report`, `cli`; [ADR 0014](adr/0014-mft-overflow-checks.md))
   - Done when: `tool analyze -i <$MFT> --csv out.csv` writes one row per FILE record (entry, sequence, in-use, `$FN` names via `NtfsName`, `$SI`/`$FN` created times); corrupt records become `Diagnostic` rows, never a panic; names built only from `as_utf16le_bytes()` (ADR 0004); test builder moved from `spikes/s2-mft` into `mft-parse` tests; proptest no-panic properties; a `cargo fuzz` target.
   - Out of scope: paths, baseline, Sigma, HTML, non-resident data, `$ATTRIBUTE_LIST`.
-- [ ] **P1-2 Paths from `$MFT`** (crate `resolve`, MFT-only)
+- [x] **P1-2 Paths from `$MFT`** (crate `resolve`, MFT-only)
   - Done when: each entry gets a full path from parent references with sequence checks; state `resolved` / `unknown` (parent missing, deleted or reused); never invents a path; CSV gains a `path` column.
   - Out of scope: USN, Rewind, `inferred` (Phase 2).
 - [ ] **P1-3 Baseline** (crate `baseline`, `tool baseline build`)

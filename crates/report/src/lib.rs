@@ -5,8 +5,9 @@ mod time;
 use std::fmt::Write as _;
 use std::io::Write;
 
-use mft_parse::{DiagCode, Entry};
-use ntfs_types::NtfsName;
+use analyze::Row;
+use mft_parse::DiagCode;
+use resolve::Resolution;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -14,11 +15,13 @@ pub enum Error {
     Csv(#[from] csv::Error),
 }
 
-const HEADER: [&str; 7] = [
+const HEADER: [&str; 9] = [
     "entry",
     "sequence",
     "in_use",
     "name",
+    "path",
+    "path_state",
     "si_created",
     "fn_created",
     "diagnostics",
@@ -37,14 +40,22 @@ impl<W: Write> CsvWriter<W> {
         Ok(Self { csv })
     }
 
-    pub fn write(&mut self, entry: &Entry) -> Result<(), Error> {
-        let name = analyze::chosen_name(&entry.names);
+    pub fn write(&mut self, row: &Row<'_>) -> Result<(), Error> {
+        let entry = row.entry;
+        let name = resolve::chosen_name(&entry.names);
         let diagnostics: Vec<&str> = entry.diagnostics.iter().map(|d| code(d.code)).collect();
         self.csv.write_record([
             entry.file_ref.entry().to_string(),
             entry.file_ref.sequence().to_string(),
             entry.in_use.to_string(),
-            name.map(|n| cell_text(&n.name)).unwrap_or_default(),
+            name.map(|n| cell_text(&n.name.to_string()))
+                .unwrap_or_default(),
+            path_cell(&row.resolution),
+            match row.resolution {
+                Resolution::Resolved(_) => "resolved",
+                Resolution::Unknown => "unknown",
+            }
+            .to_string(),
             entry.si_created.map(time::iso8601).unwrap_or_default(),
             name.map(|n| time::iso8601(n.created)).unwrap_or_default(),
             diagnostics.join(";"),
@@ -60,11 +71,26 @@ impl<W: Write> CsvWriter<W> {
     }
 }
 
-/// A file name as a CSV cell (ADR 0002 #4): control characters escaped as `\u{XX}`, and a
+/// `\` plus the escaped names joined by `\` (a `\` inside a name shows as `\\`); empty if unknown.
+fn path_cell(resolution: &Resolution<'_>) -> String {
+    let Resolution::Resolved(segments) = resolution else {
+        return String::new();
+    };
+    let mut path = String::new();
+    for segment in segments {
+        let _ = write!(path, "\\{segment}"); // writing to a String can't fail
+    }
+    if path.is_empty() {
+        path.push('\\'); // the root
+    }
+    cell_text(&path)
+}
+
+/// Evidence text as a CSV cell (ADR 0002 #4): control characters escaped as `\u{XX}`, and a
 /// leading `=`, `+`, `-` or `@` prefixed with `'` so spreadsheets don't run it as a formula.
-fn cell_text(name: &NtfsName) -> String {
+fn cell_text(text: &str) -> String {
     let mut out = String::new();
-    for c in name.to_string().chars() {
+    for c in text.chars() {
         if c.is_control() {
             let _ = write!(out, "\\u{{{:02X}}}", u32::from(c)); // writing to a String can't fail
         } else {
@@ -89,8 +115,8 @@ fn code(code: DiagCode) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mft_parse::{Diagnostic, FileName, Namespace};
-    use ntfs_types::{FileRef, Filetime};
+    use mft_parse::{Diagnostic, Entry, FileName, Namespace};
+    use ntfs_types::{FileRef, Filetime, NtfsName};
 
     fn units(s: &str) -> Vec<u16> {
         s.encode_utf16().collect()
@@ -98,8 +124,8 @@ mod tests {
 
     fn csv_of(entries: &[Entry]) -> Result<String, Box<dyn std::error::Error>> {
         let mut w = CsvWriter::new(Vec::new())?;
-        for e in entries {
-            w.write(e)?;
+        for row in analyze::rows(entries) {
+            w.write(&row)?;
         }
         Ok(String::from_utf8(w.finish()?)?)
     }
@@ -129,6 +155,18 @@ mod tests {
                 offset: 43_008,
             }],
         };
+        let root = Entry {
+            file_ref: FileRef::from_raw(5),
+            in_use: true,
+            si_created: None,
+            names: vec![FileName {
+                name: NtfsName::from_units(&units(".")),
+                parent: FileRef::from_raw(5),
+                namespace: Namespace::Win32AndDos,
+                created: Filetime::from_raw(0),
+            }],
+            diagnostics: vec![],
+        };
         let empty = Entry {
             file_ref: FileRef::from_raw(43),
             in_use: false,
@@ -147,10 +185,11 @@ mod tests {
         };
 
         assert_eq!(
-            csv_of(&[full, empty])?,
-            "entry,sequence,in_use,name,si_created,fn_created,diagnostics\n\
-             42,3,true,a\\\\b.txt,2023-11-14T17:12:46.6777888Z,2024-02-29T12:34:56.1234567Z,fixup_mismatch\n\
-             43,0,false,,,,bad_signature;malformed\n"
+            csv_of(&[root, full, empty])?,
+            "entry,sequence,in_use,name,path,path_state,si_created,fn_created,diagnostics\n\
+             5,0,true,.,\\,resolved,,1601-01-01T00:00:00.0000000Z,\n\
+             42,3,true,a\\\\b.txt,\\a\\\\b.txt,resolved,2023-11-14T17:12:46.6777888Z,2024-02-29T12:34:56.1234567Z,fixup_mismatch\n\
+             43,0,false,,,unknown,,,bad_signature;malformed\n"
         );
         Ok(())
     }
@@ -192,10 +231,24 @@ mod tests {
             let row = csv.lines().nth(1).unwrap_or_default();
             assert_eq!(
                 row,
-                format!("0,0,true,{cell},,1601-01-01T00:00:00.0000000Z,"),
+                format!("0,0,true,{cell},,unknown,,1601-01-01T00:00:00.0000000Z,"),
                 "name {name:?}"
             );
         }
+        Ok(())
+    }
+
+    #[test]
+    fn escapes_control_characters_in_path_segments() -> Result<(), Box<dyn std::error::Error>> {
+        let mut root = named(".");
+        root.file_ref = FileRef::from_raw(5);
+        let mut file = named("x\u{1b}[2J.txt");
+        file.file_ref = FileRef::from_raw(40);
+
+        let csv = csv_of(&[root, file])?;
+
+        let path = csv.lines().nth(2).and_then(|row| row.split(',').nth(4));
+        assert_eq!(path, Some(r"\x\u{1B}[2J.txt"));
         Ok(())
     }
 }
