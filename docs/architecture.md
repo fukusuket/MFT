@@ -40,7 +40,7 @@ Facts shown next to findings, never used to rank them: baseline status, timestom
 
 ## Crates
 
-Only `ntfs-types` exists so far.
+So far: `ntfs-types`, `mft-parse`, `analyze`, `report`, `cli` (P1-1). `fuzz/` is a separate workspace (ADR 0013).
 
 | Crate | Role | Depends on | Built on |
 |---|---|---|---|

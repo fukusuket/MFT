@@ -33,6 +33,7 @@ allow = [
     "Unicode-DFS-2016",
     "CC0-1.0",
     "Unlicense",
+    "NCSA", # libfuzzer-sys, fuzz/ only (ADR 0013)
     "BSL-1.0",
 ]
 
@@ -44,3 +45,4 @@ allow-wildcard-paths = true
 [sources]
 unknown-registry = "deny"
 unknown-git = "deny"
+allow-git = ["https://github.com/omerbenamram/mft"] # ADR 0004
