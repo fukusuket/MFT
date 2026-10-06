@@ -1,6 +1,6 @@
 # ADR 0010: Phase 1 dependencies
 
-Status: proposed (2026-10-06)  <!-- a human changes this to accepted (AGENTS.md H2) -->
+Status: accepted (2026-10-06, approved by the maintainer)
 
 ## Context
 Phase 1 (docs/plan.md) needs error types, a CLI, CSV output, a baseline set and JSON report data. The plan names `thiserror`, `clap`, `anyhow`, `csv`, `fst` and `serde_json`, plus `deny.toml` `allow-git` for `mft` (ADR 0004). `rsigma-eval` (ADR 0003), `mft` (ADR 0004) and `ntfs-reader` (ADR 0005) are already decided and not re-vetted here. The vetting below follows `.claude/rules/dependencies.md` and ADR 0008. The graph was resolved with `cargo metadata` in a scratch project outside the repo, with nothing built.
@@ -16,6 +16,7 @@ Phase 1 (docs/plan.md) needs error types, a CLI, CSV output, a baseline set and 
 | `csv` | `=1.4.0` | `report` (P1-1) | default |
 | `fst` | `=0.4.7` | `baseline` (P1-3) | default (no `levenshtein`) |
 | `serde_json` | `=1.0.151` | `report` (P1-5) | default |
+| `serde` | `=1.0.229` | `report` (P1-5) | `["derive"]` |
 
 | Check | Finding (2026-10-06, crates.io API) |
 |---|---|
@@ -30,7 +31,7 @@ Phase 1 (docs/plan.md) needs error types, a CLI, CSV output, a baseline set and 
 
 **`mft` git source** (ADR 0004): add `allow-git = ["https://github.com/omerbenamram/mft"]` to `deny.toml` `[sources]` in P1-1, together with the dependency.
 
-**`serde` (open question for the reviewer)**: `serde` and `serde_derive` are already in the graph through `serde_json`. Allowing `serde = { version = "1", features = ["derive"] }` directly in `report` adds no crates. The plan does not name it, so this ADR asks. Without it, report data is built with `serde_json::json!`.
+**`serde` with `derive`**: approved for `report` (typed report data). It adds no crates, because `serde` and `serde_derive` are already in the graph through `serde_json`.
 
 Not chosen:
 - `clap` builder API without `derive`. It saves only `clap_derive` and `heck`, because `syn` is already present.
