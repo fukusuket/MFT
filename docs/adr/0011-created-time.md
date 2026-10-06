@@ -1,6 +1,6 @@
 # ADR 0011: Which time is "created" for an MFT entry
 
-Status: proposed (2026-10-06)  <!-- a human changes this to accepted (AGENTS.md H2) -->
+Status: accepted (2026-10-06, approved by the maintainer)
 
 ## Context
 An MFT entry has two creation times. `$STANDARD_INFORMATION` (`$SI`) is the one Windows APIs show and user-mode tools can set (timestomping). `$FILE_NAME` (`$FN`) is set by the kernel on create or rename and is rarely changed by tools. Sigma `file_event` rules use `CreationUtcTime`, which Sysmon fills with the API-visible (`$SI`-equivalent) time. product.md §7 Q1 leans to "in window if either is". P1-1 (CSV) and P1-4 (Sigma events) need one answer.

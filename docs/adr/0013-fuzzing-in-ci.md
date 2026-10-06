@@ -1,6 +1,6 @@
 # ADR 0013: Coverage-guided fuzzing in CI
 
-Status: proposed (2026-10-06)  <!-- a human changes this to accepted (AGENTS.md H2) -->
+Status: accepted (2026-10-06, approved by the maintainer)
 
 ## Context
 ADR 0004 rule 3 and `.claude/rules/rust.md` require a `cargo fuzz` target per parser entry point. Spike S2 used proptest on stable instead (option b). `cargo-fuzz` needs a nightly toolchain and `libfuzzer-sys`, which compiles C++ (libFuzzer) in its build script. The workspace pins stable 1.98.1.

@@ -60,9 +60,9 @@ Goal: one end-to-end path from a `$MFT` file to a report, then widen it. Each sl
 
 Decisions before the first slice (H2):
 - [x] **Dependencies for Phase 1** ([ADR 0010](adr/0010-phase1-dependencies.md)): `thiserror` (libs), `clap` + `anyhow` (cli), `csv` (report), `fst` (baseline), `serde_json` + `serde` derive (report data). Vet each like ADR 0008; `cargo vet` exemptions or audits; `deny.toml` `allow-git` for `mft` (ADR 0004).
-- [ ] **ADR: which time is "created" for an MFT entry** ([ADR 0011](adr/0011-created-time.md), proposed) (product open question 1). Leaning: emit `CreationUtcTime` from `$SI`, keep `$FN` as a fact, window filter uses either. Needed before slice P1-4.
-- [ ] **ADR: normalization rules format** ([ADR 0012](adr/0012-path-normalization-rules.md), proposed) (`%USERPROFILE%`, SIDs, GUIDs): Rust table now vs declarative YAML in `tool-rules`. Leaning: small Rust table in Phase 1, YAML when the baseline CI arrives (Phase 3). Needed before slice P1-3.
-- [ ] **ADR: fuzzing in CI** ([ADR 0013](adr/0013-fuzzing-in-ci.md), proposed): nightly toolchain for `cargo-fuzz` (ADR 0004 rule 3). Needed before P1-1 is ticked.
+- [x] **ADR: which time is "created" for an MFT entry** ([ADR 0011](adr/0011-created-time.md)): `CreationUtcTime` from `$SI`, `FnCreationUtcTime` from `$FN`, window on either.
+- [x] **ADR: normalization rules format** ([ADR 0012](adr/0012-path-normalization-rules.md)): Rust table in Phase 1 (S4 rules, NUL-prefixed placeholders), YAML in Phase 3.
+- [x] **ADR: fuzzing in CI** ([ADR 0013](adr/0013-fuzzing-in-ci.md)): separate `fuzz/` workspace on pinned nightly, weekly CI; first target and NCSA in `deny.toml` come with P1-1.
 
 - [ ] **P1-1 `mft-parse` + skeleton CLI** (crates `mft-parse`, `analyze`, `report`, `cli`)
   - Done when: `tool analyze -i <$MFT> --csv out.csv` writes one row per FILE record (entry, sequence, in-use, `$FN` names via `NtfsName`, `$SI`/`$FN` created times); corrupt records become `Diagnostic` rows, never a panic; names built only from `as_utf16le_bytes()` (ADR 0004); test builder moved from `spikes/s2-mft` into `mft-parse` tests; proptest no-panic properties; a `cargo fuzz` target.
