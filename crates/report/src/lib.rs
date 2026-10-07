@@ -6,6 +6,7 @@ use std::fmt::Write as _;
 use std::io::Write;
 
 use analyze::Row;
+use baseline::Status;
 use mft_parse::DiagCode;
 use resolve::Resolution;
 
@@ -15,13 +16,14 @@ pub enum Error {
     Csv(#[from] csv::Error),
 }
 
-const HEADER: [&str; 9] = [
+const HEADER: [&str; 10] = [
     "entry",
     "sequence",
     "in_use",
     "name",
     "path",
     "path_state",
+    "baseline",
     "si_created",
     "fn_created",
     "diagnostics",
@@ -54,6 +56,12 @@ impl<W: Write> CsvWriter<W> {
             match row.resolution {
                 Resolution::Resolved(_) => "resolved",
                 Resolution::Unknown => "unknown",
+            }
+            .to_string(),
+            match row.baseline {
+                Some(Status::Standard) => "standard",
+                Some(Status::Outside) => "outside",
+                None => "",
             }
             .to_string(),
             entry.si_created.map(time::iso8601).unwrap_or_default(),
@@ -123,8 +131,15 @@ mod tests {
     }
 
     fn csv_of(entries: &[Entry]) -> Result<String, Box<dyn std::error::Error>> {
+        csv_with(entries, None)
+    }
+
+    fn csv_with(
+        entries: &[Entry],
+        baseline: Option<&baseline::Baseline>,
+    ) -> Result<String, Box<dyn std::error::Error>> {
         let mut w = CsvWriter::new(Vec::new())?;
-        for row in analyze::rows(entries) {
+        for row in analyze::rows(entries, baseline) {
             w.write(&row)?;
         }
         Ok(String::from_utf8(w.finish()?)?)
@@ -135,6 +150,7 @@ mod tests {
         let full = Entry {
             file_ref: FileRef::from_raw(42 | (3 << 48)),
             in_use: true,
+            is_dir: false,
             si_created: Some(Filetime::from_raw(133_444_555_666_777_888)),
             names: vec![
                 FileName {
@@ -158,6 +174,7 @@ mod tests {
         let root = Entry {
             file_ref: FileRef::from_raw(5),
             in_use: true,
+            is_dir: false,
             si_created: None,
             names: vec![FileName {
                 name: NtfsName::from_units(&units(".")),
@@ -170,6 +187,7 @@ mod tests {
         let empty = Entry {
             file_ref: FileRef::from_raw(43),
             in_use: false,
+            is_dir: false,
             si_created: None,
             names: vec![],
             diagnostics: vec![
@@ -186,10 +204,10 @@ mod tests {
 
         assert_eq!(
             csv_of(&[root, full, empty])?,
-            "entry,sequence,in_use,name,path,path_state,si_created,fn_created,diagnostics\n\
-             5,0,true,.,\\,resolved,,1601-01-01T00:00:00.0000000Z,\n\
-             42,3,true,a\\\\b.txt,\\a\\\\b.txt,resolved,2023-11-14T17:12:46.6777888Z,2024-02-29T12:34:56.1234567Z,fixup_mismatch\n\
-             43,0,false,,,unknown,,,bad_signature;malformed\n"
+            "entry,sequence,in_use,name,path,path_state,baseline,si_created,fn_created,diagnostics\n\
+             5,0,true,.,\\,resolved,,,1601-01-01T00:00:00.0000000Z,\n\
+             42,3,true,a\\\\b.txt,\\a\\\\b.txt,resolved,,2023-11-14T17:12:46.6777888Z,2024-02-29T12:34:56.1234567Z,fixup_mismatch\n\
+             43,0,false,,,unknown,,,,bad_signature;malformed\n"
         );
         Ok(())
     }
@@ -198,6 +216,7 @@ mod tests {
         Entry {
             file_ref: FileRef::from_raw(0),
             in_use: true,
+            is_dir: false,
             si_created: None,
             names: vec![FileName {
                 name: NtfsName::from_units(&units(name)),
@@ -231,7 +250,7 @@ mod tests {
             let row = csv.lines().nth(1).unwrap_or_default();
             assert_eq!(
                 row,
-                format!("0,0,true,{cell},,unknown,,1601-01-01T00:00:00.0000000Z,"),
+                format!("0,0,true,{cell},,unknown,,,1601-01-01T00:00:00.0000000Z,"),
                 "name {name:?}"
             );
         }
@@ -249,6 +268,30 @@ mod tests {
 
         let path = csv.lines().nth(2).and_then(|row| row.split(',').nth(4));
         assert_eq!(path, Some(r"\x\u{1B}[2J.txt"));
+        Ok(())
+    }
+
+    #[test]
+    fn writes_the_baseline_status() -> Result<(), Box<dyn std::error::Error>> {
+        let vwr = "\"DirectoryName\",\"Name\",\"FullName\"\n\"C:\\\",\"x.txt\",\"C:\\x.txt\"\n";
+        let mut file = Vec::new();
+        baseline::build(vwr.as_bytes(), &mut file)?;
+        let baseline = baseline::Baseline::load(file)?;
+        let mut root = named(".");
+        root.file_ref = FileRef::from_raw(5);
+        root.is_dir = true;
+        let mut standard = named("X.TXT");
+        standard.file_ref = FileRef::from_raw(40);
+        let mut outside = named("y.txt");
+        outside.file_ref = FileRef::from_raw(41);
+
+        let csv = csv_with(&[root, standard, outside], Some(&baseline))?;
+
+        let column: Vec<&str> = csv
+            .lines()
+            .map(|row| row.split(',').nth(6).unwrap_or_default())
+            .collect();
+        assert_eq!(column, ["baseline", "", "standard", "outside"]);
         Ok(())
     }
 }

@@ -9,6 +9,7 @@ publish.workspace = true
 
 [dependencies]
 analyze = { path = "../analyze" }
+baseline = { path = "../baseline" }
 mft-parse = { path = "../mft-parse" }
 ntfs-types = { path = "../ntfs-types" }
 resolve = { path = "../resolve" }
