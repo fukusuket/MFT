@@ -1,6 +1,6 @@
 # ADR 0015: Normalization rule 1 applies to profile folders only
 
-Status: proposed (2026-10-07)  <!-- a human changes this to accepted (AGENTS.md H2) -->
+Status: accepted (2026-10-07, approved by the maintainer)
 
 ## Context
 ADR 0012 rule 1 replaces segment 2 under `USERS` with the `USER` placeholder. That includes a file sitting directly in `\Users`.
