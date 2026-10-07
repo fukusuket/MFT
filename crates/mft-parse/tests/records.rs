@@ -8,7 +8,8 @@ use std::io::Cursor;
 use mft_parse::{DiagCode, Diagnostic, Entry, Namespace, records};
 use ntfs_types::Filetime;
 use support::{
-    file_name_with, record, resident, standard_information, standard_information_created, u16s,
+    file_name_with, record, record_with_flags, resident, standard_information,
+    standard_information_created, u16s,
 };
 
 type TestResult = Result<(), Box<dyn Error>>;
@@ -359,5 +360,16 @@ fn interrupted_reads_are_retried() -> TestResult {
         records(InterruptedOnce(true, Cursor::new(mft)))?.collect::<Result<_, _>>()?;
 
     assert_eq!(entries.len(), 1);
+    Ok(())
+}
+
+#[test]
+fn is_dir_comes_from_the_header_flag() -> TestResult {
+    let mut mft = record_with_flags(1024, 0x01, 0, &[standard_information()]);
+    mft.extend(record_with_flags(1024, 0x03, 1, &[standard_information()]));
+
+    let dirs: Vec<bool> = parse(mft)?.iter().map(|e| e.is_dir).collect();
+
+    assert_eq!(dirs, [false, true]);
     Ok(())
 }

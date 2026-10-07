@@ -77,6 +77,11 @@ pub(crate) fn data(name: &[u16], content: &[u8], id: u16) -> Vec<u8> {
 
 /// A complete FILE record with fixups applied (`size` = 1024 or 4096).
 pub(crate) fn record(size: usize, in_use: bool, entry: u32, attrs: &[Vec<u8>]) -> Vec<u8> {
+    record_with_flags(size, u16::from(in_use), entry, attrs)
+}
+
+/// Like [`record`] with explicit header flags (0x01 in use, 0x02 directory).
+pub(crate) fn record_with_flags(size: usize, flags: u16, entry: u32, attrs: &[Vec<u8>]) -> Vec<u8> {
     let sectors = size / SECTOR;
     let usa_count = sectors + 1;
     let first_attr = align8(USA_OFFSET + usa_count * 2);
@@ -87,7 +92,7 @@ pub(crate) fn record(size: usize, in_use: bool, entry: u32, attrs: &[Vec<u8>]) -
     r[0x10..0x12].copy_from_slice(&1u16.to_le_bytes()); // sequence
     r[0x12..0x14].copy_from_slice(&1u16.to_le_bytes()); // link count
     r[0x14..0x16].copy_from_slice(&u16::try_from(first_attr).unwrap_or(0).to_le_bytes());
-    r[0x16..0x18].copy_from_slice(&u16::from(in_use).to_le_bytes());
+    r[0x16..0x18].copy_from_slice(&flags.to_le_bytes());
     let mut at = first_attr;
     for a in attrs {
         r[at..at + a.len()].copy_from_slice(a);

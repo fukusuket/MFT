@@ -24,6 +24,7 @@ pub enum Error {
 pub struct Entry {
     pub file_ref: FileRef,
     pub in_use: bool,
+    pub is_dir: bool,
     pub si_created: Option<Filetime>,
     /// Every `$FILE_NAME`, in attribute order.
     pub names: Vec<FileName>,
@@ -164,6 +165,7 @@ fn unreadable(entry: u64, offset: u64, code: DiagCode) -> Entry {
     Entry {
         file_ref: file_ref(entry, 0),
         in_use: false,
+        is_dir: false,
         si_created: None,
         names: Vec::new(),
         diagnostics: vec![Diagnostic { code, offset }],
@@ -177,6 +179,7 @@ fn parse_record(entry: u64, offset: u64, buf: Vec<u8>) -> Entry {
     let mut parsed = Entry {
         file_ref: file_ref(entry, u16::from_le_bytes([buf[0x10], buf[0x11]])),
         in_use: buf[0x16] & 0x01 != 0,
+        is_dir: buf[0x16] & 0x02 != 0,
         si_created: None,
         names: Vec::new(),
         diagnostics: Vec::new(),

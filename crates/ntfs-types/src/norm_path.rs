@@ -8,6 +8,10 @@ impl NormPath {
     pub fn from_units(units: &[u16]) -> Self {
         Self(units.iter().map(|&u| upcase(u)).collect())
     }
+
+    pub fn units(&self) -> &[u16] {
+        &self.0
+    }
 }
 
 #[cfg(test)]

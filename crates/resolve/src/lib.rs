@@ -174,6 +174,7 @@ mod tests {
         Entry {
             file_ref: FileRef::from_raw(number | (u64::from(sequence) << 48)),
             in_use: true,
+            is_dir: false,
             si_created: None,
             names: names
                 .iter()
