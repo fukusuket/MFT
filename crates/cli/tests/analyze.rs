@@ -7,7 +7,7 @@ use std::error::Error;
 use std::path::PathBuf;
 use std::process::Command;
 
-use support::{file_name_with, record, standard_information, u16s};
+use support::{extension, file_name_with, record, standard_information, u16s};
 
 type TestResult = Result<(), Box<dyn Error>>;
 
@@ -191,5 +191,89 @@ fn bad_baseline_file_fails_with_a_message_not_a_panic() -> TestResult {
         "{stderr}"
     );
     assert!(!stderr.contains("panicked"), "{stderr}");
+    Ok(())
+}
+
+#[test]
+fn extension_records_merge_into_one_row() -> TestResult {
+    let dir = scratch("extension_records_merge_into_one_row")?;
+    let (input, csv) = (dir.join("MFT"), dir.join("out.csv"));
+    let root = 5 | (1 << 48);
+    let file = 6 | (1 << 48);
+    let mut mft = record(
+        1024,
+        true,
+        0,
+        &[
+            standard_information(),
+            file_name_with(root, &u16s("$MFT"), 1, 0),
+        ],
+    );
+    mft.extend(vec![0u8; 4 * 1024]);
+    mft.extend(record(
+        1024,
+        true,
+        5,
+        &[
+            standard_information(),
+            file_name_with(root, &u16s("."), 1, 0),
+        ],
+    ));
+    mft.extend(record(
+        1024,
+        true,
+        6,
+        &[
+            standard_information(),
+            file_name_with(root, &u16s("LONGNA~1.TXT"), 2, 0),
+        ],
+    ));
+    mft.extend(extension(
+        1024,
+        true,
+        7,
+        file,
+        &[file_name_with(root, &u16s("Long name.txt"), 1, 0)],
+    ));
+    mft.extend(extension(
+        1024,
+        false,
+        8,
+        file,
+        &[file_name_with(root, &u16s("stale.txt"), 1, 0)],
+    ));
+    std::fs::write(&input, mft)?;
+
+    let status = tool()
+        .args(["analyze", "-i"])
+        .arg(&input)
+        .arg("--csv")
+        .arg(&csv)
+        .status()?;
+
+    assert!(status.success());
+    let text = std::fs::read_to_string(&csv).unwrap_or_default();
+    let rows: Vec<(String, String, String)> = text
+        .lines()
+        .skip(1)
+        .map(|r| {
+            let f: Vec<&str> = r.split(',').collect();
+            (
+                f[0].to_string(),
+                f[4].to_string(),
+                f[f.len() - 1].to_string(),
+            )
+        })
+        .collect();
+    let row = |e: &str, p: &str, d: &str| (e.to_string(), p.to_string(), d.to_string());
+    assert_eq!(
+        rows,
+        [
+            row("0", r"\$MFT", ""),
+            row("5", r"\", ""),
+            row("6", r"\Long name.txt", ""),
+            row("8", r"\stale.txt", "orphan_extension"),
+        ]
+    );
     Ok(())
 }

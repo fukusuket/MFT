@@ -73,6 +73,9 @@ Decisions before the first slice (H2):
 - [x] **P1-3 Baseline** (crate `baseline`, `tool baseline build`)
   - Done when: `tool baseline build --vwr <csv> -o win11-24h2.fst` builds an fst of `NormPath` keys from VanillaWindowsReference Win11 24H2; normalization covers user profile, SIDs, GUIDs, WinSxS version parts; lookup gives `standard` / `outside`; CSV gains a `baseline` column; S4's outside-baseline ratio reproduced by the real code.
   - Out of scope: other builds, UBR fallback, zstd packaging, baseline CI, `tool baseline update`.
+- [x] **P1-3b Merge extension records** (`mft-parse`; added after P1-3: 4,982 duplicate rows on Win11)
+  - Done when: `Entry.base` from the FILE header; `merge_extensions` appends an extension's names and diagnostics to its base (base readable and a base record, same sequence, same in-use state) and drops its row; any other extension keeps its row with `orphan_extension`; no duplicate in-use paths on the Win11 image; Win11 22H2 re-measured at 214,385 files / 69.1 % outside (S4's 70.7 % ignored extension names), Win10 unchanged (63,350 / 82.5 %).
+  - Out of scope: `$ATTRIBUTE_LIST` parsing, non-resident attributes, `$SI` from extensions.
 - [ ] **P1-4 Sigma** (crates `sigma`, `detect`)
   - Done when: rules from a directory load through `rsigma-eval` (ADR 0003 rules: every rule has an `id`; route with `evaluate_with_logsource`); MFT entries emitted as `file_event` with standard fields, plus `service: baseline_outside` for outside entries; findings carry rule `id`, `title`, `level`, `author` (DRL) and the `explain` trace; results sorted (ADR 0002 #3); 3–5 sample rules in `testdata/rules/`.
   - Out of scope: correlations, USN categories (`file_delete` etc.), SigmaHQ import at scale, `tool rules update`.

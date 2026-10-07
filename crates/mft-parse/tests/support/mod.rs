@@ -80,6 +80,19 @@ pub(crate) fn record(size: usize, in_use: bool, entry: u32, attrs: &[Vec<u8>]) -
     record_with_flags(size, u16::from(in_use), entry, attrs)
 }
 
+/// An extension record of `base` (entry | sequence << 48).
+pub(crate) fn extension(
+    size: usize,
+    in_use: bool,
+    entry: u32,
+    base: u64,
+    attrs: &[Vec<u8>],
+) -> Vec<u8> {
+    let mut r = record(size, in_use, entry, attrs);
+    r[0x20..0x28].copy_from_slice(&base.to_le_bytes());
+    r
+}
+
 /// Like [`record`] with explicit header flags (0x01 in use, 0x02 directory).
 pub(crate) fn record_with_flags(size: usize, flags: u16, entry: u32, attrs: &[Vec<u8>]) -> Vec<u8> {
     let sectors = size / SECTOR;

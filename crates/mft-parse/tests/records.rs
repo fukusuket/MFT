@@ -8,7 +8,7 @@ use std::io::Cursor;
 use mft_parse::{DiagCode, Diagnostic, Entry, Namespace, records};
 use ntfs_types::Filetime;
 use support::{
-    file_name_with, record, record_with_flags, resident, standard_information,
+    extension, file_name_with, record, record_with_flags, resident, standard_information,
     standard_information_created, u16s,
 };
 
@@ -371,5 +371,224 @@ fn is_dir_comes_from_the_header_flag() -> TestResult {
     let dirs: Vec<bool> = parse(mft)?.iter().map(|e| e.is_dir).collect();
 
     assert_eq!(dirs, [false, true]);
+    Ok(())
+}
+
+#[test]
+fn base_comes_from_the_header() -> TestResult {
+    let mut mft = record(1024, true, 0, &[standard_information()]);
+    mft.extend(extension(1024, true, 1, 40 | (3 << 48), &[]));
+
+    let bases: Vec<Option<(u64, u16)>> = parse(mft)?
+        .iter()
+        .map(|e| e.base.map(|b| (b.entry(), b.sequence())))
+        .collect();
+
+    assert_eq!(bases, [None, Some((40, 3))]);
+    Ok(())
+}
+
+#[test]
+fn an_extension_of_the_mft_itself_has_base_entry_0() -> TestResult {
+    let mut mft = record(1024, true, 0, &[standard_information()]);
+    mft.extend(extension(1024, true, 1, 1 << 48, &[]));
+
+    let bases: Vec<Option<(u64, u16)>> = parse(mft)?
+        .iter()
+        .map(|e| e.base.map(|b| (b.entry(), b.sequence())))
+        .collect();
+
+    assert_eq!(bases, [None, Some((0, 1))]);
+    Ok(())
+}
+
+fn names(entry: &Entry) -> Vec<String> {
+    entry.names.iter().map(|n| n.name.to_string()).collect()
+}
+
+#[test]
+fn live_extension_names_and_diagnostics_move_to_the_base() -> TestResult {
+    let mut mft = record(
+        1024,
+        true,
+        0,
+        &[
+            standard_information(),
+            file_name_with(5, &u16s("LONGNA~1.TXT"), 2, 0),
+        ],
+    );
+    let mut ext = extension(
+        1024,
+        true,
+        1,
+        1 << 48,
+        &[file_name_with(5, &u16s("Long name.txt"), 1, 0)],
+    );
+    ext[1022] ^= 0xFF; // fixup mismatch in the extension
+    mft.extend(ext);
+    mft.extend(record(
+        1024,
+        true,
+        2,
+        &[file_name_with(5, &u16s("other"), 1, 0)],
+    ));
+
+    let merged = mft_parse::merge_extensions(parse(mft)?, 1024);
+
+    let rows: Vec<(u64, Vec<String>, Vec<Diagnostic>)> = merged
+        .iter()
+        .map(|e| (e.file_ref.entry(), names(e), e.diagnostics.clone()))
+        .collect();
+    assert_eq!(
+        rows,
+        [
+            (
+                0,
+                vec!["LONGNA~1.TXT".to_string(), "Long name.txt".to_string()],
+                vec![Diagnostic {
+                    code: DiagCode::FixupMismatch,
+                    offset: 1024
+                }]
+            ),
+            (2, vec!["other".to_string()], vec![]),
+        ]
+    );
+    Ok(())
+}
+
+#[test]
+fn unmergeable_extensions_keep_their_row_as_orphans() -> TestResult {
+    let named = |n: &str| file_name_with(5, &u16s(n), 1, 0);
+    let mut mft = record(1024, true, 0, &[standard_information()]); // live base, sequence 1
+    mft.extend(extension(
+        1024,
+        true,
+        1,
+        77 | (1 << 48),
+        &[named("missing base")],
+    ));
+    mft.extend(extension(
+        1024,
+        true,
+        2,
+        2 << 48,
+        &[named("wrong sequence")],
+    ));
+    mft.extend(extension(1024, false, 3, 1 << 48, &[named("stale")]));
+    mft.extend(extension(
+        1024,
+        true,
+        4,
+        1 | (1 << 48),
+        &[named("base is an extension")],
+    ));
+
+    let merged = mft_parse::merge_extensions(parse(mft)?, 1024);
+
+    let orphan = |offset| {
+        vec![Diagnostic {
+            code: DiagCode::OrphanExtension,
+            offset,
+        }]
+    };
+    let rows: Vec<(u64, Vec<Diagnostic>)> = merged
+        .iter()
+        .map(|e| (e.file_ref.entry(), e.diagnostics.clone()))
+        .collect();
+    assert_eq!(
+        rows,
+        [
+            (0, vec![]),
+            (1, orphan(1024)),
+            (2, orphan(2048)),
+            (3, orphan(3072)),
+            (4, orphan(4096))
+        ]
+    );
+    assert_eq!(names(&merged[0]), Vec::<String>::new());
+    Ok(())
+}
+
+#[test]
+fn several_extensions_merge_in_entry_order_after_the_base_names() -> TestResult {
+    let named = |n: &str| file_name_with(5, &u16s(n), 1, 0);
+    let base = 2 | (1 << 48);
+    let mut mft = record(1024, true, 0, &[standard_information()]);
+    mft.extend(extension(1024, true, 1, base, &[named("from 1")]));
+    mft.extend(record(1024, true, 2, &[named("base")]));
+    mft.extend(extension(
+        1024,
+        true,
+        3,
+        base,
+        &[named("from 3a"), named("from 3b")],
+    ));
+
+    let merged = mft_parse::merge_extensions(parse(mft)?, 1024);
+
+    assert_eq!(
+        merged
+            .iter()
+            .map(|e| e.file_ref.entry())
+            .collect::<Vec<_>>(),
+        [0, 2]
+    );
+    assert_eq!(names(&merged[1]), ["base", "from 1", "from 3a", "from 3b"]);
+    Ok(())
+}
+
+#[test]
+fn an_unreadable_record_is_never_a_base() -> TestResult {
+    let mut mft = record(1024, true, 0, &[standard_information()]);
+    let mut bad = record(1024, true, 1, &[standard_information()]);
+    bad[0..4].copy_from_slice(b"BAAD"); // read as: entry 1, sequence 0, not in use
+    mft.extend(bad);
+    mft.extend(extension(
+        1024,
+        false,
+        2,
+        1,
+        &[file_name_with(5, &u16s("x"), 1, 0)],
+    ));
+
+    let merged = mft_parse::merge_extensions(parse(mft)?, 1024);
+
+    let rows: Vec<(u64, Vec<String>)> = merged
+        .iter()
+        .map(|e| (e.file_ref.entry(), names(e)))
+        .collect();
+    assert_eq!(rows, [(0, vec![]), (1, vec![]), (2, vec!["x".to_string()])]);
+    assert_eq!(
+        merged[2].diagnostics,
+        [Diagnostic {
+            code: DiagCode::OrphanExtension,
+            offset: 2048
+        }]
+    );
+    Ok(())
+}
+
+#[test]
+fn a_deleted_files_extension_merges_into_its_deleted_base() -> TestResult {
+    let mut mft = record(1024, true, 0, &[standard_information()]);
+    mft.extend(record(
+        1024,
+        false,
+        1,
+        &[file_name_with(5, &u16s("DELETE~1.EXE"), 2, 0)],
+    ));
+    mft.extend(extension(
+        1024,
+        false,
+        2,
+        1 | (1 << 48),
+        &[file_name_with(5, &u16s("deleted tool.exe"), 1, 0)],
+    ));
+
+    let merged = mft_parse::merge_extensions(parse(mft)?, 1024);
+
+    assert_eq!(merged.len(), 2);
+    assert_eq!(names(&merged[1]), ["DELETE~1.EXE", "deleted tool.exe"]);
+    assert!(merged[1].diagnostics.is_empty());
     Ok(())
 }

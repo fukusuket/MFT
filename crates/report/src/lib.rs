@@ -117,6 +117,7 @@ fn code(code: DiagCode) -> &'static str {
         DiagCode::FixupMismatch => "fixup_mismatch",
         DiagCode::Malformed => "malformed",
         DiagCode::Truncated => "truncated",
+        DiagCode::OrphanExtension => "orphan_extension",
     }
 }
 
@@ -151,6 +152,7 @@ mod tests {
             file_ref: FileRef::from_raw(42 | (3 << 48)),
             in_use: true,
             is_dir: false,
+            base: None,
             si_created: Some(Filetime::from_raw(133_444_555_666_777_888)),
             names: vec![
                 FileName {
@@ -175,6 +177,7 @@ mod tests {
             file_ref: FileRef::from_raw(5),
             in_use: true,
             is_dir: false,
+            base: None,
             si_created: None,
             names: vec![FileName {
                 name: NtfsName::from_units(&units(".")),
@@ -188,6 +191,7 @@ mod tests {
             file_ref: FileRef::from_raw(43),
             in_use: false,
             is_dir: false,
+            base: None,
             si_created: None,
             names: vec![],
             diagnostics: vec![
@@ -217,6 +221,7 @@ mod tests {
             file_ref: FileRef::from_raw(0),
             in_use: true,
             is_dir: false,
+            base: None,
             si_created: None,
             names: vec![FileName {
                 name: NtfsName::from_units(&units(name)),
@@ -292,6 +297,25 @@ mod tests {
             .map(|row| row.split(',').nth(6).unwrap_or_default())
             .collect();
         assert_eq!(column, ["baseline", "", "standard", "outside"]);
+        Ok(())
+    }
+
+    #[test]
+    fn writes_the_orphan_extension_code() -> Result<(), Box<dyn std::error::Error>> {
+        let mut orphan = named("x");
+        orphan.diagnostics = vec![Diagnostic {
+            code: DiagCode::OrphanExtension,
+            offset: 0,
+        }];
+
+        let csv = csv_of(&[orphan])?;
+
+        assert!(
+            csv.lines()
+                .nth(1)
+                .is_some_and(|row| row.ends_with(",orphan_extension")),
+            "{csv}"
+        );
         Ok(())
     }
 }

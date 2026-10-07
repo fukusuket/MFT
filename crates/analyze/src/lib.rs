@@ -49,6 +49,7 @@ mod tests {
             file_ref: FileRef::from_raw(number | (1 << 48)),
             in_use: true,
             is_dir: false,
+            base: None,
             si_created: None,
             names: vec![FileName {
                 name: NtfsName::from_units(&name.encode_utf16().collect::<Vec<_>>()),
