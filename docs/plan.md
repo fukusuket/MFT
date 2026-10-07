@@ -70,7 +70,7 @@ Decisions before the first slice (H2):
 - [x] **P1-2 Paths from `$MFT`** (crate `resolve`, MFT-only)
   - Done when: each entry gets a full path from parent references with sequence checks; state `resolved` / `unknown` (parent missing, deleted or reused); never invents a path; CSV gains a `path` column.
   - Out of scope: USN, Rewind, `inferred` (Phase 2).
-- [ ] **P1-3 Baseline** (crate `baseline`, `tool baseline build`)
+- [x] **P1-3 Baseline** (crate `baseline`, `tool baseline build`)
   - Done when: `tool baseline build --vwr <csv> -o win11-24h2.fst` builds an fst of `NormPath` keys from VanillaWindowsReference Win11 24H2; normalization covers user profile, SIDs, GUIDs, WinSxS version parts; lookup gives `standard` / `outside`; CSV gains a `baseline` column; S4's outside-baseline ratio reproduced by the real code.
   - Out of scope: other builds, UBR fallback, zstd packaging, baseline CI, `tool baseline update`.
 - [ ] **P1-4 Sigma** (crates `sigma`, `detect`)

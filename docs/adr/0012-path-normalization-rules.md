@@ -1,6 +1,6 @@
 # ADR 0012: Path normalization rules for the baseline
 
-Status: accepted (2026-10-06, approved by the maintainer)
+Status: accepted (2026-10-06, approved by the maintainer); rule 1 amended by [ADR 0015](0015-user-rule-folders-only.md)
 
 ## Context
 Baseline lookups are exact (ADR 0002 #2). Paths differ between hosts in user names, SIDs, GUIDs and WinSxS version parts. Spike S4 measured a small set of rules ([baseline-poc.md](../research/baseline-poc.md)). The question is whether the rules live in Rust or in declarative YAML in `tool-rules`, and what a normalized key looks like. P1-3 needs the answer.

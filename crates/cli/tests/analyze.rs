@@ -68,13 +68,13 @@ fn analyze_writes_one_csv_row_per_record_with_paths() -> TestResult {
     assert!(status.success());
     assert_eq!(
         std::fs::read_to_string(&csv).unwrap_or_default(),
-        "entry,sequence,in_use,name,path,path_state,si_created,fn_created,diagnostics\n\
-         0,1,true,$MFT,\\$MFT,resolved,2019-04-17T18:40:00.0000000Z,1601-01-01T00:00:00.0000000Z,\n\
-         5,1,true,.,\\,resolved,2019-04-17T18:40:00.0000000Z,1601-01-01T00:00:00.0000000Z,\n\
-         6,1,true,Users,\\Users,resolved,2019-04-17T18:40:00.0000000Z,1601-01-01T00:00:00.0000000Z,\n\
-         7,1,true,a.txt,\\Users\\a.txt,resolved,2019-04-17T18:40:00.0000000Z,1601-01-01T00:00:00.0000000Z,\n\
-         8,1,true,old.txt,,unknown,2019-04-17T18:40:00.0000000Z,1601-01-01T00:00:00.0000000Z,\n\
-         9,0,false,,,unknown,,,bad_signature\n"
+        "entry,sequence,in_use,name,path,path_state,baseline,si_created,fn_created,diagnostics\n\
+         0,1,true,$MFT,\\$MFT,resolved,,2019-04-17T18:40:00.0000000Z,1601-01-01T00:00:00.0000000Z,\n\
+         5,1,true,.,\\,resolved,,2019-04-17T18:40:00.0000000Z,1601-01-01T00:00:00.0000000Z,\n\
+         6,1,true,Users,\\Users,resolved,,2019-04-17T18:40:00.0000000Z,1601-01-01T00:00:00.0000000Z,\n\
+         7,1,true,a.txt,\\Users\\a.txt,resolved,,2019-04-17T18:40:00.0000000Z,1601-01-01T00:00:00.0000000Z,\n\
+         8,1,true,old.txt,,unknown,,2019-04-17T18:40:00.0000000Z,1601-01-01T00:00:00.0000000Z,\n\
+         9,0,false,,,unknown,,,,bad_signature\n"
     );
     Ok(())
 }
@@ -122,5 +122,74 @@ fn same_input_gives_byte_identical_csv() -> TestResult {
     }
 
     assert_eq!(outputs[0], outputs[1]);
+    Ok(())
+}
+
+#[test]
+fn baseline_build_then_analyze_labels_files() -> TestResult {
+    let dir = scratch("baseline_build_then_analyze_labels_files")?;
+    let (vwr, index, input, csv) = (
+        dir.join("vwr.csv"),
+        dir.join("b.fst"),
+        dir.join("MFT"),
+        dir.join("out.csv"),
+    );
+    std::fs::write(
+        &vwr,
+        "\"DirectoryName\",\"Name\",\"FullName\"\n\"C:\\\",\"$MFT\",\"C:\\$MFT\"\n\"C:\\Users\",\"Bob\",\"C:\\Users\\Bob\"\n",
+    )?;
+    std::fs::write(&input, small_volume_mft())?;
+
+    let built = tool()
+        .args(["baseline", "build", "--vwr"])
+        .arg(&vwr)
+        .arg("-o")
+        .arg(&index)
+        .status()?;
+    let analyzed = tool()
+        .args(["analyze", "-i"])
+        .arg(&input)
+        .arg("--csv")
+        .arg(&csv)
+        .arg("--baseline")
+        .arg(&index)
+        .status()?;
+
+    assert!(built.success() && analyzed.success());
+    let text = std::fs::read_to_string(&csv).unwrap_or_default();
+    let column: Vec<&str> = text
+        .lines()
+        .skip(1)
+        .map(|r| r.split(',').nth(6).unwrap_or_default())
+        .collect();
+    // $MFT; root; \Users (a file in this fixture); \Users\a.txt (directly under \Users, so literal
+    // and not the VWR's \Users\Bob, ADR 0015); stale; BAAD
+    assert_eq!(column, ["standard", "", "outside", "outside", "", ""]);
+    Ok(())
+}
+
+#[test]
+fn bad_baseline_file_fails_with_a_message_not_a_panic() -> TestResult {
+    let dir = scratch("bad_baseline_file_fails_with_a_message_not_a_panic")?;
+    let (index, input) = (dir.join("not-a-baseline.fst"), dir.join("MFT"));
+    std::fs::write(&index, b"definitely not a baseline")?;
+    std::fs::write(&input, small_volume_mft())?;
+
+    let out = tool()
+        .args(["analyze", "-i"])
+        .arg(&input)
+        .arg("--csv")
+        .arg(dir.join("out.csv"))
+        .arg("--baseline")
+        .arg(&index)
+        .output()?;
+
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(1), "{stderr}");
+    assert!(
+        stderr.contains("not-a-baseline.fst") && stderr.contains("not a baseline file"),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("panicked"), "{stderr}");
     Ok(())
 }
