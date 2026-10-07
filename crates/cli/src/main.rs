@@ -72,7 +72,9 @@ fn analyze(input: &Path, csv: &Path, baseline: Option<&Path>) -> anyhow::Result<
     let out = File::create(csv).with_context(|| format!("creating {}", csv.display()))?;
     let mut writer = CsvWriter::new(BufWriter::new(out))?;
     // Paths need every parent, so all records are read before the first row is written.
-    let entries = mft_parse::records(BufReader::new(mft))?.collect::<Result<Vec<_>, _>>()?;
+    let records = mft_parse::records(BufReader::new(mft))?;
+    let record_size = records.record_size();
+    let entries = mft_parse::merge_extensions(records.collect::<Result<Vec<_>, _>>()?, record_size);
     for row in analyze::rows(&entries, baseline.as_ref()) {
         writer.write(&row)?;
     }

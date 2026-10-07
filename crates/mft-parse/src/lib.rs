@@ -2,6 +2,7 @@
 //!
 //! Names come only from `Utf16LeStr::as_utf16le_bytes()` (ADR 0004).
 
+use std::collections::HashMap;
 use std::io::Read;
 
 use mft::MftEntry;
@@ -25,6 +26,8 @@ pub struct Entry {
     pub file_ref: FileRef,
     pub in_use: bool,
     pub is_dir: bool,
+    /// The base record this extension record belongs to; `None` for base records.
+    pub base: Option<FileRef>,
     pub si_created: Option<Filetime>,
     /// Every `$FILE_NAME`, in attribute order.
     pub names: Vec<FileName>,
@@ -49,6 +52,8 @@ pub enum DiagCode {
     Malformed,
     /// The `$MFT` ends inside this record.
     Truncated,
+    /// An extension record whose base is missing, reused, or in a different in-use state.
+    OrphanExtension,
 }
 
 /// One `$FILE_NAME` attribute.
@@ -108,6 +113,13 @@ pub fn records<R: Read>(mut reader: R) -> Result<Records<R>, Error> {
     })
 }
 
+impl<R> Records<R> {
+    /// Bytes per FILE record (1024 or 4096), as read from record 0.
+    pub fn record_size(&self) -> u64 {
+        u64::from(self.record_size)
+    }
+}
+
 impl<R: Read> Iterator for Records<R> {
     type Item = Result<Entry, Error>;
 
@@ -160,12 +172,69 @@ fn read_full(reader: &mut impl Read, buf: &mut [u8]) -> std::io::Result<usize> {
     Ok(filled)
 }
 
+/// Folds extension records into their base entries. An extension merges when its base exists,
+/// was read (not BAAD or truncated), is itself a base record, has the referenced sequence and
+/// the same in-use state; its names and diagnostics are appended to the base and its row goes.
+/// Any other extension keeps its row with `OrphanExtension`.
+pub fn merge_extensions(mut entries: Vec<Entry>, record_size: u64) -> Vec<Entry> {
+    let position: HashMap<u64, usize> = entries
+        .iter()
+        .enumerate()
+        .map(|(i, e)| (e.file_ref.entry(), i))
+        .collect();
+    let target: Vec<Option<usize>> = entries
+        .iter()
+        .map(|ext| {
+            let base_ref = ext.base?;
+            let &i = position.get(&base_ref.entry())?;
+            let base = &entries[i];
+            (base.base.is_none()
+                && readable(base)
+                && base.file_ref.sequence() == base_ref.sequence()
+                && base.in_use == ext.in_use)
+                .then_some(i)
+        })
+        .collect();
+    for (ext, base) in target.iter().enumerate() {
+        match *base {
+            Some(base) => {
+                let names = std::mem::take(&mut entries[ext].names);
+                let diagnostics = std::mem::take(&mut entries[ext].diagnostics);
+                entries[base].names.extend(names);
+                entries[base].diagnostics.extend(diagnostics);
+            }
+            None if entries[ext].base.is_some() => {
+                let offset = entries[ext].file_ref.entry().saturating_mul(record_size);
+                entries[ext].diagnostics.push(Diagnostic {
+                    code: DiagCode::OrphanExtension,
+                    offset,
+                });
+            }
+            None => {}
+        }
+    }
+    entries
+        .into_iter()
+        .zip(target)
+        .filter_map(|(entry, base)| base.is_none().then_some(entry))
+        .collect()
+}
+
+/// Whether the record's own header and attributes were read (see [`unreadable`]).
+fn readable(entry: &Entry) -> bool {
+    !entry
+        .diagnostics
+        .iter()
+        .any(|d| matches!(d.code, DiagCode::BadSignature | DiagCode::Truncated))
+}
+
 /// An entry for a record whose contents can't be used: only its position and the reason.
 fn unreadable(entry: u64, offset: u64, code: DiagCode) -> Entry {
     Entry {
         file_ref: file_ref(entry, 0),
         in_use: false,
         is_dir: false,
+        base: None,
         si_created: None,
         names: Vec::new(),
         diagnostics: vec![Diagnostic { code, offset }],
@@ -180,6 +249,7 @@ fn parse_record(entry: u64, offset: u64, buf: Vec<u8>) -> Entry {
         file_ref: file_ref(entry, u16::from_le_bytes([buf[0x10], buf[0x11]])),
         in_use: buf[0x16] & 0x01 != 0,
         is_dir: buf[0x16] & 0x02 != 0,
+        base: base_reference(&buf),
         si_created: None,
         names: Vec::new(),
         diagnostics: Vec::new(),
@@ -216,6 +286,14 @@ fn read_attributes(
             _ => {}
         }
     }
+}
+
+/// The header's base record reference; all zero means this is a base record ($MFT's own
+/// extensions point to entry 0, so the entry number alone can't tell).
+fn base_reference(buf: &[u8]) -> Option<FileRef> {
+    let raw = u64::from_le_bytes(*buf.get(0x20..0x28)?.first_chunk::<8>()?);
+    let base = FileRef::from_raw(raw);
+    (raw != 0).then_some(base)
 }
 
 fn file_ref(entry: u64, sequence: u16) -> FileRef {

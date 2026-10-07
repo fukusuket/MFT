@@ -22,6 +22,8 @@ Question: how much of a real volume falls outside the VanillaWindowsReference (V
 
 Path resolution: no corrupt records and no unresolved paths on either image. A 532 MB `$MFT` takes 2.1 s with a `HashSet` lookup.
 
+**Correction (P1-3b, 2026-10-07).** The spike ignored extension records, which hold the Win32 long names of some files and directories. With them merged into their base records, the real code measures Win11 at 214,385 files and 69.1 % outside (148,195): 2,766 paths now match the baseline. Win10 is unchanged.
+
 ## Findings
 1. **`$UpCase` is identical** on Win10 22H2 and Win11 22H2 and matches ADR 0009. No supersede needed.
 2. **The whole-volume ratio is far above 10 %.** Where the outside files are (Win11):
