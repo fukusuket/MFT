@@ -82,9 +82,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: taiki-e/install-action@861a07ce7084f55488e375df125cdc99bba60eb7 # v2.87.23
-        with:
-          tool: cargo-vet
+      # 0.10.2 is the first release that parses `trusted-publisher` entries in imports.lock; it has no prebuilt binary.
+      - run: cargo install --locked cargo-vet --version 0.10.2
       - run: cargo vet --locked
 
   # D1: secrets and personal paths over the full history (backstop for local hooks).
