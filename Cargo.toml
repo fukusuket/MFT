@@ -8,6 +8,7 @@ version = "0.0.0"
 edition = "2024"
 rust-version = "1.98"
 license = "AGPL-3.0-only"
+repository = "https://github.com/fukusuket/MFT"
 publish = false
 
 [workspace.lints.rust]

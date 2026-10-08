@@ -232,6 +232,7 @@ dependencies = [
  "clap",
  "mft-parse",
  "report",
+ "serde_json",
  "sigma",
 ]
 
@@ -884,6 +885,8 @@ dependencies = [
  "mft-parse",
  "ntfs-types",
  "resolve",
+ "serde",
+ "serde_json",
  "sigma",
  "thiserror 2.0.21",
 ]

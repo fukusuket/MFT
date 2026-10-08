@@ -127,6 +127,11 @@ impl Rules {
         })
     }
 
+    /// Number of loaded rules.
+    pub fn count(&self) -> usize {
+        self.ids.len()
+    }
+
     /// Rules whose logsource fits the event and whose detection matches it.
     pub fn evaluate(&self, event: &Event) -> Vec<Finding> {
         let logsource = LogSource {
@@ -238,6 +243,20 @@ mod tests {
         let rules = Rules::load(&dir)?;
 
         assert_eq!(rules.ids, ["rule-a", "rule-b"]);
+        Ok(())
+    }
+
+    #[test]
+    fn count_is_the_number_of_loaded_rules() -> Result<(), Error> {
+        let dir = rule_dir(
+            "len",
+            &[
+                ("a.yml", &rule("rule-a", "A", "")),
+                ("b.yml", &rule("rule-b", "B", "")),
+            ],
+        );
+
+        assert_eq!(Rules::load(&dir)?.count(), 2);
         Ok(())
     }
 

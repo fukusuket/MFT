@@ -10,10 +10,17 @@ use ntfs_types::Filetime;
 use resolve::Resolution;
 use sigma::{Finding, Level};
 
+mod base64;
+mod html;
+
+pub use html::{HtmlReport, Input, Provenance};
+
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("writing CSV: {0}")]
     Csv(#[from] csv::Error),
+    #[error("writing HTML: {0}")]
+    Html(#[from] std::io::Error),
 }
 
 const HEADER: [&str; 11] = [
@@ -93,32 +100,42 @@ fn path_cell(resolution: &Resolution<'_>) -> String {
 fn findings_cell(findings: &[Finding]) -> String {
     let items: Vec<String> = findings
         .iter()
-        .map(|f| {
-            let level = match f.level {
-                Some(Level::Critical) => "critical",
-                Some(Level::High) => "high",
-                Some(Level::Medium) => "medium",
-                Some(Level::Low) => "low",
-                Some(Level::Informational) => "informational",
-                None => "none",
-            };
-            format!("{level}:{}", f.id)
-        })
+        .map(|f| format!("{}:{}", level_name(f.level), f.id))
         .collect();
     cell_text(&items.join(";")) // rule ids come from rule files: escape them like evidence
 }
 
-/// Evidence text as a CSV cell (ADR 0002 #4): control characters escaped as `\u{XX}`, and a
-/// leading `=`, `+`, `-` or `@` prefixed with `'` so spreadsheets don't run it as a formula.
-fn cell_text(text: &str) -> String {
+fn level_name(level: Option<Level>) -> &'static str {
+    match level {
+        Some(Level::Critical) => "critical",
+        Some(Level::High) => "high",
+        Some(Level::Medium) => "medium",
+        Some(Level::Low) => "low",
+        Some(Level::Informational) => "informational",
+        None => "none",
+    }
+}
+
+/// Evidence text for display (ADR 0002 #4): control characters and bidi controls (which can
+/// make `exe.pdf` read as `fdp.exe`) escaped as `\u{XX}`.
+fn display_text(text: &str) -> String {
     let mut out = String::new();
     for c in text.chars() {
-        if c.is_control() {
+        if c.is_control()
+            || matches!(c, '\u{200E}' | '\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}')
+        {
             let _ = write!(out, "\\u{{{:02X}}}", u32::from(c)); // writing to a String can't fail
         } else {
             out.push(c);
         }
     }
+    out
+}
+
+/// Evidence text as a CSV cell: [`display_text`], and a leading `=`, `+`, `-` or `@` prefixed
+/// with `'` so spreadsheets don't run it as a formula.
+fn cell_text(text: &str) -> String {
+    let mut out = display_text(text);
     if out.starts_with(['=', '+', '-', '@']) {
         out.insert(0, '\'');
     }
@@ -262,6 +279,16 @@ mod tests {
             ("a\nb", r"a\u{0A}b"),
             ("a\u{1b}[31mb", r"a\u{1B}[31mb"),
             ("a\u{85}b", r"a\u{85}b"),
+            ("x\u{202E}fdp.exe", r"x\u{202E}fdp.exe"),
+            (
+                "\u{200E}\u{200F}\u{202A}\u{202B}\u{202C}\u{202D}",
+                r"\u{200E}\u{200F}\u{202A}\u{202B}\u{202C}\u{202D}",
+            ),
+            (
+                "\u{2066}\u{2067}\u{2068}\u{2069}",
+                r"\u{2066}\u{2067}\u{2068}\u{2069}",
+            ),
+            ("\u{2065}\u{206A}\u{2029}", "\u{2065}\u{206A}\u{2029}"),
             ("a,b", r#""a,b""#),
             ("a\"b", r#""a""b""#),
         ];

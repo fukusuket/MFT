@@ -278,15 +278,12 @@ fn extension_records_merge_into_one_row() -> TestResult {
     Ok(())
 }
 
-#[test]
-fn sample_rules_find_what_they_describe() -> TestResult {
-    let dir = scratch("sample_rules_find_what_they_describe")?;
-    let (vwr, index, input, csv) = (
-        dir.join("vwr.csv"),
-        dir.join("b.fst"),
-        dir.join("MFT"),
-        dir.join("out.csv"),
-    );
+const SAMPLE_RULES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../testdata/rules");
+
+/// A `$MFT` with one file per sample rule under `\Windows` and `\Users\Public`, and a baseline
+/// file that knows only `C:\Windows\notepad.exe`. Returns the `$MFT` and baseline paths.
+fn sample_volume(dir: &std::path::Path) -> Result<(PathBuf, PathBuf), Box<dyn Error>> {
+    let (vwr, index, input) = (dir.join("vwr.csv"), dir.join("b.fst"), dir.join("MFT"));
     std::fs::write(&vwr, "\"FullName\"\n\"C:\\Windows\\notepad.exe\"\n")?;
     let at = |parent: u64| parent | (1 << 48);
     let named = |entry: u32, parent: u64, name: &str| {
@@ -329,6 +326,18 @@ fn sample_rules_find_what_they_describe() -> TestResult {
         .arg("-o")
         .arg(&index)
         .status()?;
+    if !built.success() {
+        return Err("baseline build failed".into());
+    }
+    Ok((input, index))
+}
+
+#[test]
+fn sample_rules_find_what_they_describe() -> TestResult {
+    let dir = scratch("sample_rules_find_what_they_describe")?;
+    let (input, index) = sample_volume(&dir)?;
+    let csv = dir.join("out.csv");
+
     let analyzed = tool()
         .args(["analyze", "-i"])
         .arg(&input)
@@ -337,10 +346,10 @@ fn sample_rules_find_what_they_describe() -> TestResult {
         .arg("--baseline")
         .arg(&index)
         .arg("--rules")
-        .arg(concat!(env!("CARGO_MANIFEST_DIR"), "/../../testdata/rules"))
+        .arg(SAMPLE_RULES)
         .status()?;
 
-    assert!(built.success() && analyzed.success());
+    assert!(analyzed.success());
     let text = std::fs::read_to_string(&csv).unwrap_or_default();
     let findings: Vec<(&str, &str)> = text
         .lines()
@@ -399,5 +408,114 @@ fn a_rule_without_id_fails_with_a_message_not_a_panic() -> TestResult {
         "{stderr}"
     );
     assert!(!stderr.contains("panicked"), "{stderr}");
+    Ok(())
+}
+
+/// The JSON embedded in a report written by `-o`.
+fn report_data(html: &str) -> Result<serde_json::Value, Box<dyn Error>> {
+    const OPEN: &str = r#"<script type="application/octet-stream" id="data">"#;
+    let start = html.find(OPEN).ok_or("no data element")? + OPEN.len();
+    let payload = html[start..].split('<').next().unwrap_or_default();
+    const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let (mut bits, mut count, mut bytes) = (0u32, 0, Vec::new());
+    for c in payload.bytes().filter(|&c| c != b'=') {
+        let value = ALPHABET.iter().position(|&a| a == c).ok_or("not Base64")?;
+        bits = bits << 6 | u32::try_from(value)?;
+        count += 6;
+        if count >= 8 {
+            count -= 8;
+            bytes.push(u8::try_from(bits >> count & 0xff)?);
+        }
+    }
+    Ok(serde_json::from_slice(&bytes)?)
+}
+
+#[test]
+fn html_report_lists_findings_and_the_outside_baseline_files() -> TestResult {
+    let dir = scratch("html_report_lists_findings_and_the_outside_baseline_files")?;
+    let (input, index) = sample_volume(&dir)?;
+    let (csv, html) = (dir.join("out.csv"), dir.join("report.html"));
+    let _ = std::fs::remove_file(&html);
+
+    let analyzed = tool()
+        .args(["analyze", "-i"])
+        .arg(&input)
+        .arg("--csv")
+        .arg(&csv)
+        .arg("-o")
+        .arg(&html)
+        .arg("--baseline")
+        .arg(&index)
+        .arg("--rules")
+        .arg(SAMPLE_RULES)
+        .status()?;
+
+    assert!(analyzed.success());
+    let data = report_data(&std::fs::read_to_string(&html)?)?;
+    let mut rule_ids: Vec<&str> = data["findings"]
+        .as_array()
+        .ok_or("no findings")?
+        .iter()
+        .filter_map(|f| f["id"].as_str())
+        .collect();
+    rule_ids.sort_unstable();
+    rule_ids.dedup();
+    assert_eq!(
+        rule_ids,
+        [
+            "290fe785-b499-4e25-b00f-70a4ae863c2f",
+            "46af8dfb-f067-417d-8837-9e5a1785fee0",
+            "8839b831-0916-4876-82aa-82e2a9b2f138",
+            "92986d59-a4d2-45b3-a224-c8a9809b78aa",
+        ]
+    );
+    let mut outside: Vec<&str> = data["outside"]
+        .as_array()
+        .ok_or("no outside list")?
+        .iter()
+        .filter_map(|o| o["path"].as_str())
+        .collect();
+    outside.sort_unstable();
+    let text = std::fs::read_to_string(&csv)?;
+    let mut csv_outside: Vec<&str> = text
+        .lines()
+        .filter_map(|r| {
+            let f: Vec<&str> = r.split(',').collect();
+            (f.get(6) == Some(&"outside")).then(|| f[4])
+        })
+        .collect();
+    csv_outside.sort_unstable();
+    assert_eq!(outside, csv_outside);
+    assert_eq!(data["summary"]["input"], "MFT");
+    assert_eq!(data["summary"]["baseline"], "b.fst");
+    assert_eq!(data["summary"]["rules"], 4);
+    let footer = &data["footer"];
+    assert_eq!(footer["license"], "AGPL-3.0-only");
+    assert_eq!(footer["source_url"], "https://github.com/fukusuket/MFT");
+    let commit = footer["commit"].as_str().unwrap_or_default();
+    assert!(
+        commit == "unknown"
+            || (commit.len() == 40 && commit.bytes().all(|c| c.is_ascii_hexdigit())),
+        "{commit}"
+    );
+    Ok(())
+}
+
+#[test]
+fn analyze_needs_an_output() -> TestResult {
+    let dir = scratch("analyze_needs_an_output")?;
+    std::fs::write(dir.join("MFT"), small_volume_mft())?;
+
+    let out = tool()
+        .args(["analyze", "-i"])
+        .arg(dir.join("MFT"))
+        .output()?;
+
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(2), "{stderr}");
+    assert!(
+        stderr.contains("--csv") && stderr.contains("--output"),
+        "{stderr}"
+    );
     Ok(())
 }

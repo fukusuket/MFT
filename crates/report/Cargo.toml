@@ -1,6 +1,6 @@
 [package]
 name = "report"
-description = "Report writers (CSV in Phase 1)"
+description = "Report writers (CSV and HTML in Phase 1)"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -15,6 +15,8 @@ mft-parse = { path = "../mft-parse" }
 ntfs-types = { path = "../ntfs-types" }
 resolve = { path = "../resolve" }
 csv = "=1.4.0" # ADR 0010
+serde = { version = "=1.0.229", features = ["derive"] } # ADR 0010
+serde_json = "=1.0.151" # ADR 0010
 thiserror = "=2.0.21" # ADR 0010
 
 [lints]
