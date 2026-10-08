@@ -16,6 +16,7 @@ analyze = { path = "../analyze" }
 baseline = { path = "../baseline" }
 mft-parse = { path = "../mft-parse" }
 report = { path = "../report" }
+sigma = { path = "../sigma" }
 anyhow = "=1.0.104" # ADR 0010
 clap = { version = "=4.6.7", default-features = false, features = ["std", "help", "usage", "error-context", "derive"] } # ADR 0010
 

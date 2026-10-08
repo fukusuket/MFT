@@ -40,7 +40,7 @@ Facts shown next to findings, never used to rank them: baseline status, timestom
 
 ## Crates
 
-So far: `ntfs-types`, `mft-parse`, `resolve` (MFT-only), `baseline` (no zstd yet), `analyze`, `report`, `cli`. `fuzz/` is a separate workspace (ADR 0013).
+So far: `ntfs-types`, `mft-parse`, `resolve` (MFT-only), `baseline` (no zstd yet), `sigma`, `detect`, `analyze`, `report`, `cli`. `fuzz/` is a separate workspace (ADR 0013).
 
 | Crate | Role | Depends on | Built on |
 |---|---|---|---|
@@ -50,9 +50,9 @@ So far: `ntfs-types`, `mft-parse`, `resolve` (MFT-only), `baseline` (no zstd yet
 | `resolve` | MFT↔USN join, Rewind | mft-parse, usn-parse | ported from `ntfs-core` |
 | `baseline` | Normalize, `fst` lookup, manifest | ntfs-types | `fst`, `zstd` |
 | `sigma` | Thin adapter over the Sigma engine; NTFS-agnostic | — | `rsigma-eval` `=0.23.0`, no default features (ADR 0003) |
-| `detect` | NTFS events → Sigma events, logsource mapping | sigma, resolve, baseline | — |
-| `analyze` | Pipeline, facts, findings, sorting | detect, baseline, resolve | `rayon`, `indexmap` |
-| `report` | HTML, JSONL, CSV | analyze | Svelte viewer, `csv` |
+| `detect` | NTFS events → Sigma events, logsource mapping | sigma, resolve, baseline, mft-parse | — |
+| `analyze` | Pipeline, facts, findings, sorting | detect, sigma, baseline, resolve | `rayon`, `indexmap` |
+| `report` | HTML, JSONL, CSV | analyze (and the types it returns: sigma, baseline, resolve) | Svelte viewer, `csv` |
 | `collector` | Raw volume read (Windows) | ntfs-types | `ntfs-reader =0.6.0`, Windows only (ADR 0005) |
 | `cli` | `collect`, `analyze`, `baseline`, `rules` | all | `clap` |
 

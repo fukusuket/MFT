@@ -1,4 +1,4 @@
-//! `tool analyze -i <$MFT> --csv <out> [--baseline <file>]` and `tool baseline build`.
+//! `tool analyze -i <$MFT> --csv <out> [--baseline <file>] [--rules <dir>]` and `tool baseline build`.
 
 use std::fs::File;
 use std::io::{BufReader, BufWriter, Write};
@@ -8,6 +8,7 @@ use anyhow::Context;
 use baseline::Baseline;
 use clap::{Parser, Subcommand};
 use report::CsvWriter;
+use sigma::Rules;
 
 #[derive(Debug, Parser)]
 #[command(version, about = "NTFS triage from $MFT")]
@@ -29,6 +30,9 @@ enum Command {
         /// Baseline file from `tool baseline build`; without it the `baseline` column is empty.
         #[arg(long)]
         baseline: Option<PathBuf>,
+        /// Directory of Sigma rules (`.yml`/`.yaml`); without it no rules run.
+        #[arg(long)]
+        rules: Option<PathBuf>,
     },
     /// Windows baselines.
     #[command(subcommand)]
@@ -55,12 +59,23 @@ fn main() -> anyhow::Result<()> {
             input,
             csv,
             baseline,
-        } => analyze(&input, &csv, baseline.as_deref()),
+            rules,
+        } => analyze(&input, &csv, baseline.as_deref(), rules.as_deref()),
         Command::Baseline(BaselineCommand::Build { vwr, o }) => build_baseline(&vwr, &o),
     }
 }
 
-fn analyze(input: &Path, csv: &Path, baseline: Option<&Path>) -> anyhow::Result<()> {
+fn analyze(
+    input: &Path,
+    csv: &Path,
+    baseline: Option<&Path>,
+    rules: Option<&Path>,
+) -> anyhow::Result<()> {
+    let rules = rules
+        .map(|dir| {
+            Rules::load(dir).with_context(|| format!("loading rules from {}", dir.display()))
+        })
+        .transpose()?;
     let baseline = baseline
         .map(|path| {
             let file =
@@ -75,7 +90,7 @@ fn analyze(input: &Path, csv: &Path, baseline: Option<&Path>) -> anyhow::Result<
     let records = mft_parse::records(BufReader::new(mft))?;
     let record_size = records.record_size();
     let entries = mft_parse::merge_extensions(records.collect::<Result<Vec<_>, _>>()?, record_size);
-    for row in analyze::rows(&entries, baseline.as_ref()) {
+    for row in analyze::rows(&entries, baseline.as_ref(), rules.as_ref()) {
         writer.write(&row)?;
     }
     writer.finish()?.flush()?;

@@ -1,14 +1,14 @@
 //! Report writers. Phase 1: CSV, one row per `$MFT` record.
 
-mod time;
-
 use std::fmt::Write as _;
 use std::io::Write;
 
 use analyze::Row;
 use baseline::Status;
 use mft_parse::DiagCode;
+use ntfs_types::Filetime;
 use resolve::Resolution;
+use sigma::{Finding, Level};
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -16,7 +16,7 @@ pub enum Error {
     Csv(#[from] csv::Error),
 }
 
-const HEADER: [&str; 10] = [
+const HEADER: [&str; 11] = [
     "entry",
     "sequence",
     "in_use",
@@ -24,6 +24,7 @@ const HEADER: [&str; 10] = [
     "path",
     "path_state",
     "baseline",
+    "findings",
     "si_created",
     "fn_created",
     "diagnostics",
@@ -64,8 +65,9 @@ impl<W: Write> CsvWriter<W> {
                 None => "",
             }
             .to_string(),
-            entry.si_created.map(time::iso8601).unwrap_or_default(),
-            name.map(|n| time::iso8601(n.created)).unwrap_or_default(),
+            findings_cell(&row.findings),
+            entry.si_created.map(Filetime::iso8601).unwrap_or_default(),
+            name.map(|n| n.created.iso8601()).unwrap_or_default(),
             diagnostics.join(";"),
         ])?;
         Ok(())
@@ -81,17 +83,29 @@ impl<W: Write> CsvWriter<W> {
 
 /// `\` plus the escaped names joined by `\` (a `\` inside a name shows as `\\`); empty if unknown.
 fn path_cell(resolution: &Resolution<'_>) -> String {
-    let Resolution::Resolved(segments) = resolution else {
-        return String::new();
-    };
-    let mut path = String::new();
-    for segment in segments {
-        let _ = write!(path, "\\{segment}"); // writing to a String can't fail
-    }
-    if path.is_empty() {
-        path.push('\\'); // the root
-    }
-    cell_text(&path)
+    resolution
+        .path_text()
+        .map(|p| cell_text(&p))
+        .unwrap_or_default()
+}
+
+/// `level:id` per matched rule, most severe first (the order `sigma` returns), joined by `;`.
+fn findings_cell(findings: &[Finding]) -> String {
+    let items: Vec<String> = findings
+        .iter()
+        .map(|f| {
+            let level = match f.level {
+                Some(Level::Critical) => "critical",
+                Some(Level::High) => "high",
+                Some(Level::Medium) => "medium",
+                Some(Level::Low) => "low",
+                Some(Level::Informational) => "informational",
+                None => "none",
+            };
+            format!("{level}:{}", f.id)
+        })
+        .collect();
+    cell_text(&items.join(";")) // rule ids come from rule files: escape them like evidence
 }
 
 /// Evidence text as a CSV cell (ADR 0002 #4): control characters escaped as `\u{XX}`, and a
@@ -132,15 +146,16 @@ mod tests {
     }
 
     fn csv_of(entries: &[Entry]) -> Result<String, Box<dyn std::error::Error>> {
-        csv_with(entries, None)
+        csv_with(entries, None, None)
     }
 
     fn csv_with(
         entries: &[Entry],
         baseline: Option<&baseline::Baseline>,
+        rules: Option<&sigma::Rules>,
     ) -> Result<String, Box<dyn std::error::Error>> {
         let mut w = CsvWriter::new(Vec::new())?;
-        for row in analyze::rows(entries, baseline) {
+        for row in analyze::rows(entries, baseline, rules) {
             w.write(&row)?;
         }
         Ok(String::from_utf8(w.finish()?)?)
@@ -208,10 +223,10 @@ mod tests {
 
         assert_eq!(
             csv_of(&[root, full, empty])?,
-            "entry,sequence,in_use,name,path,path_state,baseline,si_created,fn_created,diagnostics\n\
-             5,0,true,.,\\,resolved,,,1601-01-01T00:00:00.0000000Z,\n\
-             42,3,true,a\\\\b.txt,\\a\\\\b.txt,resolved,,2023-11-14T17:12:46.6777888Z,2024-02-29T12:34:56.1234567Z,fixup_mismatch\n\
-             43,0,false,,,unknown,,,,bad_signature;malformed\n"
+            "entry,sequence,in_use,name,path,path_state,baseline,findings,si_created,fn_created,diagnostics\n\
+             5,0,true,.,\\,resolved,,,,1601-01-01T00:00:00.0000000Z,\n\
+             42,3,true,a\\\\b.txt,\\a\\\\b.txt,resolved,,,2023-11-14T17:12:46.6777888Z,2024-02-29T12:34:56.1234567Z,fixup_mismatch\n\
+             43,0,false,,,unknown,,,,,bad_signature;malformed\n"
         );
         Ok(())
     }
@@ -255,7 +270,7 @@ mod tests {
             let row = csv.lines().nth(1).unwrap_or_default();
             assert_eq!(
                 row,
-                format!("0,0,true,{cell},,unknown,,,1601-01-01T00:00:00.0000000Z,"),
+                format!("0,0,true,{cell},,unknown,,,,1601-01-01T00:00:00.0000000Z,"),
                 "name {name:?}"
             );
         }
@@ -290,7 +305,7 @@ mod tests {
         let mut outside = named("y.txt");
         outside.file_ref = FileRef::from_raw(41);
 
-        let csv = csv_with(&[root, standard, outside], Some(&baseline))?;
+        let csv = csv_with(&[root, standard, outside], Some(&baseline), None)?;
 
         let column: Vec<&str> = csv
             .lines()
@@ -316,6 +331,56 @@ mod tests {
                 .is_some_and(|row| row.ends_with(",orphan_extension")),
             "{csv}"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn writes_findings_as_level_and_id() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = std::env::temp_dir().join(format!("report-rules-{}", std::process::id()));
+        std::fs::create_dir_all(&dir)?;
+        let rule = |id: &str, level: &str| {
+            format!(
+                "title: {id}\nid: {id}\nlevel: {level}\nlogsource:\n  product: windows\n  category: file_event\ndetection:\n  sel:\n    TargetFilename|endswith: '.exe'\n  condition: sel\n"
+            )
+        };
+        std::fs::write(dir.join("a.yml"), rule("rule-low", "low"))?;
+        std::fs::write(dir.join("b.yml"), rule("rule-high", "high"))?;
+        let rules = sigma::Rules::load(&dir)?;
+        let mut root = named(".");
+        root.file_ref = FileRef::from_raw(5);
+        root.is_dir = true;
+        let mut exe = named("x.exe");
+        exe.file_ref = FileRef::from_raw(40);
+
+        let csv = csv_with(&[root, exe], None, Some(&rules))?;
+
+        let column: Vec<&str> = csv
+            .lines()
+            .map(|row| row.split(',').nth(7).unwrap_or_default())
+            .collect();
+        assert_eq!(column, ["findings", "", "high:rule-high;low:rule-low"]);
+        Ok(())
+    }
+
+    #[test]
+    fn escapes_control_characters_in_rule_ids() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = std::env::temp_dir().join(format!("report-rule-id-{}", std::process::id()));
+        std::fs::create_dir_all(&dir)?;
+        std::fs::write(
+            dir.join("a.yml"),
+            "title: T\nid: \"evil\\e[2J\"\nlevel: high\nlogsource:\n  product: windows\n  category: file_event\ndetection:\n  sel:\n    TargetFilename|endswith: '.exe'\n  condition: sel\n",
+        )?;
+        let rules = sigma::Rules::load(&dir)?;
+        let mut root = named(".");
+        root.file_ref = FileRef::from_raw(5);
+        root.is_dir = true;
+        let mut exe = named("x.exe");
+        exe.file_ref = FileRef::from_raw(40);
+
+        let csv = csv_with(&[root, exe], None, Some(&rules))?;
+
+        let cell = csv.lines().nth(2).and_then(|row| row.split(',').nth(7));
+        assert_eq!(cell, Some(r"high:evil\u{1B}[2J"));
         Ok(())
     }
 }
