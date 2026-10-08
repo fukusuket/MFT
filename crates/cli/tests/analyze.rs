@@ -283,8 +283,7 @@ const SAMPLE_RULES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../testdata/
 /// A `$MFT` with one file per sample rule under `\Windows` and `\Users\Public`, and a baseline
 /// file that knows only `C:\Windows\notepad.exe`. Returns the `$MFT` and baseline paths.
 fn sample_volume(dir: &std::path::Path) -> Result<(PathBuf, PathBuf), Box<dyn Error>> {
-    let (vwr, index, input) = (dir.join("vwr.csv"), dir.join("b.fst"), dir.join("MFT"));
-    std::fs::write(&vwr, "\"FullName\"\n\"C:\\Windows\\notepad.exe\"\n")?;
+    let input = dir.join("MFT");
     let at = |parent: u64| parent | (1 << 48);
     let named = |entry: u32, parent: u64, name: &str| {
         record(
@@ -319,7 +318,13 @@ fn sample_volume(dir: &std::path::Path) -> Result<(PathBuf, PathBuf), Box<dyn Er
     mft.extend(named(11, 8, "invoice.pdf.exe"));
     mft.extend(named(12, 6, "notepad.exe"));
     std::fs::write(&input, mft)?;
+    Ok((input, notepad_baseline(dir)?))
+}
 
+/// A baseline file that knows only `C:\Windows\notepad.exe`.
+fn notepad_baseline(dir: &std::path::Path) -> Result<PathBuf, Box<dyn Error>> {
+    let (vwr, index) = (dir.join("vwr.csv"), dir.join("b.fst"));
+    std::fs::write(&vwr, "\"FullName\"\n\"C:\\Windows\\notepad.exe\"\n")?;
     let built = tool()
         .args(["baseline", "build", "--vwr"])
         .arg(&vwr)
@@ -329,7 +334,7 @@ fn sample_volume(dir: &std::path::Path) -> Result<(PathBuf, PathBuf), Box<dyn Er
     if !built.success() {
         return Err("baseline build failed".into());
     }
-    Ok((input, index))
+    Ok(index)
 }
 
 #[test]
@@ -517,5 +522,134 @@ fn analyze_needs_an_output() -> TestResult {
         stderr.contains("--csv") && stderr.contains("--output"),
         "{stderr}"
     );
+    Ok(())
+}
+
+#[test]
+fn synthetic_mft_has_the_asked_size_and_is_reproducible() -> TestResult {
+    let (mut first, mut second) = (Vec::new(), Vec::new());
+
+    support::synth::synthetic_mft(3000, &mut first)?;
+    support::synth::synthetic_mft(3000, &mut second)?;
+
+    assert_eq!(first.len(), 3000 * support::synth::RECORD);
+    assert!(first == second, "two runs differ");
+    Ok(())
+}
+
+/// CSV rows split into columns (no quoted commas in synthetic names).
+fn csv_rows(text: &str) -> Vec<Vec<String>> {
+    text.lines()
+        .skip(1)
+        .map(|r| r.split(',').map(str::to_string).collect())
+        .collect()
+}
+
+#[test]
+fn synthetic_mft_parses_into_resolved_paths_with_planted_oddities() -> TestResult {
+    let dir = scratch("synthetic_mft_parses_into_resolved_paths_with_planted_oddities")?;
+    let (input, csv) = (dir.join("MFT"), dir.join("out.csv"));
+    let mut mft = Vec::new();
+    support::synth::synthetic_mft(3000, &mut mft)?;
+    std::fs::write(&input, mft)?;
+
+    let status = tool()
+        .args(["analyze", "-i"])
+        .arg(&input)
+        .arg("--csv")
+        .arg(&csv)
+        .status()?;
+
+    assert!(status.success());
+    let rows = csv_rows(&std::fs::read_to_string(&csv)?);
+    let bad: Vec<&str> = rows
+        .iter()
+        .filter(|r| !r[10].is_empty())
+        .map(|r| r[10].as_str())
+        .collect();
+    assert_eq!(bad, ["bad_signature"; 3], "diagnostics");
+    let unresolved = rows
+        .iter()
+        .filter(|r| r[5] != "resolved" && r[10].is_empty())
+        .count();
+    assert_eq!(unresolved, 0);
+    let deleted = rows
+        .iter()
+        .filter(|r| r[2] == "false" && r[10].is_empty())
+        .count();
+    assert!(deleted > 100, "{deleted} deleted rows");
+    let long_names = rows
+        .iter()
+        .filter(|r| r[3].starts_with("long name "))
+        .count();
+    assert_eq!(long_names, 30, "names merged from extension records");
+    Ok(())
+}
+
+#[test]
+fn sample_rules_fire_on_the_synthetic_volume() -> TestResult {
+    let dir = scratch("sample_rules_fire_on_the_synthetic_volume")?;
+    let (input, csv) = (dir.join("MFT"), dir.join("out.csv"));
+    let mut mft = Vec::new();
+    support::synth::synthetic_mft(3000, &mut mft)?;
+    std::fs::write(&input, mft)?;
+
+    let status = tool()
+        .args(["analyze", "-i"])
+        .arg(&input)
+        .arg("--csv")
+        .arg(&csv)
+        .arg("--baseline")
+        .arg(notepad_baseline(&dir)?)
+        .arg("--rules")
+        .arg(SAMPLE_RULES)
+        .status()?;
+
+    assert!(status.success());
+    let text = std::fs::read_to_string(&csv)?;
+    for id in [
+        "92986d59-a4d2-45b3-a224-c8a9809b78aa",
+        "46af8dfb-f067-417d-8837-9e5a1785fee0",
+        "8839b831-0916-4876-82aa-82e2a9b2f138",
+        "290fe785-b499-4e25-b00f-70a4ae863c2f",
+    ] {
+        assert!(text.contains(id), "no finding for {id}");
+    }
+    Ok(())
+}
+
+#[test]
+fn synthetic_volume_gives_byte_identical_reports() -> TestResult {
+    let dir = scratch("synthetic_volume_gives_byte_identical_reports")?;
+    let input = dir.join("MFT");
+    let mut mft = Vec::new();
+    support::synth::synthetic_mft(20_000, &mut mft)?;
+    std::fs::write(&input, mft)?;
+    let baseline = notepad_baseline(&dir)?;
+
+    let mut outputs = Vec::new();
+    for run in ["1", "2"] {
+        let (csv, html) = (
+            dir.join(format!("{run}.csv")),
+            dir.join(format!("{run}.html")),
+        );
+        let status = tool()
+            .args(["analyze", "-i"])
+            .arg(&input)
+            .arg("--csv")
+            .arg(&csv)
+            .arg("-o")
+            .arg(&html)
+            .arg("--baseline")
+            .arg(&baseline)
+            .arg("--rules")
+            .arg(SAMPLE_RULES)
+            .status()?;
+        assert!(status.success());
+        outputs.push((std::fs::read(&csv)?, std::fs::read(&html)?));
+    }
+
+    assert!(outputs[0].0 == outputs[1].0, "CSV differs between runs");
+    assert!(outputs[0].1 == outputs[1].1, "HTML differs between runs");
     Ok(())
 }

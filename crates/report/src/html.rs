@@ -1,6 +1,6 @@
 //! Self-contained HTML report: a static template plus the report data as Base64 JSON.
 
-use std::io::Write;
+use std::io::{BufWriter, Write};
 
 use analyze::Row;
 use baseline::Status;
@@ -10,6 +10,7 @@ use resolve::Resolution;
 use serde::{Serialize, Serializer};
 use sigma::Level;
 
+use crate::base64::Encoder;
 use crate::{Error, display_text, level_name};
 
 const TEMPLATE: &str = include_str!("template.html");
@@ -141,10 +142,16 @@ impl HtmlReport {
                 license: "AGPL-3.0-only",
             },
         };
-        let json = serde_json::to_vec(&data).map_err(std::io::Error::from)?;
         let (head, tail) = TEMPLATE.split_once(PLACEHOLDER).unwrap_or((TEMPLATE, ""));
         out.write_all(head.as_bytes())?;
-        out.write_all(crate::base64::encode(&json).as_bytes())?;
+        // Streamed: the JSON and its Base64 are each about as large as the report (Phase 1 gate).
+        // The buffer hands the encoder large chunks instead of serde's many small writes.
+        let mut encoder = Encoder::new(out);
+        let mut json = BufWriter::with_capacity(1 << 16, &mut encoder);
+        serde_json::to_writer(&mut json, &data).map_err(std::io::Error::from)?;
+        json.flush()?;
+        drop(json);
+        let mut out = encoder.finish()?;
         out.write_all(tail.as_bytes())?;
         Ok(out)
     }
