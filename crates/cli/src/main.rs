@@ -1,7 +1,8 @@
 //! `tool analyze -i <$MFT> [--csv <out>] [-o <report.html>] [--baseline <file>] [--rules <dir>]`
 //! and `tool baseline build`.
 
-use std::fs::File;
+use std::ffi::OsString;
+use std::fs::{File, OpenOptions};
 use std::io::{BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
 
@@ -105,42 +106,87 @@ fn analyze(
     let mft = File::open(input).with_context(|| format!("opening {}", input.display()))?;
     let mut csv_writer = csv
         .map(|path| {
-            let file =
-                File::create(path).with_context(|| format!("creating {}", path.display()))?;
-            Ok::<_, anyhow::Error>(CsvWriter::new(BufWriter::new(file))?)
+            let (pending, file) = AtomicOutput::create(path)?;
+            Ok::<_, anyhow::Error>((pending, CsvWriter::new(BufWriter::new(file))?))
         })
         .transpose()?;
-    let html_file = output
-        .map(|path| File::create(path).with_context(|| format!("creating {}", path.display())))
-        .transpose()?;
+    let html_file = output.map(AtomicOutput::create).transpose()?;
     // Paths need every parent, so all records are read before the first row is written.
     let records = mft_parse::records(BufReader::new(mft))?;
     let record_size = records.record_size();
-    let mut html = html_file.map(|file| {
+    let mut html = html_file.map(|(pending, file)| {
         let input = Input {
             name: file_name(input),
             record_size,
             baseline: baseline_name,
             rules: rules.as_ref().map_or(0, Rules::count),
         };
-        (file, HtmlReport::new(PROVENANCE, input))
+        (pending, file, HtmlReport::new(PROVENANCE, input))
     });
     let entries = mft_parse::merge_extensions(records.collect::<Result<Vec<_>, _>>()?, record_size);
     for row in analyze::rows(&entries, baseline.as_ref(), rules.as_ref()) {
-        if let Some(writer) = &mut csv_writer {
+        if let Some((_, writer)) = &mut csv_writer {
             writer.write(&row)?;
         }
-        if let Some((_, report)) = &mut html {
+        if let Some((_, _, report)) = &mut html {
             report.add(&row);
         }
     }
-    if let Some(writer) = csv_writer {
+    if let Some((pending, writer)) = csv_writer {
         writer.finish()?.flush()?;
+        pending.commit()?;
     }
-    if let Some((file, report)) = html {
+    if let Some((pending, file, report)) = html {
         report.finish(BufWriter::new(file))?.flush()?;
+        pending.commit()?;
     }
     Ok(())
+}
+
+#[derive(Debug)]
+struct AtomicOutput {
+    destination: PathBuf,
+    temporary: PathBuf,
+    committed: bool,
+}
+
+impl AtomicOutput {
+    fn create(destination: &Path) -> anyhow::Result<(Self, File)> {
+        let parent = destination.parent().unwrap_or_else(|| Path::new("."));
+        let name = destination.file_name().unwrap_or_default();
+        let mut temporary_name = OsString::from(".");
+        temporary_name.push(name);
+        temporary_name.push(format!(".tool-tmp-{}", std::process::id()));
+        let temporary = parent.join(temporary_name);
+        let file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temporary)
+            .with_context(|| format!("creating {}", destination.display()))?;
+        Ok((
+            Self {
+                destination: destination.to_path_buf(),
+                temporary,
+                committed: false,
+            },
+            file,
+        ))
+    }
+
+    fn commit(mut self) -> anyhow::Result<()> {
+        std::fs::rename(&self.temporary, &self.destination)
+            .with_context(|| format!("replacing {}", self.destination.display()))?;
+        self.committed = true;
+        Ok(())
+    }
+}
+
+impl Drop for AtomicOutput {
+    fn drop(&mut self) {
+        if !self.committed {
+            let _ = std::fs::remove_file(&self.temporary);
+        }
+    }
 }
 
 fn refuse_same_file(
@@ -181,9 +227,10 @@ fn file_name(path: &Path) -> String {
 fn build_baseline(vwr: &Path, out: &Path) -> anyhow::Result<()> {
     refuse_same_file(vwr, Some(out), "VWR input", "baseline output")?;
     let csv = File::open(vwr).with_context(|| format!("opening {}", vwr.display()))?;
-    let file = File::create(out).with_context(|| format!("creating {}", out.display()))?;
+    let (pending, file) = AtomicOutput::create(out)?;
     let mut writer = BufWriter::new(file);
     baseline::build(BufReader::new(csv), &mut writer)?;
     writer.flush()?;
+    pending.commit()?;
     Ok(())
 }
