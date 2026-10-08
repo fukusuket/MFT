@@ -50,6 +50,14 @@ fn tool() -> Command {
     Command::new(env!("CARGO_BIN_EXE_tool"))
 }
 
+fn assert_no_temporary_outputs(dir: &std::path::Path) -> TestResult {
+    for entry in std::fs::read_dir(dir)? {
+        let name = entry?.file_name();
+        assert!(!name.to_string_lossy().contains(".tool-tmp-"), "{name:?}");
+    }
+    Ok(())
+}
+
 #[test]
 fn analyze_writes_one_csv_row_per_record_with_paths() -> TestResult {
     let dir = scratch("analyze_writes_one_csv_row_per_record_with_paths")?;
@@ -76,6 +84,7 @@ fn analyze_writes_one_csv_row_per_record_with_paths() -> TestResult {
          8,1,true,old.txt,,unknown,,,2019-04-17T18:40:00.0000000Z,1601-01-01T00:00:00.0000000Z,\n\
          9,0,false,,,unknown,,,,,bad_signature\n"
     );
+    assert_no_temporary_outputs(&dir)?;
     Ok(())
 }
 
@@ -98,6 +107,93 @@ fn missing_input_fails_with_a_message_not_a_panic() -> TestResult {
         "{stderr}"
     );
     assert!(!stderr.contains("panicked"), "{stderr}");
+    Ok(())
+}
+
+#[test]
+fn analyze_refuses_to_overwrite_its_mft_with_csv() -> TestResult {
+    let dir = scratch("analyze_refuses_to_overwrite_its_mft_with_csv")?;
+    let input = dir.join("MFT");
+    let original = small_volume_mft();
+    std::fs::write(&input, &original)?;
+
+    let out = tool()
+        .args(["analyze", "-i"])
+        .arg(&input)
+        .arg("--csv")
+        .arg(&input)
+        .output()?;
+
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(1), "{stderr}");
+    assert!(stderr.contains("same file"), "{stderr}");
+    assert_eq!(std::fs::read(&input)?, original);
+    Ok(())
+}
+
+#[test]
+fn analyze_refuses_to_overwrite_its_mft_with_html() -> TestResult {
+    let dir = scratch("analyze_refuses_to_overwrite_its_mft_with_html")?;
+    let input = dir.join("MFT");
+    let original = small_volume_mft();
+    std::fs::write(&input, &original)?;
+
+    let out = tool()
+        .args(["analyze", "-i"])
+        .arg(&input)
+        .arg("-o")
+        .arg(&input)
+        .output()?;
+
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(1), "{stderr}");
+    assert!(stderr.contains("same file"), "{stderr}");
+    assert_eq!(std::fs::read(&input)?, original);
+    Ok(())
+}
+
+#[test]
+fn analyze_refuses_an_equivalent_path_to_its_mft() -> TestResult {
+    let dir = scratch("analyze_refuses_an_equivalent_path_to_its_mft")?;
+    let input = dir.join("MFT");
+    let original = small_volume_mft();
+    std::fs::create_dir_all(dir.join("subdir"))?;
+    std::fs::write(&input, &original)?;
+
+    let out = tool()
+        .args(["analyze", "-i"])
+        .arg(&input)
+        .arg("--csv")
+        .arg(dir.join("subdir").join("..").join("MFT"))
+        .output()?;
+
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(1), "{stderr}");
+    assert!(stderr.contains("same file"), "{stderr}");
+    assert_eq!(std::fs::read(&input)?, original);
+    Ok(())
+}
+
+#[test]
+fn analyze_refuses_the_same_file_for_csv_and_html() -> TestResult {
+    let dir = scratch("analyze_refuses_the_same_file_for_csv_and_html")?;
+    let (input, output) = (dir.join("MFT"), dir.join("report"));
+    std::fs::write(&input, small_volume_mft())?;
+    std::fs::write(&output, b"keep this report")?;
+
+    let out = tool()
+        .args(["analyze", "-i"])
+        .arg(&input)
+        .arg("--csv")
+        .arg(&output)
+        .arg("-o")
+        .arg(&output)
+        .output()?;
+
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(1), "{stderr}");
+    assert!(stderr.contains("same file"), "{stderr}");
+    assert_eq!(std::fs::read(&output)?, b"keep this report");
     Ok(())
 }
 
@@ -169,6 +265,49 @@ fn baseline_build_then_analyze_labels_files() -> TestResult {
 }
 
 #[test]
+fn baseline_build_refuses_to_overwrite_its_vwr_csv() -> TestResult {
+    let dir = scratch("baseline_build_refuses_to_overwrite_its_vwr_csv")?;
+    let vwr = dir.join("vwr.csv");
+    let original = b"\"FullName\"\n\"C:\\Windows\\notepad.exe\"\n";
+    std::fs::write(&vwr, original)?;
+
+    let out = tool()
+        .args(["baseline", "build", "--vwr"])
+        .arg(&vwr)
+        .arg("-o")
+        .arg(&vwr)
+        .output()?;
+
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(1), "{stderr}");
+    assert!(stderr.contains("same file"), "{stderr}");
+    assert_eq!(std::fs::read(&vwr)?, original);
+    Ok(())
+}
+
+#[test]
+fn baseline_build_failure_preserves_an_existing_output() -> TestResult {
+    let dir = scratch("baseline_build_failure_preserves_an_existing_output")?;
+    let (vwr, output) = (dir.join("vwr.csv"), dir.join("baseline.fst"));
+    std::fs::write(&vwr, b"\"FullName\"\n\xff\n")?;
+    std::fs::write(&output, b"previous baseline")?;
+
+    let out = tool()
+        .args(["baseline", "build", "--vwr"])
+        .arg(&vwr)
+        .arg("-o")
+        .arg(&output)
+        .output()?;
+
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(1), "{stderr}");
+    assert!(stderr.contains("VanillaWindowsReference CSV"), "{stderr}");
+    assert_eq!(std::fs::read(&output)?, b"previous baseline");
+    assert_no_temporary_outputs(&dir)?;
+    Ok(())
+}
+
+#[test]
 fn bad_baseline_file_fails_with_a_message_not_a_panic() -> TestResult {
     let dir = scratch("bad_baseline_file_fails_with_a_message_not_a_panic")?;
     let (index, input) = (dir.join("not-a-baseline.fst"), dir.join("MFT"));
@@ -191,6 +330,54 @@ fn bad_baseline_file_fails_with_a_message_not_a_panic() -> TestResult {
         "{stderr}"
     );
     assert!(!stderr.contains("panicked"), "{stderr}");
+    Ok(())
+}
+
+#[test]
+fn analyze_failure_preserves_an_existing_csv() -> TestResult {
+    let dir = scratch("analyze_failure_preserves_an_existing_csv")?;
+    let (input, csv) = (dir.join("MFT"), dir.join("out.csv"));
+    let mut unsupported = vec![0u8; 1024];
+    unsupported[0x1c..0x20].copy_from_slice(&2048u32.to_le_bytes());
+    std::fs::write(&input, unsupported)?;
+    std::fs::write(&csv, b"previous report")?;
+
+    let out = tool()
+        .args(["analyze", "-i"])
+        .arg(&input)
+        .arg("--csv")
+        .arg(&csv)
+        .output()?;
+
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(1), "{stderr}");
+    assert!(stderr.contains("unsupported $MFT record size"), "{stderr}");
+    assert_eq!(std::fs::read(&csv)?, b"previous report");
+    assert_no_temporary_outputs(&dir)?;
+    Ok(())
+}
+
+#[test]
+fn analyze_failure_preserves_an_existing_html_report() -> TestResult {
+    let dir = scratch("analyze_failure_preserves_an_existing_html_report")?;
+    let (input, html) = (dir.join("MFT"), dir.join("report.html"));
+    let mut unsupported = vec![0u8; 1024];
+    unsupported[0x1c..0x20].copy_from_slice(&2048u32.to_le_bytes());
+    std::fs::write(&input, unsupported)?;
+    std::fs::write(&html, b"previous report")?;
+
+    let out = tool()
+        .args(["analyze", "-i"])
+        .arg(&input)
+        .arg("-o")
+        .arg(&html)
+        .output()?;
+
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(1), "{stderr}");
+    assert!(stderr.contains("unsupported $MFT record size"), "{stderr}");
+    assert_eq!(std::fs::read(&html)?, b"previous report");
+    assert_no_temporary_outputs(&dir)?;
     Ok(())
 }
 
