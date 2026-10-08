@@ -1,0 +1,19 @@
+# Sample rule for tests. Detection Rule License (DRL) 1.1.
+title: Executable under Windows that is not in the Windows baseline
+id: 290fe785-b499-4e25-b00f-70a4ae863c2f
+status: test
+description: An executable or library under C:\Windows that a clean install of this build does not have.
+author: tool
+date: 2026-10-08
+logsource:
+  product: windows
+  category: file_event
+  service: baseline_outside
+detection:
+  selection:
+    TargetFilename|startswith: 'C:\Windows\'
+    TargetFilename|endswith:
+      - '.exe'
+      - '.dll'
+  condition: selection
+level: high

@@ -7,7 +7,7 @@ use std::error::Error;
 use std::path::PathBuf;
 use std::process::Command;
 
-use support::{extension, file_name_with, record, standard_information, u16s};
+use support::{extension, file_name_with, record, record_with_flags, standard_information, u16s};
 
 type TestResult = Result<(), Box<dyn Error>>;
 
@@ -68,13 +68,13 @@ fn analyze_writes_one_csv_row_per_record_with_paths() -> TestResult {
     assert!(status.success());
     assert_eq!(
         std::fs::read_to_string(&csv).unwrap_or_default(),
-        "entry,sequence,in_use,name,path,path_state,baseline,si_created,fn_created,diagnostics\n\
-         0,1,true,$MFT,\\$MFT,resolved,,2019-04-17T18:40:00.0000000Z,1601-01-01T00:00:00.0000000Z,\n\
-         5,1,true,.,\\,resolved,,2019-04-17T18:40:00.0000000Z,1601-01-01T00:00:00.0000000Z,\n\
-         6,1,true,Users,\\Users,resolved,,2019-04-17T18:40:00.0000000Z,1601-01-01T00:00:00.0000000Z,\n\
-         7,1,true,a.txt,\\Users\\a.txt,resolved,,2019-04-17T18:40:00.0000000Z,1601-01-01T00:00:00.0000000Z,\n\
-         8,1,true,old.txt,,unknown,,2019-04-17T18:40:00.0000000Z,1601-01-01T00:00:00.0000000Z,\n\
-         9,0,false,,,unknown,,,,bad_signature\n"
+        "entry,sequence,in_use,name,path,path_state,baseline,findings,si_created,fn_created,diagnostics\n\
+         0,1,true,$MFT,\\$MFT,resolved,,,2019-04-17T18:40:00.0000000Z,1601-01-01T00:00:00.0000000Z,\n\
+         5,1,true,.,\\,resolved,,,2019-04-17T18:40:00.0000000Z,1601-01-01T00:00:00.0000000Z,\n\
+         6,1,true,Users,\\Users,resolved,,,2019-04-17T18:40:00.0000000Z,1601-01-01T00:00:00.0000000Z,\n\
+         7,1,true,a.txt,\\Users\\a.txt,resolved,,,2019-04-17T18:40:00.0000000Z,1601-01-01T00:00:00.0000000Z,\n\
+         8,1,true,old.txt,,unknown,,,2019-04-17T18:40:00.0000000Z,1601-01-01T00:00:00.0000000Z,\n\
+         9,0,false,,,unknown,,,,,bad_signature\n"
     );
     Ok(())
 }
@@ -275,5 +275,129 @@ fn extension_records_merge_into_one_row() -> TestResult {
             row("8", r"\stale.txt", "orphan_extension"),
         ]
     );
+    Ok(())
+}
+
+#[test]
+fn sample_rules_find_what_they_describe() -> TestResult {
+    let dir = scratch("sample_rules_find_what_they_describe")?;
+    let (vwr, index, input, csv) = (
+        dir.join("vwr.csv"),
+        dir.join("b.fst"),
+        dir.join("MFT"),
+        dir.join("out.csv"),
+    );
+    std::fs::write(&vwr, "\"FullName\"\n\"C:\\Windows\\notepad.exe\"\n")?;
+    let at = |parent: u64| parent | (1 << 48);
+    let named = |entry: u32, parent: u64, name: &str| {
+        record(
+            1024,
+            true,
+            entry,
+            &[
+                standard_information(),
+                file_name_with(at(parent), &u16s(name), 1, 0),
+            ],
+        )
+    };
+    let dir_record = |entry: u32, parent: u64, name: &str| {
+        record_with_flags(
+            1024,
+            0x03,
+            entry,
+            &[
+                standard_information(),
+                file_name_with(at(parent), &u16s(name), 1, 0),
+            ],
+        )
+    };
+    let mut mft = named(0, 5, "$MFT");
+    mft.extend(vec![0u8; 4 * 1024]);
+    mft.extend(dir_record(5, 5, "."));
+    mft.extend(dir_record(6, 5, "Windows"));
+    mft.extend(dir_record(7, 5, "Users"));
+    mft.extend(dir_record(8, 7, "Public"));
+    mft.extend(named(9, 8, "a.exe"));
+    mft.extend(named(10, 6, "svchost.exe"));
+    mft.extend(named(11, 8, "invoice.pdf.exe"));
+    mft.extend(named(12, 6, "notepad.exe"));
+    std::fs::write(&input, mft)?;
+
+    let built = tool()
+        .args(["baseline", "build", "--vwr"])
+        .arg(&vwr)
+        .arg("-o")
+        .arg(&index)
+        .status()?;
+    let analyzed = tool()
+        .args(["analyze", "-i"])
+        .arg(&input)
+        .arg("--csv")
+        .arg(&csv)
+        .arg("--baseline")
+        .arg(&index)
+        .arg("--rules")
+        .arg(concat!(env!("CARGO_MANIFEST_DIR"), "/../../testdata/rules"))
+        .status()?;
+
+    assert!(built.success() && analyzed.success());
+    let text = std::fs::read_to_string(&csv).unwrap_or_default();
+    let findings: Vec<(&str, &str)> = text
+        .lines()
+        .skip(1)
+        .map(|r| {
+            let f: Vec<&str> = r.split(',').collect();
+            (f[4], f[7])
+        })
+        .filter(|(_, findings)| !findings.is_empty())
+        .collect();
+    const PUBLIC: &str = "92986d59-a4d2-45b3-a224-c8a9809b78aa";
+    const SYSTEM: &str = "46af8dfb-f067-417d-8837-9e5a1785fee0";
+    const DOUBLE: &str = "8839b831-0916-4876-82aa-82e2a9b2f138";
+    const OUTSIDE: &str = "290fe785-b499-4e25-b00f-70a4ae863c2f";
+    assert_eq!(
+        findings,
+        [
+            (r"\Users\Public\a.exe", format!("medium:{PUBLIC}").as_str()),
+            (
+                r"\Windows\svchost.exe",
+                format!("high:{OUTSIDE};high:{SYSTEM}").as_str()
+            ),
+            (
+                r"\Users\Public\invoice.pdf.exe",
+                format!("medium:{DOUBLE};medium:{PUBLIC}").as_str()
+            ),
+        ]
+    );
+    Ok(())
+}
+
+#[test]
+fn a_rule_without_id_fails_with_a_message_not_a_panic() -> TestResult {
+    let dir = scratch("a_rule_without_id_fails_with_a_message_not_a_panic")?;
+    let rules = dir.join("rules");
+    std::fs::create_dir_all(&rules)?;
+    std::fs::write(
+        rules.join("no_id.yml"),
+        "title: No id\nlogsource:\n  category: file_event\ndetection:\n  sel:\n    TargetFilename: x\n  condition: sel\n",
+    )?;
+    std::fs::write(dir.join("MFT"), small_volume_mft())?;
+
+    let out = tool()
+        .args(["analyze", "-i"])
+        .arg(dir.join("MFT"))
+        .arg("--csv")
+        .arg(dir.join("out.csv"))
+        .arg("--rules")
+        .arg(&rules)
+        .output()?;
+
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(1), "{stderr}");
+    assert!(
+        stderr.contains("no_id.yml") && stderr.contains("no id"),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("panicked"), "{stderr}");
     Ok(())
 }

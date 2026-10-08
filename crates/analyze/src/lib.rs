@@ -3,6 +3,7 @@
 use baseline::{Baseline, Status};
 use mft_parse::Entry;
 use resolve::{Resolution, Resolver};
+use sigma::{Finding, Rules};
 
 /// One report row: an entry and where it sits in the tree.
 #[derive(Debug)]
@@ -11,12 +12,15 @@ pub struct Row<'a> {
     pub resolution: Resolution<'a>,
     /// For files with a resolved path, when a baseline is given; `None` otherwise.
     pub baseline: Option<Status>,
+    /// Matched rules, most severe first (empty without rules).
+    pub findings: Vec<Finding>,
 }
 
 /// One row per entry, in entry order. Lazy, so only one path is held at a time.
 pub fn rows<'a>(
     entries: &'a [Entry],
     baseline: Option<&'a Baseline>,
+    rules: Option<&'a Rules>,
 ) -> impl Iterator<Item = Row<'a>> {
     let resolver = Resolver::new(entries);
     entries.iter().map(move |entry| {
@@ -30,10 +34,15 @@ pub fn rows<'a>(
             }
             _ => None,
         };
+        let findings = match (rules, detect::file_event(entry, &resolution, status)) {
+            (Some(rules), Some(event)) => rules.evaluate(&event),
+            _ => Vec::new(),
+        };
         Row {
             entry,
             resolution,
             baseline: status,
+            findings,
         }
     })
 }
@@ -69,7 +78,7 @@ mod tests {
             entry(41, 77, "orphan"),
         ];
 
-        let shown: Vec<(u64, Option<usize>)> = rows(&entries, None)
+        let shown: Vec<(u64, Option<usize>)> = rows(&entries, None, None)
             .map(|r| {
                 let depth = match &r.resolution {
                     Resolution::Resolved(segments) => Some(segments.len()),
@@ -98,14 +107,41 @@ mod tests {
             entry(43, 77, "a.txt"),
         ];
 
-        let with: Vec<Option<Status>> = rows(&entries, Some(&baseline))
+        let with: Vec<Option<Status>> = rows(&entries, Some(&baseline), None)
             .map(|r| r.baseline)
             .collect();
-        let without: Vec<Option<Status>> = rows(&entries, None).map(|r| r.baseline).collect();
+        let without: Vec<Option<Status>> = rows(&entries, None, None).map(|r| r.baseline).collect();
 
         use Status::*;
         assert_eq!(with, [None, Some(Standard), None, Some(Outside), None]);
         assert_eq!(without, [None; 5]);
+        Ok(())
+    }
+
+    #[test]
+    fn rows_carry_findings_when_rules_are_given() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = std::env::temp_dir().join(format!("analyze-rules-{}", std::process::id()));
+        std::fs::create_dir_all(&dir)?;
+        std::fs::write(
+            dir.join("exe.yml"),
+            "title: Exe\nid: rule-exe\nlevel: low\nlogsource:\n  product: windows\n  category: file_event\ndetection:\n  sel:\n    TargetFilename|endswith: '.exe'\n  condition: sel\n",
+        )?;
+        let rules = Rules::load(&dir)?;
+        let entries = [
+            entry(5, 5, "."),
+            entry(40, 5, "a.exe"),
+            entry(41, 5, "b.txt"),
+        ];
+
+        let with: Vec<Vec<String>> = rows(&entries, None, Some(&rules))
+            .map(|r| r.findings.into_iter().map(|f| f.id).collect())
+            .collect();
+        let without = rows(&entries, None, None)
+            .filter(|r| !r.findings.is_empty())
+            .count();
+
+        assert_eq!(with, [vec![], vec!["rule-exe".to_string()], vec![]]);
+        assert_eq!(without, 0);
         Ok(())
     }
 }

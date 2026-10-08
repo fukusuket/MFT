@@ -19,6 +19,25 @@ pub enum Resolution<'a> {
     Unknown,
 }
 
+impl Resolution<'_> {
+    /// `\` plus the escaped names joined by `\` (a `\` inside a name shows as `\\`); the root
+    /// is `\`. `None` if unknown. No drive letter: a `$MFT` doesn't record one.
+    pub fn path_text(&self) -> Option<String> {
+        let Resolution::Resolved(segments) = self else {
+            return None;
+        };
+        if segments.is_empty() {
+            return Some("\\".to_string());
+        }
+        let mut path = String::new();
+        for segment in segments {
+            path.push('\\');
+            path.push_str(&segment.to_string());
+        }
+        Some(path)
+    }
+}
+
 /// Builds paths from `$FILE_NAME` parent references, checking sequence numbers.
 #[derive(Debug)]
 pub struct Resolver<'a> {

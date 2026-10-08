@@ -1,0 +1,109 @@
+//! NTFS facts to Sigma events. Exposes facts only; the rules decide (AGENTS.md).
+
+use baseline::Status;
+use mft_parse::Entry;
+use resolve::Resolution;
+use sigma::Event;
+
+/// The `file_event` for a file, or `None` when there is nothing to match on.
+pub fn file_event(
+    entry: &Entry,
+    resolution: &Resolution<'_>,
+    baseline: Option<Status>,
+) -> Option<Event> {
+    let is_root = matches!(resolution, Resolution::Resolved(segments) if segments.is_empty());
+    if entry.is_dir || is_root {
+        return None; // file_event is about files
+    }
+    // Phase 1 inputs are system volumes, so the drive is C: (P1-4 H1).
+    let target = format!("C:{}", resolution.path_text()?);
+    let mut fields = vec![("TargetFilename", target)];
+    fields.extend(entry.si_created.map(|t| ("CreationUtcTime", t.sysmon())));
+    fields.extend(
+        resolve::chosen_name(&entry.names).map(|n| ("FnCreationUtcTime", n.created.sysmon())),
+    );
+    Some(Event {
+        product: "windows",
+        category: "file_event",
+        // "Outside baseline" is a logsource, not a field (architecture.md).
+        service: (baseline == Some(Status::Outside)).then_some("baseline_outside"),
+        fields,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use mft_parse::{FileName, Namespace};
+    use ntfs_types::{FileRef, Filetime, NtfsName};
+
+    fn name(text: &str) -> NtfsName {
+        NtfsName::from_units(&text.encode_utf16().collect::<Vec<_>>())
+    }
+
+    fn file(si: u64, fn_created: u64) -> Entry {
+        Entry {
+            file_ref: FileRef::from_raw(40),
+            in_use: true,
+            is_dir: false,
+            base: None,
+            si_created: Some(Filetime::from_raw(si)),
+            names: vec![FileName {
+                name: name("x.exe"),
+                parent: FileRef::from_raw(5),
+                namespace: Namespace::Win32,
+                created: Filetime::from_raw(fn_created),
+            }],
+            diagnostics: vec![],
+        }
+    }
+
+    #[test]
+    fn file_event_has_target_filename_with_drive_and_both_created_times() {
+        let (windows, temp, exe) = (name("Windows"), name("Temp"), name("x.exe"));
+        let resolution = Resolution::Resolved(vec![&windows, &temp, &exe]);
+
+        let event = file_event(
+            &file(133_444_555_666_777_888, 133_536_836_961_234_567),
+            &resolution,
+            None,
+        );
+
+        let event = event.map(|e| (e.product, e.category, e.service, e.fields));
+        assert_eq!(
+            event,
+            Some((
+                "windows",
+                "file_event",
+                None,
+                vec![
+                    ("TargetFilename", r"C:\Windows\Temp\x.exe".to_string()),
+                    ("CreationUtcTime", "2023-11-14 17:12:46.677".to_string()),
+                    ("FnCreationUtcTime", "2024-02-29 12:34:56.123".to_string()),
+                ]
+            ))
+        );
+    }
+
+    #[test]
+    fn outside_baseline_files_get_the_baseline_outside_service() {
+        let exe = name("x.exe");
+        let resolution = Resolution::Resolved(vec![&exe]);
+        let service = |status| file_event(&file(0, 0), &resolution, status).and_then(|e| e.service);
+
+        assert_eq!(service(Some(Status::Outside)), Some("baseline_outside"));
+        assert_eq!(service(Some(Status::Standard)), None);
+        assert_eq!(service(None), None);
+    }
+
+    #[test]
+    fn no_event_for_directories_unknown_paths_or_the_root() {
+        let dir_name = name("Temp");
+        let mut dir = file(0, 0);
+        dir.is_dir = true;
+
+        assert!(file_event(&dir, &Resolution::Resolved(vec![&dir_name]), None).is_none());
+        assert!(file_event(&file(0, 0), &Resolution::Unknown, None).is_none());
+        assert!(file_event(&file(0, 0), &Resolution::Resolved(vec![]), None).is_none());
+    }
+}

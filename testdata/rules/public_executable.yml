@@ -1,0 +1,16 @@
+# Sample rule for tests. Detection Rule License (DRL) 1.1.
+title: Executable in the Public user profile
+id: 92986d59-a4d2-45b3-a224-c8a9809b78aa
+status: test
+description: An executable written under C:\Users\Public, which every local user can write to.
+author: tool
+date: 2026-10-08
+logsource:
+  product: windows
+  category: file_event
+detection:
+  selection:
+    TargetFilename|startswith: 'C:\Users\Public\'
+    TargetFilename|endswith: '.exe'
+  condition: selection
+level: medium

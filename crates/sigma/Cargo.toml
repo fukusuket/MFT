@@ -1,0 +1,18 @@
+[package]
+name = "sigma"
+description = "Thin adapter over the Sigma engine (rsigma); NTFS-agnostic"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+# ADR 0003: pinned, no default features (the default `fix` feature builds tree-sitter C code).
+rsigma-eval = { version = "=0.23.0", default-features = false }
+rsigma-parser = { version = "=0.23.0", default-features = false }
+serde_json = "=1.0.151" # ADR 0010
+thiserror = "=2.0.21" # ADR 0010
+
+[lints]
+workspace = true

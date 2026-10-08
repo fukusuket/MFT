@@ -9,6 +9,8 @@ publish.workspace = true
 
 [dependencies]
 baseline = { path = "../baseline" }
+detect = { path = "../detect" }
+sigma = { path = "../sigma" }
 mft-parse = { path = "../mft-parse" }
 resolve = { path = "../resolve" }
 
