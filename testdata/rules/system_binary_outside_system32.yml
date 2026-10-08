@@ -1,0 +1,25 @@
+# Sample rule for tests. Detection Rule License (DRL) 1.1.
+title: Windows system binary name outside System32
+id: 46af8dfb-f067-417d-8837-9e5a1785fee0
+status: test
+description: A file named like a core Windows process, but not in System32 or SysWOW64.
+author: tool
+date: 2026-10-08
+logsource:
+  product: windows
+  category: file_event
+detection:
+  selection:
+    TargetFilename|endswith:
+      - '\svchost.exe'
+      - '\lsass.exe'
+      - '\csrss.exe'
+      - '\services.exe'
+      - '\winlogon.exe'
+      - '\smss.exe'
+  system:
+    TargetFilename|startswith:
+      - 'C:\Windows\System32\'
+      - 'C:\Windows\SysWOW64\'
+  condition: selection and not system
+level: high

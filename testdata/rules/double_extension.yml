@@ -1,0 +1,21 @@
+# Sample rule for tests. Detection Rule License (DRL) 1.1.
+title: Executable with a document double extension
+id: 8839b831-0916-4876-82aa-82e2a9b2f138
+status: test
+description: An executable whose name pretends to be a document or image.
+author: tool
+date: 2026-10-08
+logsource:
+  product: windows
+  category: file_event
+detection:
+  selection:
+    TargetFilename|endswith:
+      - '.pdf.exe'
+      - '.doc.exe'
+      - '.docx.exe'
+      - '.xlsx.exe'
+      - '.jpg.exe'
+      - '.txt.exe'
+  condition: selection
+level: medium

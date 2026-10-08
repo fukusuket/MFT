@@ -1,0 +1,20 @@
+[package]
+name = "detect"
+description = "NTFS facts to Sigma events (logsource mapping)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+baseline = { path = "../baseline" }
+mft-parse = { path = "../mft-parse" }
+resolve = { path = "../resolve" }
+sigma = { path = "../sigma" }
+
+[dev-dependencies]
+ntfs-types = { path = "../ntfs-types" }
+
+[lints]
+workspace = true
