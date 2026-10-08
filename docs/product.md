@@ -78,7 +78,7 @@ Out of scope for MVP: Windows Server baselines, custom baselines, multi-host com
 tool collect   [-v C:] [-o collection.zip]
 tool analyze   -i <collection.zip | dir> [--from DATE] [--to DATE] [--tz +09:00]
                [--baseline auto|<name>] [--lang en|ja] [--mask-users]
-               [-o report.html] [--jsonl findings.jsonl] [--csv timeline.csv]
+               [-o report.html] [--jsonl timeline.jsonl] [--csv timeline.csv]
 tool baseline  list | update
 tool rules     list | update
 ```

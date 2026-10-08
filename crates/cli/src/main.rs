@@ -1,4 +1,4 @@
-//! `tool analyze -i <$MFT> [--csv <out>] [-o <report.html>] [--baseline <file>] [--rules <dir>]`
+//! `tool analyze -i <$MFT> [--csv <out>] [-o <report.html>] [--jsonl <out>] [--baseline <file>] [--rules <dir>]`
 //! and `tool baseline build`.
 
 use std::ffi::OsString;
@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use anyhow::Context;
 use baseline::Baseline;
 use clap::{ArgGroup, Parser, Subcommand};
-use report::{CsvWriter, HtmlReport, Input, Provenance};
+use report::{CsvWriter, HtmlReport, Input, JsonlWriter, Provenance};
 use sigma::Rules;
 
 #[derive(Debug, Parser)]
@@ -22,7 +22,7 @@ struct Cli {
 #[derive(Debug, Subcommand)]
 enum Command {
     /// Parse a raw $MFT and write an HTML report and/or one CSV row per record.
-    #[command(group(ArgGroup::new("out").args(["csv", "output"]).required(true).multiple(true)))]
+    #[command(group(ArgGroup::new("out").args(["csv", "output", "jsonl"]).required(true).multiple(true)))]
     Analyze {
         /// Raw $MFT file.
         #[arg(short, long)]
@@ -33,6 +33,9 @@ enum Command {
         /// HTML report output path.
         #[arg(short, long)]
         output: Option<PathBuf>,
+        /// JSON Lines output path: one object per record, the CSV columns as typed fields.
+        #[arg(long)]
+        jsonl: Option<PathBuf>,
         /// Baseline file from `tool baseline build`; without it the `baseline` column is empty.
         #[arg(long)]
         baseline: Option<PathBuf>,
@@ -65,12 +68,14 @@ fn main() -> anyhow::Result<()> {
             input,
             csv,
             output,
+            jsonl,
             baseline,
             rules,
         } => analyze(
             &input,
             csv.as_deref(),
             output.as_deref(),
+            jsonl.as_deref(),
             baseline.as_deref(),
             rules.as_deref(),
         ),
@@ -82,13 +87,21 @@ fn analyze(
     input: &Path,
     csv: Option<&Path>,
     output: Option<&Path>,
+    jsonl: Option<&Path>,
     baseline: Option<&Path>,
     rules: Option<&Path>,
 ) -> anyhow::Result<()> {
-    refuse_same_file(input, csv, "input", "CSV output")?;
-    refuse_same_file(input, output, "input", "HTML output")?;
-    if let Some(csv) = csv {
-        refuse_same_file(csv, output, "CSV output", "HTML output")?;
+    let outputs = [
+        (csv, "CSV output"),
+        (output, "HTML output"),
+        (jsonl, "JSONL output"),
+    ];
+    for (n, &(path, name)) in outputs.iter().enumerate() {
+        refuse_same_file(input, path, "input", name)?;
+        let Some(path) = path else { continue };
+        for &(later, later_name) in &outputs[n + 1..] {
+            refuse_same_file(path, later, name, later_name)?;
+        }
     }
     let rules = rules
         .map(|dir| {
@@ -110,6 +123,12 @@ fn analyze(
             Ok::<_, anyhow::Error>((pending, CsvWriter::new(BufWriter::new(file))?))
         })
         .transpose()?;
+    let mut jsonl_writer = jsonl
+        .map(|path| {
+            let (pending, file) = AtomicOutput::create(path)?;
+            Ok::<_, anyhow::Error>((pending, JsonlWriter::new(BufWriter::new(file))))
+        })
+        .transpose()?;
     let html_file = output.map(AtomicOutput::create).transpose()?;
     // Paths need every parent, so all records are read before the first row is written.
     let records = mft_parse::records(BufReader::new(mft))?;
@@ -128,9 +147,16 @@ fn analyze(
         if let Some((_, writer)) = &mut csv_writer {
             writer.write(&row)?;
         }
+        if let Some((_, writer)) = &mut jsonl_writer {
+            writer.write(&row)?;
+        }
         if let Some((_, _, report)) = &mut html {
             report.add(&row);
         }
+    }
+    if let Some((pending, writer)) = jsonl_writer {
+        writer.finish()?.flush()?;
+        pending.commit()?;
     }
     if let Some((pending, writer)) = csv_writer {
         writer.finish()?.flush()?;
