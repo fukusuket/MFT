@@ -840,3 +840,185 @@ fn synthetic_volume_gives_byte_identical_reports() -> TestResult {
     assert!(outputs[0].1 == outputs[1].1, "HTML differs between runs");
     Ok(())
 }
+
+fn jsonl_field(text: &str, name: &str) -> Result<Vec<serde_json::Value>, Box<dyn Error>> {
+    text.lines()
+        .map(|line| Ok(serde_json::from_str::<serde_json::Value>(line)?[name].take()))
+        .collect()
+}
+
+#[test]
+fn analyze_writes_one_jsonl_line_per_record_with_paths() -> TestResult {
+    let dir = scratch("analyze_writes_one_jsonl_line_per_record_with_paths")?;
+    let (input, jsonl) = (dir.join("MFT"), dir.join("out.jsonl"));
+    std::fs::write(&input, small_volume_mft())?;
+    let _ = std::fs::remove_file(&jsonl);
+
+    let out = tool()
+        .args(["analyze", "-i"])
+        .arg(&input)
+        .arg("--jsonl")
+        .arg(&jsonl)
+        .output()?;
+
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let text = std::fs::read_to_string(&jsonl)?;
+    assert_eq!(
+        jsonl_field(&text, "path")?,
+        [
+            serde_json::json!(r"\$MFT"),
+            serde_json::json!(r"\"),
+            serde_json::json!(r"\Users"),
+            serde_json::json!(r"\Users\a.txt"),
+            serde_json::Value::Null,
+            serde_json::Value::Null,
+        ]
+    );
+    assert_eq!(
+        jsonl_field(&text, "diagnostics")?[5],
+        serde_json::json!(["bad_signature"])
+    );
+    assert_no_temporary_outputs(&dir)?;
+    Ok(())
+}
+
+#[test]
+fn analyze_writes_csv_html_and_jsonl_in_one_run() -> TestResult {
+    let dir = scratch("analyze_writes_csv_html_and_jsonl_in_one_run")?;
+    let input = dir.join("MFT");
+    let (csv, html, jsonl) = (dir.join("t.csv"), dir.join("r.html"), dir.join("t.jsonl"));
+    std::fs::write(&input, small_volume_mft())?;
+
+    let out = tool()
+        .args(["analyze", "-i"])
+        .arg(&input)
+        .arg("--csv")
+        .arg(&csv)
+        .arg("-o")
+        .arg(&html)
+        .arg("--jsonl")
+        .arg(&jsonl)
+        .output()?;
+
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let csv_paths: Vec<String> = csv_rows(&std::fs::read_to_string(&csv)?)
+        .into_iter()
+        .map(|row| row[4].clone())
+        .collect();
+    let jsonl_paths: Vec<String> = jsonl_field(&std::fs::read_to_string(&jsonl)?, "path")?
+        .iter()
+        .map(|p| p.as_str().unwrap_or_default().to_string())
+        .collect();
+    assert_eq!(jsonl_paths, csv_paths);
+    assert!(report_data(&std::fs::read_to_string(&html)?).is_ok());
+    Ok(())
+}
+
+#[test]
+fn analyze_refuses_to_overwrite_its_mft_with_jsonl() -> TestResult {
+    let dir = scratch("analyze_refuses_to_overwrite_its_mft_with_jsonl")?;
+    let input = dir.join("MFT");
+    let original = small_volume_mft();
+    std::fs::write(&input, &original)?;
+
+    let out = tool()
+        .args(["analyze", "-i"])
+        .arg(&input)
+        .arg("--jsonl")
+        .arg(&input)
+        .output()?;
+
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(1), "{stderr}");
+    assert!(stderr.contains("same file"), "{stderr}");
+    assert_eq!(std::fs::read(&input)?, original);
+    Ok(())
+}
+
+#[test]
+fn analyze_refuses_the_same_file_for_jsonl_and_another_output() -> TestResult {
+    let dir = scratch("analyze_refuses_the_same_file_for_jsonl_and_another_output")?;
+    let (input, output) = (dir.join("MFT"), dir.join("report"));
+    std::fs::write(&input, small_volume_mft())?;
+    std::fs::write(&output, b"keep this report")?;
+
+    for other in ["--csv", "-o"] {
+        let out = tool()
+            .args(["analyze", "-i"])
+            .arg(&input)
+            .arg("--jsonl")
+            .arg(&output)
+            .arg(other)
+            .arg(&output)
+            .output()?;
+
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(out.status.code(), Some(1), "{other}: {stderr}");
+        assert!(stderr.contains("same file"), "{other}: {stderr}");
+        assert_eq!(std::fs::read(&output)?, b"keep this report", "{other}");
+    }
+    Ok(())
+}
+
+#[test]
+fn analyze_failure_preserves_an_existing_jsonl() -> TestResult {
+    let dir = scratch("analyze_failure_preserves_an_existing_jsonl")?;
+    let (input, jsonl) = (dir.join("MFT"), dir.join("out.jsonl"));
+    let mut unsupported = vec![0u8; 1024];
+    unsupported[0x1c..0x20].copy_from_slice(&2048u32.to_le_bytes());
+    std::fs::write(&input, unsupported)?;
+    std::fs::write(&jsonl, b"previous report")?;
+
+    let out = tool()
+        .args(["analyze", "-i"])
+        .arg(&input)
+        .arg("--jsonl")
+        .arg(&jsonl)
+        .output()?;
+
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(1), "{stderr}");
+    assert!(stderr.contains("unsupported $MFT record size"), "{stderr}");
+    assert_eq!(std::fs::read(&jsonl)?, b"previous report");
+    assert_no_temporary_outputs(&dir)?;
+    Ok(())
+}
+
+#[test]
+fn same_input_gives_byte_identical_jsonl() -> TestResult {
+    let dir = scratch("same_input_gives_byte_identical_jsonl")?;
+    let input = dir.join("MFT");
+    let mut mft = Vec::new();
+    support::synth::synthetic_mft(20_000, &mut mft)?;
+    std::fs::write(&input, mft)?;
+    let baseline = notepad_baseline(&dir)?;
+
+    let mut outputs = Vec::new();
+    for run in ["1", "2"] {
+        let jsonl = dir.join(format!("{run}.jsonl"));
+        let status = tool()
+            .args(["analyze", "-i"])
+            .arg(&input)
+            .arg("--jsonl")
+            .arg(&jsonl)
+            .arg("--baseline")
+            .arg(&baseline)
+            .arg("--rules")
+            .arg(SAMPLE_RULES)
+            .status()?;
+        assert!(status.success());
+        outputs.push(std::fs::read(&jsonl)?);
+    }
+
+    assert!(!outputs[0].is_empty());
+    assert!(outputs[0] == outputs[1], "JSONL differs between runs");
+    Ok(())
+}

@@ -85,7 +85,7 @@ Decisions before the first slice (H2):
 - [ ] **P1-6 Gate measurements**
   - Done when: synthetic 1 GB `$MFT` (≈1M records) generator in `xtask` or a test helper; `tool analyze` on it ≤ 1 min and ≤ 2 GB peak RSS on the Mac; determinism test (two runs, byte-identical outputs) in CI; outside-baseline ratio, VWR gaps and `$UpCase` MD5 on the Windows VM recorded in `docs/research/baseline-poc.md`.
   - Out of scope: optimization beyond the gate.
-- [ ] **P1-7 JSONL timeline** (`report`, `cli`)
+- [x] **P1-7 JSONL timeline** (`report`, `cli`)
   - Done when: `tool analyze -i <$MFT> --jsonl out.jsonl` writes one JSON object per record, one per line, with the CSV columns as typed fields (numbers, bools, `null` when empty, `findings` as `[{level, id}]`, `diagnostics` as an array); names, paths and rule ids are display text (ADR 0002 #4) but not formula-neutralized; `--jsonl` combines with `--csv`/`-o` in one run and counts as the required output; it refuses to overwrite the input or another output, is replaced atomically, and is byte-identical across runs.
   - Out of scope: findings-only JSONL and Hayabusa/Takajo field names (M9), single-document JSON, stdout (`-`), renaming `-o`.
 

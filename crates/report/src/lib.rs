@@ -12,8 +12,10 @@ use sigma::{Finding, Level};
 
 mod base64;
 mod html;
+mod jsonl;
 
 pub use html::{HtmlReport, Input, Provenance};
+pub use jsonl::JsonlWriter;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -21,6 +23,8 @@ pub enum Error {
     Csv(#[from] csv::Error),
     #[error("writing HTML: {0}")]
     Html(#[from] std::io::Error),
+    #[error("writing JSONL: {0}")]
+    Json(#[from] serde_json::Error),
 }
 
 const HEADER: [&str; 11] = [
@@ -61,17 +65,8 @@ impl<W: Write> CsvWriter<W> {
             name.map(|n| cell_text(&n.name.to_string()))
                 .unwrap_or_default(),
             path_cell(&row.resolution),
-            match row.resolution {
-                Resolution::Resolved(_) => "resolved",
-                Resolution::Unknown => "unknown",
-            }
-            .to_string(),
-            match row.baseline {
-                Some(Status::Standard) => "standard",
-                Some(Status::Outside) => "outside",
-                None => "",
-            }
-            .to_string(),
+            path_state(&row.resolution).to_string(),
+            baseline_name(row.baseline).unwrap_or_default().to_string(),
             findings_cell(&row.findings),
             entry.si_created.map(Filetime::iso8601).unwrap_or_default(),
             name.map(|n| n.created.iso8601()).unwrap_or_default(),
@@ -94,6 +89,20 @@ fn path_cell(resolution: &Resolution<'_>) -> String {
         .path_text()
         .map(|p| cell_text(&p))
         .unwrap_or_default()
+}
+
+fn baseline_name(status: Option<Status>) -> Option<&'static str> {
+    match status? {
+        Status::Standard => Some("standard"),
+        Status::Outside => Some("outside"),
+    }
+}
+
+fn path_state(resolution: &Resolution<'_>) -> &'static str {
+    match resolution {
+        Resolution::Resolved(_) => "resolved",
+        Resolution::Unknown => "unknown",
+    }
 }
 
 /// `level:id` per matched rule, most severe first (the order `sigma` returns), joined by `;`.
