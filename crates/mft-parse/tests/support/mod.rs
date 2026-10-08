@@ -3,6 +3,8 @@
 
 #![allow(dead_code)] // each test binary uses a different subset
 
+pub(crate) mod synth;
+
 const USA_OFFSET: usize = 0x30;
 const SECTOR: usize = 512;
 const USN: [u8; 2] = [0x01, 0x00];

@@ -48,3 +48,27 @@ Path resolution: no corrupt records and no unresolved paths on either image. A 5
   - Report outside-baseline files grouped by write privilege, which `product.md` §6 already plans.
   - Revisit the target at the Phase 1 gate with the clean Win11 24H2 VM.
 - Keep the normalization set small (user, SID, GUID, version) until the VM comparison shows a need for more.
+
+## Phase 1 gate (P1-6)
+
+### Scale on the Mac (2026-10-08)
+- Input: a synthetic 1 GiB `$MFT` (1,048,576 records of 1024 bytes) from `cargo run -p xtask --release -- synth-mft 1048576 <out>`. It is built with the `mft-parse` test builder; the same count always gives the same bytes. Shape:
+  - 1,038,086 entries after merging extension records; paths mostly 8–9 levels deep, at most 19;
+  - about 5 % directories and 5 % deleted entries;
+  - 1 % long names held in extension records, and 1,048 BAAD records;
+  - files planted so every sample rule fires.
+- Run: release build, `tool analyze` with the W11 22H2 baseline, `testdata/rules`, `-o` and `--csv`, on an Apple Silicon Mac. Measured with `/usr/bin/time -l`, two runs each.
+
+| Measure | First build | After streaming the HTML data | Gate |
+|---|---|---|---|
+| Wall time | 9.15 s / 9.13 s | 8.83 s / 8.88 s | ≤ 60 s |
+| Maximum resident set size | 2,179,694,592 / 2,188,165,120 B | 1,019,133,952 / 1,045,905,408 B | ≤ 2 GiB |
+| Outputs of the two runs | byte-identical | byte-identical | — |
+
+- The first build failed the RAM limit by about 2 %. It held the whole report JSON (about 500 MB) and its Base64 copy (667 MB) at once.
+- The fix streams JSON → Base64 → file. Output is byte-identical to the first build's.
+- The synthetic volume is a worst case for the HTML: 984,603 files (95 %) are outside the baseline and 341,140 entries have findings, so the report is 667 MB. Real volumes are smaller, and smaller again once the time window is applied.
+- CI runs the determinism check on a 20,000-record synthetic volume with every output enabled (`synthetic_volume_gives_byte_identical_reports`).
+
+### Windows VM
+Pending: outside-baseline ratio in the window, VWR gaps after a clean install, and `$UpCase` MD5 on Win11 24H2 x64.
