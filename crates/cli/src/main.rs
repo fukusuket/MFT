@@ -84,6 +84,11 @@ fn analyze(
     baseline: Option<&Path>,
     rules: Option<&Path>,
 ) -> anyhow::Result<()> {
+    refuse_same_file(input, csv, "input", "CSV output")?;
+    refuse_same_file(input, output, "input", "HTML output")?;
+    if let Some(csv) = csv {
+        refuse_same_file(csv, output, "CSV output", "HTML output")?;
+    }
     let rules = rules
         .map(|dir| {
             Rules::load(dir).with_context(|| format!("loading rules from {}", dir.display()))
@@ -138,6 +143,28 @@ fn analyze(
     Ok(())
 }
 
+fn refuse_same_file(
+    input: &Path,
+    output: Option<&Path>,
+    input_name: &str,
+    output_name: &str,
+) -> anyhow::Result<()> {
+    let same = output.is_some_and(|output| {
+        output == input
+            || std::fs::canonicalize(input)
+                .ok()
+                .zip(std::fs::canonicalize(output).ok())
+                .is_some_and(|(input, output)| input == output)
+    });
+    if same {
+        anyhow::bail!(
+            "{input_name} and {output_name} refer to the same file: {}",
+            input.display()
+        );
+    }
+    Ok(())
+}
+
 const PROVENANCE: Provenance = Provenance {
     version: env!("CARGO_PKG_VERSION"),
     commit: env!("TOOL_COMMIT"),
@@ -152,6 +179,7 @@ fn file_name(path: &Path) -> String {
 }
 
 fn build_baseline(vwr: &Path, out: &Path) -> anyhow::Result<()> {
+    refuse_same_file(vwr, Some(out), "VWR input", "baseline output")?;
     let csv = File::open(vwr).with_context(|| format!("opening {}", vwr.display()))?;
     let file = File::create(out).with_context(|| format!("creating {}", out.display()))?;
     let mut writer = BufWriter::new(file);

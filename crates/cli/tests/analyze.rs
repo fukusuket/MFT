@@ -102,6 +102,93 @@ fn missing_input_fails_with_a_message_not_a_panic() -> TestResult {
 }
 
 #[test]
+fn analyze_refuses_to_overwrite_its_mft_with_csv() -> TestResult {
+    let dir = scratch("analyze_refuses_to_overwrite_its_mft_with_csv")?;
+    let input = dir.join("MFT");
+    let original = small_volume_mft();
+    std::fs::write(&input, &original)?;
+
+    let out = tool()
+        .args(["analyze", "-i"])
+        .arg(&input)
+        .arg("--csv")
+        .arg(&input)
+        .output()?;
+
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(1), "{stderr}");
+    assert!(stderr.contains("same file"), "{stderr}");
+    assert_eq!(std::fs::read(&input)?, original);
+    Ok(())
+}
+
+#[test]
+fn analyze_refuses_to_overwrite_its_mft_with_html() -> TestResult {
+    let dir = scratch("analyze_refuses_to_overwrite_its_mft_with_html")?;
+    let input = dir.join("MFT");
+    let original = small_volume_mft();
+    std::fs::write(&input, &original)?;
+
+    let out = tool()
+        .args(["analyze", "-i"])
+        .arg(&input)
+        .arg("-o")
+        .arg(&input)
+        .output()?;
+
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(1), "{stderr}");
+    assert!(stderr.contains("same file"), "{stderr}");
+    assert_eq!(std::fs::read(&input)?, original);
+    Ok(())
+}
+
+#[test]
+fn analyze_refuses_an_equivalent_path_to_its_mft() -> TestResult {
+    let dir = scratch("analyze_refuses_an_equivalent_path_to_its_mft")?;
+    let input = dir.join("MFT");
+    let original = small_volume_mft();
+    std::fs::create_dir_all(dir.join("subdir"))?;
+    std::fs::write(&input, &original)?;
+
+    let out = tool()
+        .args(["analyze", "-i"])
+        .arg(&input)
+        .arg("--csv")
+        .arg(dir.join("subdir").join("..").join("MFT"))
+        .output()?;
+
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(1), "{stderr}");
+    assert!(stderr.contains("same file"), "{stderr}");
+    assert_eq!(std::fs::read(&input)?, original);
+    Ok(())
+}
+
+#[test]
+fn analyze_refuses_the_same_file_for_csv_and_html() -> TestResult {
+    let dir = scratch("analyze_refuses_the_same_file_for_csv_and_html")?;
+    let (input, output) = (dir.join("MFT"), dir.join("report"));
+    std::fs::write(&input, small_volume_mft())?;
+    std::fs::write(&output, b"keep this report")?;
+
+    let out = tool()
+        .args(["analyze", "-i"])
+        .arg(&input)
+        .arg("--csv")
+        .arg(&output)
+        .arg("-o")
+        .arg(&output)
+        .output()?;
+
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(1), "{stderr}");
+    assert!(stderr.contains("same file"), "{stderr}");
+    assert_eq!(std::fs::read(&output)?, b"keep this report");
+    Ok(())
+}
+
+#[test]
 fn same_input_gives_byte_identical_csv() -> TestResult {
     let dir = scratch("same_input_gives_byte_identical_csv")?;
     let input = dir.join("MFT");
@@ -165,6 +252,27 @@ fn baseline_build_then_analyze_labels_files() -> TestResult {
     // $MFT; root; \Users (a file in this fixture); \Users\a.txt (directly under \Users, so literal
     // and not the VWR's \Users\Bob, ADR 0015); stale; BAAD
     assert_eq!(column, ["standard", "", "outside", "outside", "", ""]);
+    Ok(())
+}
+
+#[test]
+fn baseline_build_refuses_to_overwrite_its_vwr_csv() -> TestResult {
+    let dir = scratch("baseline_build_refuses_to_overwrite_its_vwr_csv")?;
+    let vwr = dir.join("vwr.csv");
+    let original = b"\"FullName\"\n\"C:\\Windows\\notepad.exe\"\n";
+    std::fs::write(&vwr, original)?;
+
+    let out = tool()
+        .args(["baseline", "build", "--vwr"])
+        .arg(&vwr)
+        .arg("-o")
+        .arg(&vwr)
+        .output()?;
+
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(1), "{stderr}");
+    assert!(stderr.contains("same file"), "{stderr}");
+    assert_eq!(std::fs::read(&vwr)?, original);
     Ok(())
 }
 
