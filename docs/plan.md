@@ -79,7 +79,7 @@ Decisions before the first slice (H2):
 - [x] **P1-4 Sigma** (crates `sigma`, `detect`)
   - Done when: rules from a directory load through `rsigma-eval` (ADR 0003 rules: every rule has an `id`; route with `evaluate_with_logsource`); MFT entries emitted as `file_event` with standard fields, plus `service: baseline_outside` for outside entries; findings carry rule `id`, `title`, `level`, `author` (DRL) and the `explain` trace; results sorted (ADR 0002 #3); 3–5 sample rules in `testdata/rules/`.
   - Out of scope: correlations, USN categories (`file_delete` etc.), SigmaHQ import at scale, `tool rules update`.
-- [ ] **P1-5 Minimal HTML report** (crate `report`)
+- [x] **P1-5 Minimal HTML report** (crate `report`)
   - Done when: `-o report.html` writes one self-contained file: host/input summary, findings table (level → time), outside-baseline list; data embedded Base64, no `innerHTML`; CSV formula neutralization; AGPL footer with source URL and commit; rule `author` shown (ADR 0001); attacker-name tests (`</script>`, `=cmd|…`, control chars, unpaired surrogates).
   - Out of scope: Svelte viewer, timeline, filters, en/ja.
 - [ ] **P1-6 Gate measurements**

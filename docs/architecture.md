@@ -40,7 +40,7 @@ Facts shown next to findings, never used to rank them: baseline status, timestom
 
 ## Crates
 
-So far: `ntfs-types`, `mft-parse`, `resolve` (MFT-only), `baseline` (no zstd yet), `sigma`, `detect`, `analyze`, `report`, `cli`. `fuzz/` is a separate workspace (ADR 0013).
+So far: `ntfs-types`, `mft-parse`, `resolve` (MFT-only), `baseline` (no zstd yet), `sigma`, `detect`, `analyze`, `report` (CSV and a static HTML template, no JSONL or Svelte yet), `cli`. `fuzz/` is a separate workspace (ADR 0013).
 
 | Crate | Role | Depends on | Built on |
 |---|---|---|---|
