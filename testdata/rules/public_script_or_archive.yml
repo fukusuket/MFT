@@ -1,0 +1,28 @@
+# Sample rule for tests. Detection Rule License (DRL) 1.1.
+title: Script, library or archive in the Public user profile
+id: 29bfff08-d0e0-4ccb-8f8a-0d81bc1b0c77
+status: test
+description: A script, library, installer or archive under C:\Users\Public, which every local user can write to. Executables are covered by a separate rule.
+author: tool
+date: 2026-10-09
+logsource:
+  product: windows
+  category: file_event
+detection:
+  selection:
+    TargetFilename|startswith: 'C:\Users\Public\'
+    TargetFilename|endswith:
+      - '.dll'
+      - '.msi'
+      - '.ps1'
+      - '.bat'
+      - '.cmd'
+      - '.vbs'
+      - '.js'
+      - '.hta'
+      - '.scr'
+      - '.zip'
+      - '.7z'
+      - '.rar'
+  condition: selection
+level: medium

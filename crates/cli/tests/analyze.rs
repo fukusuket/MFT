@@ -680,7 +680,15 @@ fn html_report_lists_findings_and_the_outside_baseline_files() -> TestResult {
     assert_eq!(outside, csv_outside);
     assert_eq!(data["summary"]["input"], "MFT");
     assert_eq!(data["summary"]["baseline"], "b.fst");
-    assert_eq!(data["summary"]["rules"], 4);
+    let rule_files = std::fs::read_dir(SAMPLE_RULES)?
+        .filter_map(Result::ok)
+        .filter(|e| {
+            e.path()
+                .extension()
+                .is_some_and(|x| x == "yml" || x == "yaml")
+        })
+        .count();
+    assert_eq!(data["summary"]["rules"], rule_files);
     let footer = &data["footer"];
     assert_eq!(footer["license"], "AGPL-3.0-only");
     assert_eq!(footer["source_url"], "https://github.com/fukusuket/MFT");
@@ -1080,5 +1088,185 @@ fn sample_rules_skip_system_binaries_in_winsxs() -> TestResult {
             "high:46af8dfb-f067-417d-8837-9e5a1785fee0".to_string()
         )]
     );
+    Ok(())
+}
+
+/// Runs the sample rules on a volume holding `files` (paths like `\Users\x.exe`, directories
+/// created on the way) and returns each file's path and `findings` cell, in input order.
+fn sample_findings(test: &str, files: &[&str]) -> Result<Vec<(String, String)>, Box<dyn Error>> {
+    let dir = scratch(test)?;
+    let (input, csv) = (dir.join("MFT"), dir.join("out.csv"));
+    let at = |parent: u32| u64::from(parent) | (1 << 48);
+    let entry = |flags: u16, entry: u32, parent: u32, name: &str| {
+        record_with_flags(
+            1024,
+            flags,
+            entry,
+            &[
+                standard_information(),
+                file_name_with(at(parent), &u16s(name), 1, 0),
+            ],
+        )
+    };
+    let mut mft = entry(0x01, 0, 5, "$MFT");
+    mft.extend(vec![0u8; 4 * 1024]);
+    mft.extend(entry(0x03, 5, 5, "."));
+    let mut dirs: Vec<(String, u32)> = vec![(String::new(), 5)];
+    let mut next = 6;
+    for file in files {
+        let (parent_path, name) = file.rsplit_once('\\').ok_or("path without a backslash")?;
+        let mut parent = 5;
+        let mut so_far = String::new();
+        for segment in parent_path.split('\\').filter(|s| !s.is_empty()) {
+            so_far = format!("{so_far}\\{segment}");
+            parent = match dirs.iter().find(|(path, _)| *path == so_far) {
+                Some(&(_, number)) => number,
+                None => {
+                    mft.extend(entry(0x03, next, parent, segment));
+                    dirs.push((so_far.clone(), next));
+                    next += 1;
+                    next - 1
+                }
+            };
+        }
+        mft.extend(entry(0x01, next, parent, name));
+        next += 1;
+    }
+    std::fs::write(&input, mft)?;
+
+    let out = tool()
+        .args(["analyze", "-i"])
+        .arg(&input)
+        .arg("--csv")
+        .arg(&csv)
+        .arg("--rules")
+        .arg(SAMPLE_RULES)
+        .output()?;
+    if !out.status.success() {
+        return Err(String::from_utf8_lossy(&out.stderr).into_owned().into());
+    }
+    let rows = csv_rows(&std::fs::read_to_string(&csv)?);
+    Ok(files
+        .iter()
+        .map(|file| {
+            let findings = rows
+                .iter()
+                .find(|row| row[4] == *file)
+                .map(|row| row[7].clone())
+                .unwrap_or_default();
+            ((*file).to_string(), findings)
+        })
+        .collect())
+}
+
+/// Whether a `findings` cell lists `level:id`.
+fn has_finding(cell: &str, level_id: &str) -> bool {
+    cell.split(';').any(|item| item == level_id)
+}
+
+#[test]
+fn bloodhound_output_is_high() -> TestResult {
+    const BLOODHOUND: &str = "bf961869-9432-455b-851e-ea7e9aecea9a";
+    let findings = sample_findings(
+        "bloodhound_output_is_high",
+        &[
+            r"\Users\Public\20250325171324_BloodHound.zip",
+            r"\Users\alice\20250325171324_computers.json",
+            r"\Users\alice\computers.json",
+            r"\Users\alice\Downloads\BloodHound.zip",
+        ],
+    )?;
+
+    let hit = format!("high:{BLOODHOUND}");
+    let matched: Vec<bool> = findings.iter().map(|(_, f)| has_finding(f, &hit)).collect();
+    assert_eq!(matched, [true, true, false, false], "{findings:?}");
+    Ok(())
+}
+
+#[test]
+fn remote_access_tool_files_are_medium() -> TestResult {
+    const RMM: &str = "7cab92a6-2da4-4251-9f74-7ec5808d34c7";
+    let findings = sample_findings(
+        "remote_access_tool_files_are_medium",
+        &[
+            r"\Windows\Temp\ateraAgentSetup64.msi",
+            r"\ProgramData\Splashtop\Common\Event\x.dll",
+            r"\Program Files (x86)\ATERA Networks\AteraAgent\AteraAgent.exe",
+            r"\Users\alice\Downloads\TeamViewer_Setup_x64.exe",
+            r"\Windows\Temp\Splashtop_Streamer_Windows_DEPLOY_INSTALLER.exe",
+            r"\Users\alice\notAnyDesk.txt",
+            r"\Users\alice\Documents\notes.txt",
+        ],
+    )?;
+
+    let rmm = format!("medium:{RMM}");
+    let matched: Vec<bool> = findings.iter().map(|(_, f)| has_finding(f, &rmm)).collect();
+    assert_eq!(
+        matched,
+        [true, true, true, true, true, false, false],
+        "{findings:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn executables_directly_in_users_are_medium() -> TestResult {
+    const USERS_ROOT: &str = "c585bdbb-5e39-4227-8a43-1a5c6b2533aa";
+    let findings = sample_findings(
+        "executables_directly_in_users_are_medium",
+        &[r"\Users\setup.msi", r"\Users\alice\setup.msi"],
+    )?;
+
+    assert_eq!(findings[0].1, format!("medium:{USERS_ROOT}"));
+    assert_eq!(findings[1].1, "");
+    Ok(())
+}
+
+#[test]
+fn scripts_and_archives_in_public_are_medium() -> TestResult {
+    const PUBLIC_FILES: &str = "29bfff08-d0e0-4ccb-8f8a-0d81bc1b0c77";
+    const PUBLIC_EXE: &str = "92986d59-a4d2-45b3-a224-c8a9809b78aa";
+    let findings = sample_findings(
+        "scripts_and_archives_in_public_are_medium",
+        &[
+            r"\Users\Public\x.zip",
+            r"\Users\Public\Downloads\x.ps1",
+            r"\Users\Public\a.txt",
+            r"\Users\Public\a.exe",
+        ],
+    )?;
+
+    let cells: Vec<&str> = findings.iter().map(|(_, f)| f.as_str()).collect();
+    let public_file = format!("medium:{PUBLIC_FILES}");
+    let public_exe = format!("medium:{PUBLIC_EXE}");
+    assert_eq!(
+        cells,
+        [
+            public_file.as_str(),
+            public_file.as_str(),
+            "",
+            public_exe.as_str()
+        ]
+    );
+    Ok(())
+}
+
+#[test]
+fn executables_in_temp_are_low() -> TestResult {
+    const TEMP: &str = "8729eb10-f54f-4952-ac19-884a1d2c14ba";
+    let findings = sample_findings(
+        "executables_in_temp_are_low",
+        &[
+            r"\Users\alice\AppData\Local\Temp\1\x.exe",
+            r"\Windows\Temp\x.msi",
+            r"\Users\alice\AppData\Local\Temp\x.txt",
+            r"\Users\alice\AppData\Local\x.exe",
+            r"\Windows\Temp2\x.exe",
+        ],
+    )?;
+
+    let hit = format!("low:{TEMP}");
+    let matched: Vec<bool> = findings.iter().map(|(_, f)| has_finding(f, &hit)).collect();
+    assert_eq!(matched, [true, true, false, false, false], "{findings:?}");
     Ok(())
 }
