@@ -94,6 +94,9 @@ Decisions before the first slice (H2):
 - [x] **P1-9 Sample rules for attack artifacts** (`testdata/rules`; [ADR 0016](adr/0016-rule-levels-by-false-positive-tolerance.md); added after a Win11 24H2 case where the sample rules found nothing)
   - Done when: five rules with levels per ADR 0016: SharpHound/BloodHound output (high), remote-access-tool files (medium), executables directly in `\Users` (medium), scripts and archives in `\Users\Public` (medium), executables in Temp (low); one e2e test per rule with a near-miss that does not match; no existing test expectation changes; a run on the 10 local hosts reports per-rule, per-level counts in the hand-over (not in the repo), with all five paths from that case flagged.
   - Out of scope: SigmaHQ import, the `tool-rules` repo, a ProgramData-root rule, baseline-routed variants, HTML filters, `explain` texts.
+- [ ] **P1-10 Remote-access-tool rules from LOLRMM** (`xtask`, `testdata/rules`; [ADR 0017](adr/0017-lolrmm-derived-rules.md))
+  - Done when: `cargo xtask lolrmm <rmm_tools.json> <dir>` writes one rule per tool as ADR 0017 specifies (normalization, deterministic ids, license header), byte-identical across runs; unit tests cover each normalization case (placeholder, `(x86)` variant, bare name, dropped catch-all) on a small inline JSON; the generated rules from commit `dc6ebe934bce` are committed with `LICENSE-LOLRMM` and a `NOTICE` entry; every generated rule loads; an e2e test shows AnyDesk, TeamViewer, Splashtop and ScreenConnect install paths (both `Program Files` variants) get their LOLRMM finding; `tool analyze` on the 10 local hosts stays under 1 s each, with per-tool counts in the hand-over.
+  - Out of scope: importing LOLRMM's Sigma rules, network/registry/process artifacts, macOS/Linux paths, fetching the JSON from the tool, RAT-specific levels, the `tool-rules` repo.
 
 ## Risks
 
