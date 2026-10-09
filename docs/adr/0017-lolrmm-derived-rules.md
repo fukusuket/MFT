@@ -1,6 +1,6 @@
 # ADR 0017: Generate remote-access-tool rules from LOLRMM
 
-Status: proposed (2026-10-09)  <!-- a human changes this to accepted (AGENTS.md H2) -->
+Status: accepted (2026-10-09, approved by the maintainer)
 
 ## Context
 P1-9's hand-written remote-access-tool rule covers 7 product names. Attackers use hundreds of RMM tools and RATs (Atera, Splashtop and AnyDesk appeared together on one real Win11 host). LOLRMM (https://github.com/magicsword-io/LOLRMM) lists 356 such tools (260 RMM, 96 RAT): 318 with install paths, 64 with PE file names, 99 with Windows disk artifacts. It is **Apache-2.0** (checked 2026-10-09), so under ADR 0006 it may become rule content, like LOLDrivers.
