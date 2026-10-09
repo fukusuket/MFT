@@ -1,6 +1,6 @@
 # ADR 0018: LOLRMM rule generation details
 
-Status: accepted (2026-10-09, approved by the maintainer)
+Status: superseded by ADR 0019 (accepted 2026-10-09)
 
 ## Context
 Implementing ADR 0017 (P1-10) on the real LOLRMM data showed gaps in its Normalization and Rules rows:
