@@ -1,6 +1,6 @@
 # ADR 0018: LOLRMM rule generation details
 
-Status: proposed (2026-10-09)  <!-- a human changes this to accepted (AGENTS.md H2) -->
+Status: accepted (2026-10-09, approved by the maintainer)
 
 ## Context
 Implementing ADR 0017 (P1-10) on the real LOLRMM data showed gaps in its Normalization and Rules rows:
