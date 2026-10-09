@@ -1,0 +1,29 @@
+# Sample rule for tests. Detection Rule License (DRL) 1.1.
+title: Executable or script in a Temp folder
+id: 8729eb10-f54f-4952-ac19-884a1d2c14ba
+status: test
+description: An executable, script or installer in a user's or the system Temp folder. Installers do this all the time; malware too.
+author: tool
+date: 2026-10-09
+logsource:
+  product: windows
+  category: file_event
+detection:
+  user_temp:
+    TargetFilename|contains: '\AppData\Local\Temp\'
+  system_temp:
+    TargetFilename|startswith: 'C:\Windows\Temp\'
+  executable:
+    TargetFilename|endswith:
+      - '.exe'
+      - '.dll'
+      - '.msi'
+      - '.ps1'
+      - '.bat'
+      - '.cmd'
+      - '.vbs'
+      - '.js'
+      - '.hta'
+      - '.scr'
+  condition: (user_temp or system_temp) and executable
+level: low

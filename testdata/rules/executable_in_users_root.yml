@@ -1,0 +1,15 @@
+# Sample rule for tests. Detection Rule License (DRL) 1.1.
+title: Executable directly in the Users folder
+id: c585bdbb-5e39-4227-8a43-1a5c6b2533aa
+status: test
+description: An executable or script directly in C:\Users, outside any profile, where Windows itself puts none.
+author: tool
+date: 2026-10-09
+logsource:
+  product: windows
+  category: file_event
+detection:
+  selection:
+    TargetFilename|re|i: '^C:\\Users\\[^\\]+\.(exe|dll|msi|ps1|bat|cmd|vbs|js|hta|scr)$'
+  condition: selection
+level: medium
