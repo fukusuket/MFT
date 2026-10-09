@@ -80,9 +80,9 @@ impl Rules {
         files.retain(|f| f.extension().is_some_and(|x| x == "yml" || x == "yaml"));
         files.sort();
 
-        let mut engine = Engine::new();
         let mut ids = Vec::new();
         let mut authors = HashMap::new();
+        let mut loaded = Vec::new();
         for file in files {
             let rule_error = |e: &dyn std::fmt::Display| Error::Rule(file.clone(), e.to_string());
             let text = std::fs::read_to_string(&file).map_err(|e| Error::Io(file.clone(), e))?;
@@ -109,9 +109,24 @@ impl Rules {
                 }
                 ids.push(id.clone());
             }
-            engine
-                .add_collection(&collection)
-                .map_err(|e| rule_error(&e))?;
+            loaded.extend(
+                collection
+                    .rules
+                    .into_iter()
+                    .map(|rule| (file.clone(), rule)),
+            );
+        }
+        // One batch: each separate add rebuilds the engine's rule index, which is quadratic.
+        let mut engine = Engine::new();
+        if let Some((at, e)) = engine
+            .add_rules(loaded.iter().map(|(_, rule)| rule))
+            .first()
+        {
+            let file = loaded
+                .get(*at)
+                .map(|(file, _)| file.clone())
+                .unwrap_or_default();
+            return Err(Error::Rule(file, e.to_string()));
         }
         let compiled = engine
             .rules()

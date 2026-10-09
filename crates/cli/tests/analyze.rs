@@ -1270,3 +1270,59 @@ fn executables_in_temp_are_low() -> TestResult {
     assert_eq!(matched, [true, true, false, false, false], "{findings:?}");
     Ok(())
 }
+
+#[test]
+fn lolrmm_rules_name_common_rmm_installs() -> TestResult {
+    // The two `notes.txt` paths match only through the generated Program Files variant: LOLRMM
+    // lists just `C:\Program Files (x86)\Splashtop\` and `C:\Program Files\TeamViewer\`.
+    let cases = [
+        (
+            r"\Program Files\Splashtop\notes.txt",
+            "28030ad9-445a-8371-8d43-a02222056808",
+        ),
+        (
+            r"\Program Files (x86)\TeamViewer\notes.txt",
+            "82a98cbe-a951-8420-bd87-f1396699bb51",
+        ),
+        (
+            r"\Program Files (x86)\AnyDesk\AnyDesk.exe",
+            "72be2a35-2f06-8ad3-ba83-b9c0292f719d",
+        ),
+        (
+            r"\Program Files\AnyDesk\AnyDesk.exe",
+            "72be2a35-2f06-8ad3-ba83-b9c0292f719d",
+        ),
+        (
+            r"\Program Files\TeamViewer\TeamViewer.exe",
+            "82a98cbe-a951-8420-bd87-f1396699bb51",
+        ),
+        (
+            r"\Program Files (x86)\TeamViewer\TeamViewer.exe",
+            "82a98cbe-a951-8420-bd87-f1396699bb51",
+        ),
+        (
+            r"\Program Files (x86)\Splashtop\Splashtop Remote\Server\SRServer.exe",
+            "28030ad9-445a-8371-8d43-a02222056808",
+        ),
+        (
+            r"\Program Files\Splashtop\Splashtop Remote\Server\SRServer.exe",
+            "28030ad9-445a-8371-8d43-a02222056808",
+        ),
+        (
+            r"\Program Files (x86)\ScreenConnect Client (0123456789abcdef)\ScreenConnect.ClientService.exe",
+            "849737ee-1ea0-8f5b-8b3c-21ca9a63b5cc",
+        ),
+        (
+            r"\Program Files\ScreenConnect Client (0123456789abcdef)\ScreenConnect.ClientService.exe",
+            "849737ee-1ea0-8f5b-8b3c-21ca9a63b5cc",
+        ),
+    ];
+    let paths: Vec<&str> = cases.iter().map(|(path, _)| *path).collect();
+
+    let findings = sample_findings("lolrmm_rules_name_common_rmm_installs", &paths)?;
+
+    for ((path, cell), (_, id)) in findings.iter().zip(cases) {
+        assert!(has_finding(cell, &format!("medium:{id}")), "{path}: {cell}");
+    }
+    Ok(())
+}
