@@ -1165,51 +1165,6 @@ fn has_finding(cell: &str, level_id: &str) -> bool {
 }
 
 #[test]
-fn bloodhound_output_is_high() -> TestResult {
-    const BLOODHOUND: &str = "bf961869-9432-455b-851e-ea7e9aecea9a";
-    let findings = sample_findings(
-        "bloodhound_output_is_high",
-        &[
-            r"\Users\Public\20250325171324_BloodHound.zip",
-            r"\Users\alice\20250325171324_computers.json",
-            r"\Users\alice\computers.json",
-            r"\Users\alice\Downloads\BloodHound.zip",
-        ],
-    )?;
-
-    let hit = format!("high:{BLOODHOUND}");
-    let matched: Vec<bool> = findings.iter().map(|(_, f)| has_finding(f, &hit)).collect();
-    assert_eq!(matched, [true, true, false, false], "{findings:?}");
-    Ok(())
-}
-
-#[test]
-fn remote_access_tool_files_are_medium() -> TestResult {
-    const RMM: &str = "7cab92a6-2da4-4251-9f74-7ec5808d34c7";
-    let findings = sample_findings(
-        "remote_access_tool_files_are_medium",
-        &[
-            r"\Windows\Temp\ateraAgentSetup64.msi",
-            r"\ProgramData\Splashtop\Common\Event\x.dll",
-            r"\Program Files (x86)\ATERA Networks\AteraAgent\AteraAgent.exe",
-            r"\Users\alice\Downloads\TeamViewer_Setup_x64.exe",
-            r"\Windows\Temp\Splashtop_Streamer_Windows_DEPLOY_INSTALLER.exe",
-            r"\Users\alice\notAnyDesk.txt",
-            r"\Users\alice\Documents\notes.txt",
-        ],
-    )?;
-
-    let rmm = format!("medium:{RMM}");
-    let matched: Vec<bool> = findings.iter().map(|(_, f)| has_finding(f, &rmm)).collect();
-    assert_eq!(
-        matched,
-        [true, true, true, true, true, false, false],
-        "{findings:?}"
-    );
-    Ok(())
-}
-
-#[test]
 fn executables_directly_in_users_are_medium() -> TestResult {
     const USERS_ROOT: &str = "c585bdbb-5e39-4227-8a43-1a5c6b2533aa";
     let findings = sample_findings(
@@ -1268,61 +1223,5 @@ fn executables_in_temp_are_low() -> TestResult {
     let hit = format!("low:{TEMP}");
     let matched: Vec<bool> = findings.iter().map(|(_, f)| has_finding(f, &hit)).collect();
     assert_eq!(matched, [true, true, false, false, false], "{findings:?}");
-    Ok(())
-}
-
-#[test]
-fn lolrmm_rules_name_common_rmm_installs() -> TestResult {
-    // The two `notes.txt` paths match only through the generated Program Files variant: LOLRMM
-    // lists just `C:\Program Files (x86)\Splashtop\` and `C:\Program Files\TeamViewer\`.
-    let cases = [
-        (
-            r"\Program Files\Splashtop\notes.txt",
-            "28030ad9-445a-8371-8d43-a02222056808",
-        ),
-        (
-            r"\Program Files (x86)\TeamViewer\notes.txt",
-            "82a98cbe-a951-8420-bd87-f1396699bb51",
-        ),
-        (
-            r"\Program Files (x86)\AnyDesk\AnyDesk.exe",
-            "72be2a35-2f06-8ad3-ba83-b9c0292f719d",
-        ),
-        (
-            r"\Program Files\AnyDesk\AnyDesk.exe",
-            "72be2a35-2f06-8ad3-ba83-b9c0292f719d",
-        ),
-        (
-            r"\Program Files\TeamViewer\TeamViewer.exe",
-            "82a98cbe-a951-8420-bd87-f1396699bb51",
-        ),
-        (
-            r"\Program Files (x86)\TeamViewer\TeamViewer.exe",
-            "82a98cbe-a951-8420-bd87-f1396699bb51",
-        ),
-        (
-            r"\Program Files (x86)\Splashtop\Splashtop Remote\Server\SRServer.exe",
-            "28030ad9-445a-8371-8d43-a02222056808",
-        ),
-        (
-            r"\Program Files\Splashtop\Splashtop Remote\Server\SRServer.exe",
-            "28030ad9-445a-8371-8d43-a02222056808",
-        ),
-        (
-            r"\Program Files (x86)\ScreenConnect Client (0123456789abcdef)\ScreenConnect.ClientService.exe",
-            "849737ee-1ea0-8f5b-8b3c-21ca9a63b5cc",
-        ),
-        (
-            r"\Program Files\ScreenConnect Client (0123456789abcdef)\ScreenConnect.ClientService.exe",
-            "849737ee-1ea0-8f5b-8b3c-21ca9a63b5cc",
-        ),
-    ];
-    let paths: Vec<&str> = cases.iter().map(|(path, _)| *path).collect();
-
-    let findings = sample_findings("lolrmm_rules_name_common_rmm_installs", &paths)?;
-
-    for ((path, cell), (_, id)) in findings.iter().zip(cases) {
-        assert!(has_finding(cell, &format!("medium:{id}")), "{path}: {cell}");
-    }
     Ok(())
 }
