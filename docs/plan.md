@@ -88,7 +88,7 @@ Decisions before the first slice (H2):
 - [x] **P1-7 JSONL timeline** (`report`, `cli`)
   - Done when: `tool analyze -i <$MFT> --jsonl out.jsonl` writes one JSON object per record, one per line, with the CSV columns as typed fields (numbers, bools, `null` when empty, `findings` as `[{level, id}]`, `diagnostics` as an array); names, paths and rule ids are display text (ADR 0002 #4) but not formula-neutralized; `--jsonl` combines with `--csv`/`-o` in one run and counts as the required output; it refuses to overwrite the input or another output, is replaced atomically, and is byte-identical across runs.
   - Out of scope: findings-only JSONL and Hayabusa/Takajo field names (M9), single-document JSON, stdout (`-`), renaming `-o`.
-- [ ] **P1-8 Sample rule: WinSxS is not "outside System32"** (`testdata/rules`; added after a 9-host Win7 run: 6 high false positives per host on `\Windows\winsxs\…\smss.exe` / `lsass.exe`)
+- [x] **P1-8 Sample rule: WinSxS is not "outside System32"** (`testdata/rules`; added after a 9-host Win7 run: 6 high false positives per host on `\Windows\winsxs\…\smss.exe` / `lsass.exe`)
   - Done when: `system_binary_outside_system32.yml` also excludes `C:\Windows\WinSxS\` (any case); an end-to-end test shows a `\Windows\winsxs\<component>\lsass.exe` gets no finding while `\Windows\svchost.exe` still does; rerun on the 9 local hosts gives 0 WinSxS findings (counts recorded in the hand-over, not in the repo).
   - Out of scope: other sample rules, a WinSxS component-name check, SigmaHQ rules, the HTML ordering of findings.
 

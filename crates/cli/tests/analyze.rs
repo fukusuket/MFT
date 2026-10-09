@@ -1022,3 +1022,63 @@ fn same_input_gives_byte_identical_jsonl() -> TestResult {
     assert!(outputs[0] == outputs[1], "JSONL differs between runs");
     Ok(())
 }
+
+#[test]
+fn sample_rules_skip_system_binaries_in_winsxs() -> TestResult {
+    let dir = scratch("sample_rules_skip_system_binaries_in_winsxs")?;
+    let (input, csv) = (dir.join("MFT"), dir.join("out.csv"));
+    let at = |parent: u64| parent | (1 << 48);
+    let entry = |flags: u16, entry: u32, parent: u64, name: &str| {
+        record_with_flags(
+            1024,
+            flags,
+            entry,
+            &[
+                standard_information(),
+                file_name_with(at(parent), &u16s(name), 1, 0),
+            ],
+        )
+    };
+    let mut mft = entry(0x01, 0, 5, "$MFT");
+    mft.extend(vec![0u8; 4 * 1024]);
+    mft.extend(entry(0x03, 5, 5, "."));
+    mft.extend(entry(0x03, 6, 5, "Windows"));
+    mft.extend(entry(0x03, 7, 6, "winsxs"));
+    mft.extend(entry(
+        0x03,
+        8,
+        7,
+        "amd64_microsoft-windows-lsa_31bf3856ad364e35_6.1.7601.17514_none_04709031736ac277",
+    ));
+    mft.extend(entry(0x01, 9, 8, "lsass.exe"));
+    mft.extend(entry(0x01, 10, 6, "svchost.exe"));
+    std::fs::write(&input, mft)?;
+
+    let out = tool()
+        .args(["analyze", "-i"])
+        .arg(&input)
+        .arg("--csv")
+        .arg(&csv)
+        .arg("--rules")
+        .arg(SAMPLE_RULES)
+        .output()?;
+
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let findings: Vec<(String, String)> = csv_rows(&std::fs::read_to_string(&csv)?)
+        .into_iter()
+        .filter(|row| !row[7].is_empty())
+        .map(|row| (row[4].clone(), row[7].clone()))
+        .collect();
+    assert_eq!(
+        findings,
+        [(
+            r"\Windows\svchost.exe".to_string(),
+            "high:46af8dfb-f067-417d-8837-9e5a1785fee0".to_string()
+        )]
+    );
+    Ok(())
+}
