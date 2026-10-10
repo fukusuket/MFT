@@ -685,4 +685,26 @@ mod tests {
             ]
         );
     }
+
+    #[test]
+    fn rewind_follows_a_parent_moved_to_another_directory() {
+        let entries = [
+            dir(ROOT, 5, &[(".", ROOT, 5)]),
+            dir(30, 1, &[("Users", ROOT, 5)]),
+            dir(31, 1, &[("Archive", ROOT, 5)]),
+            dir(32, 1, &[("work", 31, 1)]), // now \Archive\work
+        ];
+        let events = [
+            usn((40, 1), (32, 1), "a.txt"), // while work was \Users\work
+            usn((32, 1), (30, 1), "work"),  // RENAME_OLD_NAME: old parent
+            usn((32, 1), (31, 1), "work"),  // RENAME_NEW_NAME: new parent
+            usn((41, 1), (32, 1), "b.txt"),
+        ];
+
+        let resolver = Resolver::new(&entries);
+
+        let got = states(&resolver.rewind(&events));
+        assert_eq!(got[0], state("inferred", r"\Users\work"));
+        assert_eq!(got[3], state("resolved", r"\Archive\work"));
+    }
 }
