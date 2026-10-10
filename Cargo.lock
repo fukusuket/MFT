@@ -890,6 +890,7 @@ dependencies = [
  "serde_json",
  "sigma",
  "thiserror 2.0.21",
+ "usn-parse",
 ]
 
 [[package]]

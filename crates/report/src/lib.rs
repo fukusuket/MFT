@@ -3,7 +3,7 @@
 use std::fmt::Write as _;
 use std::io::Write;
 
-use analyze::Row;
+use analyze::{Row, UsnRow};
 use baseline::Status;
 use mft_parse::DiagCode;
 use ntfs_types::Filetime;
@@ -83,6 +83,33 @@ impl<W: Write> CsvWriter<W> {
         Ok(())
     }
 
+    /// One row per USN record.
+    pub fn write_usn(&mut self, row: &UsnRow<'_>) -> Result<(), Error> {
+        let usn_parse::Record::Event(event) = &row.record else {
+            return Ok(());
+        };
+        self.csv.write_record([
+            event.file.entry().to_string(),
+            event.file.sequence().to_string(),
+            String::new(),
+            cell_text(&event.name.to_string()),
+            usn_path(row, event)
+                .map(|p| cell_text(&p))
+                .unwrap_or_default(),
+            path_state(&row.directory).to_string(),
+            String::new(),
+            String::new(),
+            String::new(),
+            String::new(),
+            String::new(),
+            "usn".to_string(),
+            event.usn.to_string(),
+            String::new(),
+            event.time.iso8601(),
+        ])?;
+        Ok(())
+    }
+
     /// Flushes and returns the underlying writer.
     pub fn finish(self) -> Result<W, Error> {
         self.csv
@@ -97,6 +124,13 @@ fn path_cell(resolution: &Resolution<'_>) -> String {
         .path_text()
         .map(|p| cell_text(&p))
         .unwrap_or_default()
+}
+
+/// The parent directory's path plus the record's name; `None` if the parent is unknown.
+fn usn_path(row: &UsnRow<'_>, event: &usn_parse::UsnEvent) -> Option<String> {
+    let directory = row.directory.path_text()?;
+    let separator = if directory.ends_with('\\') { "" } else { "\\" };
+    Some(format!("{directory}{separator}{}", event.name))
 }
 
 fn baseline_name(status: Option<Status>) -> Option<&'static str> {
@@ -425,6 +459,64 @@ mod tests {
 
         let cell = csv.lines().nth(2).and_then(|row| row.split(',').nth(7));
         assert_eq!(cell, Some(r"high:evil\u{1B}[2J"));
+        Ok(())
+    }
+
+    fn dir(number: u64, parent: u64, name: &str) -> Entry {
+        let mut e = named(name);
+        e.file_ref = FileRef::from_raw(number | (1 << 48));
+        e.is_dir = true;
+        e.names[0].parent = FileRef::from_raw(parent | (1 << 48));
+        e
+    }
+
+    /// A small tree (`\`, `\Users`) to resolve USN parents against.
+    fn usn_tree() -> Vec<Entry> {
+        vec![dir(5, 5, "."), dir(6, 5, "Users")]
+    }
+
+    fn usn_event(file: u64, parent: u64, usn: u64, reason: u32, name: &str) -> usn_parse::Record {
+        usn_parse::Record::Event(usn_parse::UsnEvent {
+            offset: usn,
+            usn,
+            file: FileRef::from_raw(file),
+            parent: FileRef::from_raw(parent),
+            time: Filetime::from_raw(133_444_555_666_777_888),
+            reason,
+            attributes: 0x20,
+            name: NtfsName::from_units(&units(name)),
+        })
+    }
+
+    fn usn_csv(
+        entries: &[Entry],
+        records: Vec<usn_parse::Record>,
+    ) -> Result<String, Box<dyn std::error::Error>> {
+        let mut w = CsvWriter::new(Vec::new())?;
+        for row in analyze::usn_rows(entries, records.into_iter().map(Ok::<_, ()>)) {
+            w.write_usn(&row.map_err(|()| "read error")?)?;
+        }
+        Ok(String::from_utf8(w.finish()?)?
+            .lines()
+            .skip(1)
+            .map(|l| format!("{l}\n"))
+            .collect())
+    }
+
+    #[test]
+    fn csv_writes_a_usn_event_row() -> Result<(), Box<dyn std::error::Error>> {
+        let records = vec![
+            usn_event(60 | (1 << 48), 6 | (1 << 48), 4096, 0, "a.txt"),
+            usn_event(61 | (2 << 48), 77 | (1 << 48), 4160, 0, "b.txt"),
+            usn_event(62 | (1 << 48), 5 | (1 << 48), 4224, 0, "c.txt"),
+        ];
+
+        assert_eq!(
+            usn_csv(&usn_tree(), records)?,
+            "60,1,,a.txt,\\Users\\a.txt,resolved,,,,,,usn,4096,,2023-11-14T17:12:46.6777888Z\n\
+             61,2,,b.txt,,unknown,,,,,,usn,4160,,2023-11-14T17:12:46.6777888Z\n\
+             62,1,,c.txt,\\c.txt,resolved,,,,,,usn,4224,,2023-11-14T17:12:46.6777888Z\n"
+        );
         Ok(())
     }
 }
