@@ -115,15 +115,25 @@ impl<'a> Resolver<'a> {
     /// For each USN record, the directory its parent reference pointed to when it was written.
     pub fn rewind<'b>(&'b self, events: &'b [UsnEvent]) -> Vec<Resolution<'b>> {
         let mut known: HashMap<u64, Known<'b>> = HashMap::new();
-        for entry in self.entries.iter().filter(|e| e.in_use) {
-            if let Some(name) = chosen_name(&entry.names) {
-                let known_entry = Known {
-                    name: &name.name,
-                    parent: name.parent,
-                    from_mft: true,
-                };
-                known.insert(entry.file_ref.raw(), known_entry);
-            }
+        for entry in self.entries {
+            let Some(name) = chosen_name(&entry.names) else {
+                continue;
+            };
+            // NTFS bumps the sequence number when it frees a record, so a deleted record
+            // describes the file as it was under the previous sequence number.
+            let key = if entry.in_use {
+                entry.file_ref.raw()
+            } else if entry.file_ref.sequence() > 0 {
+                entry.file_ref.raw() - (1 << 48)
+            } else {
+                continue;
+            };
+            let known_entry = Known {
+                name: &name.name,
+                parent: name.parent,
+                from_mft: entry.in_use,
+            };
+            known.insert(key, known_entry);
         }
         // Newest first: each record says where its file was at that moment, so after it is
         // applied the map describes the volume just before the record was written.
@@ -733,7 +743,7 @@ mod tests {
         ];
         let events = [
             usn((40, 1), (66, 1), "a.txt"),
-            usn((66, 1), (ROOT, 5), "Tools"),   // FILE_DELETE of 66-1
+            usn((66, 1), (ROOT, 5), "Tools"), // FILE_DELETE of 66-1
             usn((66, 2), (ROOT, 5), "Drivers"), // FILE_CREATE of 66-2
             usn((41, 1), (66, 2), "b.sys"),
         ];
@@ -743,5 +753,23 @@ mod tests {
         let got = states(&resolver.rewind(&events));
         assert_eq!(got[0], state("inferred", r"\Tools"));
         assert_eq!(got[3], state("resolved", r"\Drivers"));
+    }
+
+    #[test]
+    fn deleted_mft_records_name_their_previous_sequence() {
+        let mut deleted = dir(30, 2, &[("Old", ROOT, 5)]); // deleted as 30-1; the header says 2
+        deleted.in_use = false;
+        let entries = [dir(ROOT, 5, &[(".", ROOT, 5)]), deleted];
+        let events = [
+            usn((40, 1), (30, 1), "a.txt"),
+            usn((41, 1), (30, 2), "b.txt"),
+        ];
+
+        let resolver = Resolver::new(&entries);
+
+        assert_eq!(
+            states(&resolver.rewind(&events)),
+            [state("inferred", r"\Old"), ("unknown".to_string(), None)]
+        );
     }
 }
