@@ -3,7 +3,7 @@
 use std::fmt::Write as _;
 use std::io::Write;
 
-use analyze::Row;
+use analyze::{Row, UsnRow};
 use baseline::Status;
 use mft_parse::DiagCode;
 use ntfs_types::Filetime;
@@ -27,7 +27,7 @@ pub enum Error {
     Json(#[from] serde_json::Error),
 }
 
-const HEADER: [&str; 11] = [
+const HEADER: [&str; 15] = [
     "entry",
     "sequence",
     "in_use",
@@ -39,6 +39,10 @@ const HEADER: [&str; 11] = [
     "si_created",
     "fn_created",
     "diagnostics",
+    "source",
+    "usn",
+    "reasons",
+    "event_time",
 ];
 
 /// CSV with one row per `$MFT` record; columns as in `HEADER`.
@@ -71,6 +75,45 @@ impl<W: Write> CsvWriter<W> {
             entry.si_created.map(Filetime::iso8601).unwrap_or_default(),
             name.map(|n| n.created.iso8601()).unwrap_or_default(),
             diagnostics.join(";"),
+            "mft".to_string(),
+            String::new(),
+            String::new(),
+            String::new(),
+        ])?;
+        Ok(())
+    }
+
+    /// One row per USN record.
+    pub fn write_usn(&mut self, row: &UsnRow<'_>) -> Result<(), Error> {
+        let event = match &row.record {
+            usn_parse::Record::Event(event) => event,
+            usn_parse::Record::Diagnostic(d) => {
+                let mut cells: [&str; HEADER.len()] = [""; HEADER.len()];
+                cells[5] = path_state(&row.directory);
+                cells[10] = usn_code(d.code);
+                cells[11] = "usn";
+                self.csv.write_record(cells)?;
+                return Ok(());
+            }
+        };
+        self.csv.write_record([
+            event.file.entry().to_string(),
+            event.file.sequence().to_string(),
+            String::new(),
+            cell_text(&event.name.to_string()),
+            usn_path(row, event)
+                .map(|p| cell_text(&p))
+                .unwrap_or_default(),
+            path_state(&row.directory).to_string(),
+            String::new(),
+            String::new(),
+            String::new(),
+            String::new(),
+            String::new(),
+            "usn".to_string(),
+            event.usn.to_string(),
+            reason_names(event.reason).join(";"),
+            event.time.iso8601(),
         ])?;
         Ok(())
     }
@@ -89,6 +132,56 @@ fn path_cell(resolution: &Resolution<'_>) -> String {
         .path_text()
         .map(|p| cell_text(&p))
         .unwrap_or_default()
+}
+
+/// `USN_REASON_*` flag names without the prefix, in bit order; unknown bits as `0x…`.
+fn reason_names(flags: u32) -> Vec<String> {
+    (0..32)
+        .map(|bit| 1u32 << bit)
+        .filter(|&flag| flags & flag != 0)
+        .map(
+            |flag| match REASONS.iter().find(|&&(known, _)| known == flag) {
+                Some(&(_, name)) => name.to_string(),
+                None => format!("0x{flag:08X}"),
+            },
+        )
+        .collect()
+}
+
+/// Microsoft's `USN_REASON_*` flags (winioctl.h).
+const REASONS: [(u32, &str); 24] = [
+    (0x0000_0001, "DATA_OVERWRITE"),
+    (0x0000_0002, "DATA_EXTEND"),
+    (0x0000_0004, "DATA_TRUNCATION"),
+    (0x0000_0010, "NAMED_DATA_OVERWRITE"),
+    (0x0000_0020, "NAMED_DATA_EXTEND"),
+    (0x0000_0040, "NAMED_DATA_TRUNCATION"),
+    (0x0000_0100, "FILE_CREATE"),
+    (0x0000_0200, "FILE_DELETE"),
+    (0x0000_0400, "EA_CHANGE"),
+    (0x0000_0800, "SECURITY_CHANGE"),
+    (0x0000_1000, "RENAME_OLD_NAME"),
+    (0x0000_2000, "RENAME_NEW_NAME"),
+    (0x0000_4000, "INDEXABLE_CHANGE"),
+    (0x0000_8000, "BASIC_INFO_CHANGE"),
+    (0x0001_0000, "HARD_LINK_CHANGE"),
+    (0x0002_0000, "COMPRESSION_CHANGE"),
+    (0x0004_0000, "ENCRYPTION_CHANGE"),
+    (0x0008_0000, "OBJECT_ID_CHANGE"),
+    (0x0010_0000, "REPARSE_POINT_CHANGE"),
+    (0x0020_0000, "STREAM_CHANGE"),
+    (0x0040_0000, "TRANSACTED_CHANGE"),
+    (0x0080_0000, "INTEGRITY_CHANGE"),
+    (0x0100_0000, "DESIRED_STORAGE_CLASS_CHANGE"),
+    (0x8000_0000, "CLOSE"),
+];
+
+/// The parent directory's path plus the record's name; `None` if the parent is unknown.
+fn usn_path(row: &UsnRow<'_>, event: &usn_parse::UsnEvent) -> Option<String> {
+    match &row.directory {
+        Resolution::Resolved(segments) if segments.is_empty() => Some(format!("\\{}", event.name)),
+        directory => Some(format!("{}\\{}", directory.path_text()?, event.name)),
+    }
 }
 
 fn baseline_name(status: Option<Status>) -> Option<&'static str> {
@@ -149,6 +242,14 @@ fn cell_text(text: &str) -> String {
         out.insert(0, '\'');
     }
     out
+}
+
+fn usn_code(code: usn_parse::DiagCode) -> &'static str {
+    match code {
+        usn_parse::DiagCode::UnsupportedVersion => "unsupported_version",
+        usn_parse::DiagCode::Malformed => "malformed",
+        usn_parse::DiagCode::Truncated => "truncated",
+    }
 }
 
 fn code(code: DiagCode) -> &'static str {
@@ -249,10 +350,10 @@ mod tests {
 
         assert_eq!(
             csv_of(&[root, full, empty])?,
-            "entry,sequence,in_use,name,path,path_state,baseline,findings,si_created,fn_created,diagnostics\n\
-             5,0,true,.,\\,resolved,,,,1601-01-01T00:00:00.0000000Z,\n\
-             42,3,true,a\\\\b.txt,\\a\\\\b.txt,resolved,,,2023-11-14T17:12:46.6777888Z,2024-02-29T12:34:56.1234567Z,fixup_mismatch\n\
-             43,0,false,,,unknown,,,,,bad_signature;malformed\n"
+            "entry,sequence,in_use,name,path,path_state,baseline,findings,si_created,fn_created,diagnostics,source,usn,reasons,event_time\n\
+             5,0,true,.,\\,resolved,,,,1601-01-01T00:00:00.0000000Z,,mft,,,\n\
+             42,3,true,a\\\\b.txt,\\a\\\\b.txt,resolved,,,2023-11-14T17:12:46.6777888Z,2024-02-29T12:34:56.1234567Z,fixup_mismatch,mft,,,\n\
+             43,0,false,,,unknown,,,,,bad_signature;malformed,mft,,,\n"
         );
         Ok(())
     }
@@ -306,7 +407,7 @@ mod tests {
             let row = csv.lines().nth(1).unwrap_or_default();
             assert_eq!(
                 row,
-                format!("0,0,true,{cell},,unknown,,,,1601-01-01T00:00:00.0000000Z,"),
+                format!("0,0,true,{cell},,unknown,,,,1601-01-01T00:00:00.0000000Z,,mft,,,"),
                 "name {name:?}"
             );
         }
@@ -364,7 +465,7 @@ mod tests {
         assert!(
             csv.lines()
                 .nth(1)
-                .is_some_and(|row| row.ends_with(",orphan_extension")),
+                .is_some_and(|row| row.ends_with(",orphan_extension,mft,,,")),
             "{csv}"
         );
         Ok(())
@@ -417,6 +518,188 @@ mod tests {
 
         let cell = csv.lines().nth(2).and_then(|row| row.split(',').nth(7));
         assert_eq!(cell, Some(r"high:evil\u{1B}[2J"));
+        Ok(())
+    }
+
+    fn dir(number: u64, parent: u64, name: &str) -> Entry {
+        let mut e = named(name);
+        e.file_ref = FileRef::from_raw(number | (1 << 48));
+        e.is_dir = true;
+        e.names[0].parent = FileRef::from_raw(parent | (1 << 48));
+        e
+    }
+
+    /// A small tree (`\`, `\Users`) to resolve USN parents against.
+    fn usn_tree() -> Vec<Entry> {
+        vec![dir(5, 5, "."), dir(6, 5, "Users")]
+    }
+
+    fn usn_event(file: u64, parent: u64, usn: u64, reason: u32, name: &str) -> usn_parse::Record {
+        usn_parse::Record::Event(usn_parse::UsnEvent {
+            offset: usn,
+            usn,
+            file: FileRef::from_raw(file),
+            parent: FileRef::from_raw(parent),
+            time: Filetime::from_raw(133_444_555_666_777_888),
+            reason,
+            attributes: 0x20,
+            name: NtfsName::from_units(&units(name)),
+        })
+    }
+
+    fn usn_csv(
+        entries: &[Entry],
+        records: Vec<usn_parse::Record>,
+    ) -> Result<String, Box<dyn std::error::Error>> {
+        let mut w = CsvWriter::new(Vec::new())?;
+        for row in analyze::usn_rows(entries, records.into_iter().map(Ok::<_, ()>)) {
+            w.write_usn(&row.map_err(|()| "read error")?)?;
+        }
+        Ok(String::from_utf8(w.finish()?)?
+            .lines()
+            .skip(1)
+            .map(|l| format!("{l}\n"))
+            .collect())
+    }
+
+    #[test]
+    fn csv_writes_a_usn_event_row() -> Result<(), Box<dyn std::error::Error>> {
+        let records = vec![
+            usn_event(60 | (1 << 48), 6 | (1 << 48), 4096, 0, "a.txt"),
+            usn_event(61 | (2 << 48), 77 | (1 << 48), 4160, 0, "b.txt"),
+            usn_event(62 | (1 << 48), 5 | (1 << 48), 4224, 0, "c.txt"),
+        ];
+
+        assert_eq!(
+            usn_csv(&usn_tree(), records)?,
+            "60,1,,a.txt,\\Users\\a.txt,resolved,,,,,,usn,4096,,2023-11-14T17:12:46.6777888Z\n\
+             61,2,,b.txt,,unknown,,,,,,usn,4160,,2023-11-14T17:12:46.6777888Z\n\
+             62,1,,c.txt,\\c.txt,resolved,,,,,,usn,4224,,2023-11-14T17:12:46.6777888Z\n"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn usn_path_keeps_a_backslash_at_the_end_of_a_directory_name()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let entries = vec![dir(5, 5, "."), dir(6, 5, "odd\\")];
+        let records = vec![usn_event(60 | (1 << 48), 6 | (1 << 48), 0, 0, "b.txt")];
+
+        let csv = usn_csv(&entries, records)?;
+
+        assert_eq!(csv.split(',').nth(4), Some(r"\odd\\\b.txt"));
+        Ok(())
+    }
+
+    #[test]
+    fn reason_flags_become_names_in_bit_order_and_unknown_bits_hex()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let all_known = [
+            (0x0000_0001, "DATA_OVERWRITE"),
+            (0x0000_0002, "DATA_EXTEND"),
+            (0x0000_0004, "DATA_TRUNCATION"),
+            (0x0000_0010, "NAMED_DATA_OVERWRITE"),
+            (0x0000_0020, "NAMED_DATA_EXTEND"),
+            (0x0000_0040, "NAMED_DATA_TRUNCATION"),
+            (0x0000_0100, "FILE_CREATE"),
+            (0x0000_0200, "FILE_DELETE"),
+            (0x0000_0400, "EA_CHANGE"),
+            (0x0000_0800, "SECURITY_CHANGE"),
+            (0x0000_1000, "RENAME_OLD_NAME"),
+            (0x0000_2000, "RENAME_NEW_NAME"),
+            (0x0000_4000, "INDEXABLE_CHANGE"),
+            (0x0000_8000, "BASIC_INFO_CHANGE"),
+            (0x0001_0000, "HARD_LINK_CHANGE"),
+            (0x0002_0000, "COMPRESSION_CHANGE"),
+            (0x0004_0000, "ENCRYPTION_CHANGE"),
+            (0x0008_0000, "OBJECT_ID_CHANGE"),
+            (0x0010_0000, "REPARSE_POINT_CHANGE"),
+            (0x0020_0000, "STREAM_CHANGE"),
+            (0x0040_0000, "TRANSACTED_CHANGE"),
+            (0x0080_0000, "INTEGRITY_CHANGE"),
+            (0x0100_0000, "DESIRED_STORAGE_CLASS_CHANGE"),
+            (0x8000_0000, "CLOSE"),
+        ];
+        for (bit, name) in all_known {
+            assert_eq!(reason_names(bit), [name]);
+        }
+        assert_eq!(reason_names(0), Vec::<String>::new());
+        assert_eq!(
+            reason_names(0xC000_010B),
+            [
+                "DATA_OVERWRITE",
+                "DATA_EXTEND",
+                "0x00000008",
+                "FILE_CREATE",
+                "0x40000000",
+                "CLOSE"
+            ]
+        );
+
+        let csv = usn_csv(
+            &usn_tree(),
+            vec![usn_event(60, 6 | (1 << 48), 0, 0x8000_0100, "a")],
+        )?;
+        assert_eq!(csv.split(',').nth(13), Some("FILE_CREATE;CLOSE"));
+        Ok(())
+    }
+
+    #[test]
+    fn usn_names_are_escaped_like_mft_names() -> Result<(), Box<dyn std::error::Error>> {
+        let records = vec![
+            usn_event(60, 6 | (1 << 48), 0, 0, "=cmd|' /C calc'!A0"),
+            usn_event(61, 6 | (1 << 48), 8, 0, "x\u{1b}[2J\u{202E}fdp.exe"),
+        ];
+
+        let csv = usn_csv(&usn_tree(), records)?;
+        let cells: Vec<Vec<&str>> = csv
+            .lines()
+            .map(|l| l.split(',').skip(3).take(2).collect())
+            .collect();
+
+        assert_eq!(
+            cells,
+            [
+                vec!["'=cmd|' /C calc'!A0", r"\Users\=cmd|' /C calc'!A0"],
+                vec![
+                    r"x\u{1B}[2J\u{202E}fdp.exe",
+                    r"\Users\x\u{1B}[2J\u{202E}fdp.exe"
+                ],
+            ]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn usn_diagnostics_become_rows() -> Result<(), Box<dyn std::error::Error>> {
+        let diagnostic =
+            |code, offset| usn_parse::Record::Diagnostic(usn_parse::Diagnostic { code, offset });
+        let records = || {
+            vec![
+                diagnostic(usn_parse::DiagCode::Malformed, 8),
+                diagnostic(usn_parse::DiagCode::Truncated, 16),
+                diagnostic(usn_parse::DiagCode::UnsupportedVersion, 24),
+            ]
+        };
+
+        let csv = usn_csv(&usn_tree(), records())?;
+        let mut jsonl = JsonlWriter::new(Vec::new());
+        for row in analyze::usn_rows(&usn_tree(), records().into_iter().map(Ok::<_, ()>)) {
+            jsonl.write_usn(&row.map_err(|()| "read error")?)?;
+        }
+
+        assert_eq!(
+            csv,
+            ",,,,,unknown,,,,,malformed,usn,,,\n\
+             ,,,,,unknown,,,,,truncated,usn,,,\n\
+             ,,,,,unknown,,,,,unsupported_version,usn,,,\n"
+        );
+        assert_eq!(
+            String::from_utf8(jsonl.finish()?)?.lines().next(),
+            Some(
+                r#"{"entry":null,"sequence":null,"in_use":null,"name":null,"path":null,"path_state":"unknown","baseline":null,"findings":[],"si_created":null,"fn_created":null,"diagnostics":["malformed"],"source":"usn","usn":null,"reasons":[],"event_time":null}"#
+            )
+        );
         Ok(())
     }
 }

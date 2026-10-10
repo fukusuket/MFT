@@ -2,11 +2,14 @@
 
 use std::io::Write;
 
-use analyze::Row;
+use analyze::{Row, UsnRow};
 use ntfs_types::Filetime;
 use serde::Serialize;
 
-use crate::{Error, baseline_name, code, display_text, level_name, path_state};
+use crate::{
+    Error, baseline_name, code, display_text, level_name, path_state, reason_names, usn_code,
+    usn_path,
+};
 
 /// JSON Lines with one object per `$MFT` record.
 #[derive(Debug)]
@@ -23,9 +26,9 @@ impl<W: Write> JsonlWriter<W> {
         let entry = row.entry;
         let name = resolve::chosen_name(&entry.names);
         let record = Record {
-            entry: entry.file_ref.entry(),
-            sequence: entry.file_ref.sequence(),
-            in_use: entry.in_use,
+            entry: Some(entry.file_ref.entry()),
+            sequence: Some(entry.file_ref.sequence()),
+            in_use: Some(entry.in_use),
             name: name.map(|n| display_text(&n.name.to_string())),
             path: row.resolution.path_text().map(|p| display_text(&p)),
             path_state: path_state(&row.resolution),
@@ -41,8 +44,60 @@ impl<W: Write> JsonlWriter<W> {
             si_created: entry.si_created.map(Filetime::iso8601),
             fn_created: name.map(|n| n.created.iso8601()),
             diagnostics: entry.diagnostics.iter().map(|d| code(d.code)).collect(),
+            source: "mft",
+            usn: None,
+            reasons: Vec::new(),
+            event_time: None,
         };
-        serde_json::to_writer(&mut self.out, &record)?;
+        self.line(&record)
+    }
+
+    /// One object per USN record.
+    pub fn write_usn(&mut self, row: &UsnRow<'_>) -> Result<(), Error> {
+        let event = match &row.record {
+            usn_parse::Record::Event(event) => event,
+            usn_parse::Record::Diagnostic(d) => {
+                return self.line(&Record {
+                    entry: None,
+                    sequence: None,
+                    in_use: None,
+                    name: None,
+                    path: None,
+                    path_state: path_state(&row.directory),
+                    baseline: None,
+                    findings: Vec::new(),
+                    si_created: None,
+                    fn_created: None,
+                    diagnostics: vec![usn_code(d.code)],
+                    source: "usn",
+                    usn: None,
+                    reasons: Vec::new(),
+                    event_time: None,
+                });
+            }
+        };
+        let record = Record {
+            entry: Some(event.file.entry()),
+            sequence: Some(event.file.sequence()),
+            in_use: None,
+            name: Some(display_text(&event.name.to_string())),
+            path: usn_path(row, event).map(|p| display_text(&p)),
+            path_state: path_state(&row.directory),
+            baseline: None,
+            findings: Vec::new(),
+            si_created: None,
+            fn_created: None,
+            diagnostics: Vec::new(),
+            source: "usn",
+            usn: Some(event.usn),
+            reasons: reason_names(event.reason),
+            event_time: Some(event.time.iso8601()),
+        };
+        self.line(&record)
+    }
+
+    fn line(&mut self, record: &Record) -> Result<(), Error> {
+        serde_json::to_writer(&mut self.out, record)?;
         self.out.write_all(b"\n").map_err(serde_json::Error::io)?;
         Ok(())
     }
@@ -56,9 +111,9 @@ impl<W: Write> JsonlWriter<W> {
 /// One line; field order is the output order.
 #[derive(Serialize)]
 struct Record {
-    entry: u64,
-    sequence: u16,
-    in_use: bool,
+    entry: Option<u64>,
+    sequence: Option<u16>,
+    in_use: Option<bool>,
     name: Option<String>,
     path: Option<String>,
     path_state: &'static str,
@@ -67,6 +122,10 @@ struct Record {
     si_created: Option<String>,
     fn_created: Option<String>,
     diagnostics: Vec<&'static str>,
+    source: &'static str,
+    usn: Option<u64>,
+    reasons: Vec<String>,
+    event_time: Option<String>,
 }
 
 /// One matched rule, most severe first (the order `sigma` returns).
@@ -148,11 +207,11 @@ mod tests {
         assert_eq!(
             jsonl_with(&[named(5, "."), full, empty], None, None)?,
             concat!(
-                r#"{"entry":5,"sequence":0,"in_use":true,"name":".","path":"\\","path_state":"resolved","baseline":null,"findings":[],"si_created":null,"fn_created":"1601-01-01T00:00:00.0000000Z","diagnostics":[]}"#,
+                r#"{"entry":5,"sequence":0,"in_use":true,"name":".","path":"\\","path_state":"resolved","baseline":null,"findings":[],"si_created":null,"fn_created":"1601-01-01T00:00:00.0000000Z","diagnostics":[],"source":"mft","usn":null,"reasons":[],"event_time":null}"#,
                 "\n",
-                r#"{"entry":42,"sequence":3,"in_use":true,"name":"a\\\\b.txt","path":"\\a\\\\b.txt","path_state":"resolved","baseline":null,"findings":[],"si_created":"2023-11-14T17:12:46.6777888Z","fn_created":"2024-02-29T12:34:56.1234567Z","diagnostics":["fixup_mismatch"]}"#,
+                r#"{"entry":42,"sequence":3,"in_use":true,"name":"a\\\\b.txt","path":"\\a\\\\b.txt","path_state":"resolved","baseline":null,"findings":[],"si_created":"2023-11-14T17:12:46.6777888Z","fn_created":"2024-02-29T12:34:56.1234567Z","diagnostics":["fixup_mismatch"],"source":"mft","usn":null,"reasons":[],"event_time":null}"#,
                 "\n",
-                r#"{"entry":43,"sequence":0,"in_use":false,"name":null,"path":null,"path_state":"unknown","baseline":null,"findings":[],"si_created":null,"fn_created":null,"diagnostics":["bad_signature","malformed"]}"#,
+                r#"{"entry":43,"sequence":0,"in_use":false,"name":null,"path":null,"path_state":"unknown","baseline":null,"findings":[],"si_created":null,"fn_created":null,"diagnostics":["bad_signature","malformed"],"source":"mft","usn":null,"reasons":[],"event_time":null}"#,
                 "\n",
             )
         );
@@ -249,6 +308,37 @@ mod tests {
                 {"level": "high", "id": r"evil\u{1B}[2J"},
                 {"level": "low", "id": "=x"},
             ])
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn jsonl_writes_a_usn_event_object() -> Result<()> {
+        let mut root = named(5 | (1 << 48), ".");
+        root.is_dir = true;
+        root.names[0].parent = FileRef::from_raw(5 | (1 << 48));
+        let record = usn_parse::Record::Event(usn_parse::UsnEvent {
+            offset: 4096,
+            usn: 4096,
+            file: FileRef::from_raw(60 | (2 << 48)),
+            parent: FileRef::from_raw(5 | (1 << 48)),
+            time: Filetime::from_raw(133_444_555_666_777_888),
+            reason: 0,
+            attributes: 0x20,
+            name: NtfsName::from_units(&units("a.txt")),
+        });
+        let entries = [root];
+        let mut w = JsonlWriter::new(Vec::new());
+        for row in analyze::usn_rows(&entries, [Ok::<_, ()>(record)]) {
+            w.write_usn(&row.map_err(|()| "read error")?)?;
+        }
+
+        assert_eq!(
+            String::from_utf8(w.finish()?)?,
+            concat!(
+                r#"{"entry":60,"sequence":2,"in_use":null,"name":"a.txt","path":"\\a.txt","path_state":"resolved","baseline":null,"findings":[],"si_created":null,"fn_created":null,"diagnostics":[],"source":"usn","usn":4096,"reasons":[],"event_time":"2023-11-14T17:12:46.6777888Z"}"#,
+                "\n"
+            )
         );
         Ok(())
     }

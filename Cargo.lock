@@ -47,6 +47,7 @@ dependencies = [
  "ntfs-types",
  "resolve",
  "sigma",
+ "usn-parse",
 ]
 
 [[package]]
@@ -234,6 +235,7 @@ dependencies = [
  "report",
  "serde_json",
  "sigma",
+ "usn-parse",
 ]
 
 [[package]]
@@ -889,6 +891,7 @@ dependencies = [
  "serde_json",
  "sigma",
  "thiserror 2.0.21",
+ "usn-parse",
 ]
 
 [[package]]

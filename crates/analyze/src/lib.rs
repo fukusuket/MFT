@@ -47,6 +47,31 @@ pub fn rows<'a>(
     })
 }
 
+/// One USN row: a record from `$J` and the directory its parent reference points to in the
+/// current `$MFT` (no Rewind yet, so renamed or reused parents are `Unknown`).
+#[derive(Debug)]
+pub struct UsnRow<'a> {
+    pub record: usn_parse::Record,
+    pub directory: Resolution<'a>,
+}
+
+/// One row per `$J` item, in stream order; read errors pass through.
+pub fn usn_rows<'a, E>(
+    entries: &'a [Entry],
+    records: impl IntoIterator<Item = Result<usn_parse::Record, E>>,
+) -> impl Iterator<Item = Result<UsnRow<'a>, E>> {
+    let resolver = Resolver::new(entries);
+    records.into_iter().map(move |record| {
+        record.map(|record| {
+            let directory = match &record {
+                usn_parse::Record::Event(event) => resolver.directory(event.parent),
+                usn_parse::Record::Diagnostic(_) => Resolution::Unknown,
+            };
+            UsnRow { record, directory }
+        })
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -143,5 +168,46 @@ mod tests {
         assert_eq!(with, [vec![], vec!["rule-exe".to_string()], vec![]]);
         assert_eq!(without, 0);
         Ok(())
+    }
+
+    fn usn_event(name: &str, parent: u64) -> usn_parse::Record {
+        usn_parse::Record::Event(usn_parse::UsnEvent {
+            offset: 0,
+            usn: 0,
+            file: FileRef::from_raw(60 | (1 << 48)),
+            parent: FileRef::from_raw(parent | (1 << 48)),
+            time: Filetime::from_raw(0),
+            reason: 0,
+            attributes: 0,
+            name: NtfsName::from_units(&name.encode_utf16().collect::<Vec<_>>()),
+        })
+    }
+
+    #[test]
+    fn usn_rows_pair_each_record_with_its_parent_directory_in_order() {
+        let mut root = entry(5, 5, ".");
+        root.is_dir = true;
+        let mut users = entry(6, 5, "Users");
+        users.is_dir = true;
+        let entries = [root, users];
+        let diagnostic = usn_parse::Record::Diagnostic(usn_parse::Diagnostic {
+            code: usn_parse::DiagCode::Malformed,
+            offset: 8,
+        });
+        let records = [
+            Ok::<_, ()>(usn_event("a.txt", 6)),
+            Ok(usn_event("b.txt", 77)),
+            Ok(diagnostic),
+            Err(()),
+        ];
+
+        let shown: Vec<Result<Option<String>, ()>> = usn_rows(&entries, records)
+            .map(|row| row.map(|r| r.directory.path_text()))
+            .collect();
+
+        assert_eq!(
+            shown,
+            [Ok(Some("\\Users".to_string())), Ok(None), Ok(None), Err(())]
+        );
     }
 }

@@ -2,6 +2,8 @@
 
 #[path = "../../mft-parse/tests/support/mod.rs"]
 mod support;
+#[path = "../../usn-parse/tests/support/mod.rs"]
+mod usn_support;
 
 use std::error::Error;
 use std::path::PathBuf;
@@ -76,13 +78,13 @@ fn analyze_writes_one_csv_row_per_record_with_paths() -> TestResult {
     assert!(status.success());
     assert_eq!(
         std::fs::read_to_string(&csv).unwrap_or_default(),
-        "entry,sequence,in_use,name,path,path_state,baseline,findings,si_created,fn_created,diagnostics\n\
-         0,1,true,$MFT,\\$MFT,resolved,,,2019-04-17T18:40:00.0000000Z,1601-01-01T00:00:00.0000000Z,\n\
-         5,1,true,.,\\,resolved,,,2019-04-17T18:40:00.0000000Z,1601-01-01T00:00:00.0000000Z,\n\
-         6,1,true,Users,\\Users,resolved,,,2019-04-17T18:40:00.0000000Z,1601-01-01T00:00:00.0000000Z,\n\
-         7,1,true,a.txt,\\Users\\a.txt,resolved,,,2019-04-17T18:40:00.0000000Z,1601-01-01T00:00:00.0000000Z,\n\
-         8,1,true,old.txt,,unknown,,,2019-04-17T18:40:00.0000000Z,1601-01-01T00:00:00.0000000Z,\n\
-         9,0,false,,,unknown,,,,,bad_signature\n"
+        "entry,sequence,in_use,name,path,path_state,baseline,findings,si_created,fn_created,diagnostics,source,usn,reasons,event_time\n\
+         0,1,true,$MFT,\\$MFT,resolved,,,2019-04-17T18:40:00.0000000Z,1601-01-01T00:00:00.0000000Z,,mft,,,\n\
+         5,1,true,.,\\,resolved,,,2019-04-17T18:40:00.0000000Z,1601-01-01T00:00:00.0000000Z,,mft,,,\n\
+         6,1,true,Users,\\Users,resolved,,,2019-04-17T18:40:00.0000000Z,1601-01-01T00:00:00.0000000Z,,mft,,,\n\
+         7,1,true,a.txt,\\Users\\a.txt,resolved,,,2019-04-17T18:40:00.0000000Z,1601-01-01T00:00:00.0000000Z,,mft,,,\n\
+         8,1,true,old.txt,,unknown,,,2019-04-17T18:40:00.0000000Z,1601-01-01T00:00:00.0000000Z,,mft,,,\n\
+         9,0,false,,,unknown,,,,,bad_signature,mft,,,\n"
     );
     assert_no_temporary_outputs(&dir)?;
     Ok(())
@@ -448,7 +450,7 @@ fn extension_records_merge_into_one_row() -> TestResult {
             (
                 f[0].to_string(),
                 f[4].to_string(),
-                f[f.len() - 1].to_string(),
+                f[10].to_string(), // diagnostics
             )
         })
         .collect();
@@ -1223,5 +1225,186 @@ fn executables_in_temp_are_low() -> TestResult {
     let hit = format!("low:{TEMP}");
     let matched: Vec<bool> = findings.iter().map(|(_, f)| has_finding(f, &hit)).collect();
     assert_eq!(matched, [true, true, false, false, false], "{findings:?}");
+    Ok(())
+}
+
+/// Root (5) and `\Users` (6) as directories, for USN parents.
+fn usn_volume_mft() -> Vec<u8> {
+    let root = 5 | (1 << 48);
+    let dir = |entry: u32, name: &str| {
+        record_with_flags(
+            1024,
+            3, // in use, directory
+            entry,
+            &[
+                standard_information(),
+                file_name_with(root, &u16s(name), 1, 0),
+            ],
+        )
+    };
+    let mut mft = record(
+        1024,
+        true,
+        0,
+        &[
+            standard_information(),
+            file_name_with(root, &u16s("$MFT"), 1, 0),
+        ],
+    );
+    mft.extend(vec![0u8; 4 * 1024]);
+    mft.extend(dir(5, "."));
+    mft.extend(dir(6, "Users"));
+    mft
+}
+
+/// A `$J` with an event under `\Users`, an event whose parent is gone, and a V4 record.
+fn usn_journal() -> Vec<u8> {
+    use usn_support::{Fields, other_version, v2};
+    let mut j = vec![0u8; 64]; // sparse head
+    j.extend(v2(&Fields {
+        file: 40 | (1 << 48),
+        parent: 6 | (1 << 48),
+        usn: 64,
+        reason: 0x8000_0100,
+        name: u16s("new.txt"),
+        ..Fields::default()
+    }));
+    j.extend(v2(&Fields {
+        file: 41 | (1 << 48),
+        parent: 77 | (1 << 48),
+        usn: 136,
+        reason: 0x0000_0200,
+        name: u16s("gone.txt"),
+        ..Fields::default()
+    }));
+    j.extend(other_version(4, 0x50));
+    j
+}
+
+#[test]
+fn analyze_usn_adds_rows_after_the_mft_rows() -> TestResult {
+    let dir = scratch("analyze_usn_adds_rows_after_the_mft_rows")?;
+    let (mft, j) = (dir.join("MFT"), dir.join("J"));
+    let (csv, jsonl) = (dir.join("out.csv"), dir.join("out.jsonl"));
+    std::fs::write(&mft, usn_volume_mft())?;
+    std::fs::write(&j, usn_journal())?;
+
+    let status = tool()
+        .args(["analyze", "-i"])
+        .arg(&mft)
+        .arg("--usn")
+        .arg(&j)
+        .arg("--csv")
+        .arg(&csv)
+        .arg("--jsonl")
+        .arg(&jsonl)
+        .status()?;
+
+    assert!(status.success());
+    let text = std::fs::read_to_string(&csv)?;
+    let shown: Vec<String> = csv_rows(&text)
+        .iter()
+        .map(|r| {
+            [0, 3, 4, 5, 10, 11, 12, 13]
+                .map(|i| r[i].as_str())
+                .join("|")
+        })
+        .collect();
+    assert_eq!(
+        shown,
+        [
+            "0|$MFT|\\$MFT|resolved||mft||",
+            "5|.|\\|resolved||mft||",
+            "6|Users|\\Users|resolved||mft||",
+            "40|new.txt|\\Users\\new.txt|resolved||usn|64|FILE_CREATE;CLOSE",
+            "41|gone.txt||unknown||usn|136|FILE_DELETE",
+            "|||unknown|unsupported_version|usn||",
+        ]
+    );
+    let sources: Vec<serde_json::Value> = jsonl_field(&std::fs::read_to_string(&jsonl)?, "source")?;
+    assert_eq!(sources, ["mft", "mft", "mft", "usn", "usn", "usn"]);
+    assert_no_temporary_outputs(&dir)?;
+    Ok(())
+}
+
+#[test]
+fn missing_usn_input_fails_with_a_message_and_leaves_no_output() -> TestResult {
+    let dir = scratch("missing_usn_input_fails_with_a_message_and_leaves_no_output")?;
+    let (mft, csv) = (dir.join("MFT"), dir.join("out.csv"));
+    std::fs::write(&mft, usn_volume_mft())?;
+    let _ = std::fs::remove_file(&csv);
+
+    let out = tool()
+        .args(["analyze", "-i"])
+        .arg(&mft)
+        .arg("--usn")
+        .arg(dir.join("no-such-J"))
+        .arg("--csv")
+        .arg(&csv)
+        .output()?;
+
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(1), "{stderr}");
+    assert!(
+        stderr.contains("opening") && stderr.contains("no-such-J"),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("panicked"), "{stderr}");
+    assert!(!csv.exists());
+    assert_no_temporary_outputs(&dir)?;
+    Ok(())
+}
+
+#[test]
+fn analyze_refuses_the_same_file_for_usn_and_an_output() -> TestResult {
+    let dir = scratch("analyze_refuses_the_same_file_for_usn_and_an_output")?;
+    let (mft, j) = (dir.join("MFT"), dir.join("J"));
+    std::fs::write(&mft, usn_volume_mft())?;
+    let journal = usn_journal();
+
+    for output in ["--csv", "--jsonl", "-o"] {
+        std::fs::write(&j, &journal)?;
+        let out = tool()
+            .args(["analyze", "-i"])
+            .arg(&mft)
+            .arg("--usn")
+            .arg(&j)
+            .arg(output)
+            .arg(&j)
+            .output()?;
+
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(out.status.code(), Some(1), "{output}: {stderr}");
+        assert!(stderr.contains("same file"), "{output}: {stderr}");
+        assert_eq!(std::fs::read(&j)?, journal, "{output}");
+    }
+    Ok(())
+}
+
+#[test]
+fn same_input_with_usn_gives_byte_identical_outputs() -> TestResult {
+    let dir = scratch("same_input_with_usn_gives_byte_identical_outputs")?;
+    let (mft, j) = (dir.join("MFT"), dir.join("J"));
+    std::fs::write(&mft, usn_volume_mft())?;
+    std::fs::write(&j, usn_journal())?;
+    let run = |n: u8| -> Result<(Vec<u8>, Vec<u8>), Box<dyn Error>> {
+        let (csv, jsonl) = (dir.join(format!("{n}.csv")), dir.join(format!("{n}.jsonl")));
+        let status = tool()
+            .args(["analyze", "-i"])
+            .arg(&mft)
+            .arg("--usn")
+            .arg(&j)
+            .arg("--csv")
+            .arg(&csv)
+            .arg("--jsonl")
+            .arg(&jsonl)
+            .status()?;
+        assert!(status.success());
+        Ok((std::fs::read(csv)?, std::fs::read(jsonl)?))
+    };
+
+    let first = run(1)?;
+    assert_eq!(run(2)?, first);
+    assert!(first.0.ends_with(b"unsupported_version,usn,,,\n")); // the V4 row comes last
     Ok(())
 }
