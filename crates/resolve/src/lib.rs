@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use mft_parse::{Entry, FileName, Namespace};
 use ntfs_types::{FileRef, NtfsName};
-use usn_parse::UsnEvent;
+use usn_parse::Record;
 
 /// The root directory's MFT entry number.
 const ROOT: u64 = 5;
@@ -112,8 +112,9 @@ impl<'a> Resolver<'a> {
         }
     }
 
-    /// For each USN record, the directory its parent reference pointed to when it was written.
-    pub fn rewind<'b>(&'b self, events: &'b [UsnEvent]) -> Vec<Resolution<'b>> {
+    /// For each USN record, the directory its parent reference pointed to when it was written;
+    /// `Unknown` for diagnostics.
+    pub fn rewind<'b>(&'b self, records: &'b [Record]) -> Vec<Resolution<'b>> {
         let mut known: HashMap<u64, Known<'b>> = HashMap::new();
         for entry in self.entries {
             let Some(name) = chosen_name(&entry.names) else {
@@ -137,8 +138,11 @@ impl<'a> Resolver<'a> {
         }
         // Newest first: each record says where its file was at that moment, so after it is
         // applied the map describes the volume just before the record was written.
-        let mut paths: Vec<Resolution<'b>> = events.iter().map(|_| Resolution::Unknown).collect();
-        for (event, path) in events.iter().zip(paths.iter_mut()).rev() {
+        let mut paths: Vec<Resolution<'b>> = records.iter().map(|_| Resolution::Unknown).collect();
+        for (record, path) in records.iter().zip(paths.iter_mut()).rev() {
+            let Record::Event(event) = record else {
+                continue;
+            };
             *path = walk(&known, event.parent);
             let unchanged = known.get(&event.file.raw()).is_some_and(|k| {
                 k.name.units() == event.name.units() && k.parent.raw() == event.parent.raw()
@@ -624,8 +628,8 @@ mod tests {
     }
 
     /// A USN record: `file` named `name` in `parent` (refs as `(entry, sequence)`).
-    fn usn(file: (u64, u16), parent: (u64, u16), name: &str) -> UsnEvent {
-        UsnEvent {
+    fn usn(file: (u64, u16), parent: (u64, u16), name: &str) -> Record {
+        Record::Event(usn_parse::UsnEvent {
             offset: 0,
             usn: 0,
             file: reference(file.0, file.1),
@@ -634,7 +638,7 @@ mod tests {
             reason: 0,
             attributes: 0,
             name: NtfsName::from_units(&name.encode_utf16().collect::<Vec<_>>()),
-        }
+        })
     }
 
     fn states(resolutions: &[Resolution<'_>]) -> Vec<(String, Option<String>)> {
