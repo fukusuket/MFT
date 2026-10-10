@@ -5,6 +5,7 @@ use std::io::Write;
 use analyze::{Row, UsnRow};
 use ntfs_types::Filetime;
 use serde::Serialize;
+use sigma::Finding;
 
 use crate::{
     Error, baseline_name, code, display_text, level_name, path_state, reason_names, usn_code,
@@ -33,14 +34,7 @@ impl<W: Write> JsonlWriter<W> {
             path: row.resolution.path_text().map(|p| display_text(&p)),
             path_state: path_state(&row.resolution),
             baseline: baseline_name(row.baseline),
-            findings: row
-                .findings
-                .iter()
-                .map(|f| RuleMatch {
-                    level: level_name(f.level),
-                    id: display_text(&f.id), // rule ids come from rule files: escape them like evidence
-                })
-                .collect(),
+            findings: rule_matches(&row.findings),
             si_created: entry.si_created.map(Filetime::iso8601),
             fn_created: name.map(|n| n.created.iso8601()),
             diagnostics: entry.diagnostics.iter().map(|d| code(d.code)).collect(),
@@ -83,8 +77,8 @@ impl<W: Write> JsonlWriter<W> {
             name: Some(display_text(&event.name.to_string())),
             path: usn_path(row, event).map(|p| display_text(&p)),
             path_state: path_state(&row.directory),
-            baseline: None,
-            findings: Vec::new(),
+            baseline: baseline_name(row.baseline),
+            findings: rule_matches(&row.findings),
             si_created: None,
             fn_created: None,
             diagnostics: Vec::new(),
@@ -133,6 +127,16 @@ struct Record {
 struct RuleMatch {
     level: &'static str,
     id: String,
+}
+
+fn rule_matches(findings: &[Finding]) -> Vec<RuleMatch> {
+    findings
+        .iter()
+        .map(|f| RuleMatch {
+            level: level_name(f.level),
+            id: display_text(&f.id), // rule ids come from rule files: escape them like evidence
+        })
+        .collect()
 }
 
 #[cfg(test)]
