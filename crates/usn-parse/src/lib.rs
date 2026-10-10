@@ -240,6 +240,9 @@ fn layout(major: u16) -> Option<&'static Layout> {
 }
 
 fn event(r: &[u8], l: &Layout, offset: u64) -> Option<UsnEvent> {
+    if u16_at(r, 0x06)? != 0 {
+        return None; // MinorVersion is 0 for V2 and V3
+    }
     for id in [l.file, l.parent] {
         if r.get(id + 8..id + l.id_size)?.iter().any(|&b| b != 0) {
             return None;
@@ -247,6 +250,9 @@ fn event(r: &[u8], l: &Layout, offset: u64) -> Option<UsnEvent> {
     }
     let name_len = usize::from(u16_at(r, l.name_len)?);
     let name_off = usize::from(u16_at(r, l.name_len + 2)?);
+    if name_off < l.header {
+        return None; // the name would overlap the fixed fields
+    }
     let name_bytes = r.get(name_off..name_off.checked_add(name_len)?)?;
     let (pairs, []) = name_bytes.as_chunks::<2>() else {
         return None; // odd byte count

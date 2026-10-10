@@ -399,3 +399,13 @@ fn a_length_past_the_end_is_truncated_and_later_records_are_kept() -> TestResult
     assert_eq!((a.offset, b.offset), (16, 16 + 72));
     Ok(())
 }
+
+#[test]
+fn nonzero_minor_version_is_malformed() -> TestResult {
+    malformed_v2(|r| r[0x06..0x08].copy_from_slice(&1u16.to_le_bytes()))
+}
+
+#[test]
+fn name_overlapping_the_header_is_malformed() -> TestResult {
+    malformed_v2(|r| r[0x3A..0x3C].copy_from_slice(&0x0030u16.to_le_bytes()))
+}
