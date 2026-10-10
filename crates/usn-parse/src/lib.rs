@@ -176,7 +176,7 @@ fn parse_event(r: &[u8], offset: u64) -> Option<UsnEvent> {
         .collect();
     Some(UsnEvent {
         offset,
-        usn: u64::try_from(i64::from_le_bytes(r.get(l.usn..l.usn + 8)?.try_into().ok()?)).ok()?,
+        usn: u64::try_from(i64_at(r, l.usn)?).ok()?,
         file: FileRef::from_raw(u64_at(r, l.file)?),
         parent: FileRef::from_raw(u64_at(r, l.parent)?),
         time: Filetime::from_raw(u64_at(r, l.time)?),
@@ -201,4 +201,8 @@ fn u32_at(b: &[u8], at: usize) -> Option<u32> {
 
 fn u64_at(b: &[u8], at: usize) -> Option<u64> {
     Some(u64::from_le_bytes(b.get(at..at.checked_add(8)?)?.try_into().ok()?))
+}
+
+fn i64_at(b: &[u8], at: usize) -> Option<i64> {
+    Some(i64::from_le_bytes(b.get(at..at.checked_add(8)?)?.try_into().ok()?))
 }
