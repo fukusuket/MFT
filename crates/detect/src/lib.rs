@@ -49,6 +49,7 @@ pub fn usn_events(
     [
         (FILE_CREATE, "file_event"),
         (RENAME_NEW_NAME, "file_rename"),
+        (BASIC_INFO_CHANGE, "file_change"),
         (FILE_DELETE, "file_delete"),
     ]
     .into_iter()
@@ -77,6 +78,7 @@ pub fn usn_events(
 const FILE_CREATE: u32 = 0x0000_0100;
 const FILE_DELETE: u32 = 0x0000_0200;
 const RENAME_NEW_NAME: u32 = 0x0000_2000;
+const BASIC_INFO_CHANGE: u32 = 0x0000_8000;
 const CLOSE: u32 = 0x8000_0000;
 
 #[cfg(test)]
@@ -193,6 +195,24 @@ mod tests {
             )]
         );
         assert_eq!(rename(None), [("file_rename", None, vec![target, time])]);
+    }
+
+    #[test]
+    fn a_closed_basic_info_change_is_a_file_change_but_a_data_write_is_not() {
+        let events = usn_events(&usn(0x8000 | CLOSE), r"\x.exe", None, None);
+
+        assert_eq!(
+            shown(events),
+            [(
+                "file_change",
+                None,
+                vec![
+                    ("TargetFilename", r"C:\x.exe".to_string()),
+                    ("UtcTime", "2024-02-29 12:34:56.123".to_string()),
+                ]
+            )]
+        );
+        assert!(usn_events(&usn(0x2 | CLOSE), r"\x.exe", None, None).is_empty());
     }
 
     #[test]
