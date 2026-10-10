@@ -41,6 +41,10 @@ impl<W: Write> JsonlWriter<W> {
             si_created: entry.si_created.map(Filetime::iso8601),
             fn_created: name.map(|n| n.created.iso8601()),
             diagnostics: entry.diagnostics.iter().map(|d| code(d.code)).collect(),
+            source: "mft",
+            usn: None,
+            reasons: Vec::new(),
+            event_time: None,
         };
         serde_json::to_writer(&mut self.out, &record)?;
         self.out.write_all(b"\n").map_err(serde_json::Error::io)?;
@@ -67,6 +71,10 @@ struct Record {
     si_created: Option<String>,
     fn_created: Option<String>,
     diagnostics: Vec<&'static str>,
+    source: &'static str,
+    usn: Option<u64>,
+    reasons: Vec<String>,
+    event_time: Option<String>,
 }
 
 /// One matched rule, most severe first (the order `sigma` returns).
@@ -148,11 +156,11 @@ mod tests {
         assert_eq!(
             jsonl_with(&[named(5, "."), full, empty], None, None)?,
             concat!(
-                r#"{"entry":5,"sequence":0,"in_use":true,"name":".","path":"\\","path_state":"resolved","baseline":null,"findings":[],"si_created":null,"fn_created":"1601-01-01T00:00:00.0000000Z","diagnostics":[]}"#,
+                r#"{"entry":5,"sequence":0,"in_use":true,"name":".","path":"\\","path_state":"resolved","baseline":null,"findings":[],"si_created":null,"fn_created":"1601-01-01T00:00:00.0000000Z","diagnostics":[],"source":"mft","usn":null,"reasons":[],"event_time":null}"#,
                 "\n",
-                r#"{"entry":42,"sequence":3,"in_use":true,"name":"a\\\\b.txt","path":"\\a\\\\b.txt","path_state":"resolved","baseline":null,"findings":[],"si_created":"2023-11-14T17:12:46.6777888Z","fn_created":"2024-02-29T12:34:56.1234567Z","diagnostics":["fixup_mismatch"]}"#,
+                r#"{"entry":42,"sequence":3,"in_use":true,"name":"a\\\\b.txt","path":"\\a\\\\b.txt","path_state":"resolved","baseline":null,"findings":[],"si_created":"2023-11-14T17:12:46.6777888Z","fn_created":"2024-02-29T12:34:56.1234567Z","diagnostics":["fixup_mismatch"],"source":"mft","usn":null,"reasons":[],"event_time":null}"#,
                 "\n",
-                r#"{"entry":43,"sequence":0,"in_use":false,"name":null,"path":null,"path_state":"unknown","baseline":null,"findings":[],"si_created":null,"fn_created":null,"diagnostics":["bad_signature","malformed"]}"#,
+                r#"{"entry":43,"sequence":0,"in_use":false,"name":null,"path":null,"path_state":"unknown","baseline":null,"findings":[],"si_created":null,"fn_created":null,"diagnostics":["bad_signature","malformed"],"source":"mft","usn":null,"reasons":[],"event_time":null}"#,
                 "\n",
             )
         );
