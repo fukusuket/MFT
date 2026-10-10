@@ -96,9 +96,13 @@ impl<'a> Resolver<'a> {
         let position = usize::try_from(parent.entry())
             .ok()
             .and_then(|number| self.by_number.get(number).copied().flatten());
-        match position {
-            Some(position) => self.path(&self.entries[position]),
-            None => Resolution::Unknown,
+        match position.map(|position| &self.entries[position]) {
+            Some(dir)
+                if dir.in_use && dir.is_dir && dir.file_ref.sequence() == parent.sequence() =>
+            {
+                self.path(dir)
+            }
+            _ => Resolution::Unknown,
         }
     }
 
@@ -511,5 +515,27 @@ mod tests {
             shown(&resolver.directory(reference(31, 4))),
             Some(vec!["Windows".to_string(), "System32".to_string()])
         );
+    }
+
+    #[test]
+    fn directory_is_unknown_for_missing_reused_deleted_or_file_parents() {
+        let mut deleted = dir(32, 1, &[("Old", ROOT, 5)]);
+        deleted.in_use = false;
+        let entries = [
+            dir(ROOT, 5, &[(".", ROOT, 5)]),
+            dir(30, 2, &[("Windows", ROOT, 5)]),
+            deleted,
+            entry(33, 1, &[("a.txt", ROOT, 5)]),
+        ];
+
+        let resolver = Resolver::new(&entries);
+
+        for (number, sequence) in [(77, 1), (30, 1), (32, 1), (33, 1)] {
+            assert_eq!(
+                shown(&resolver.directory(reference(number, sequence))),
+                None,
+                "entry {number} sequence {sequence}"
+            );
+        }
     }
 }
