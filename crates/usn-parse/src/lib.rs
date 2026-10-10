@@ -110,12 +110,18 @@ impl<R: Read> Iterator for Records<R> {
     type Item = Result<Record, Error>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let offset = self.base + widen(self.pos);
-        let head = match self.fill(8) {
-            Ok(head) => head,
-            Err(e) => return Some(Err(e.into())),
+        let (offset, len) = loop {
+            let offset = self.base + widen(self.pos);
+            let head = match self.fill(8) {
+                Ok(head) => head,
+                Err(e) => return Some(Err(e.into())),
+            };
+            let len = usize::try_from(u32_at(head, 0)?).ok()?;
+            if len != 0 {
+                break (offset, len);
+            }
+            self.pos += 8; // sparse or padding: zeros up to the next 8-byte slot
         };
-        let len = usize::try_from(u32_at(head, 0)?).ok()?;
         let record = match self.fill(len) {
             Ok(record) => record.get(..len)?,
             Err(e) => return Some(Err(e.into())),

@@ -108,3 +108,13 @@ fn consecutive_records_come_out_in_order() -> TestResult {
     assert_eq!(got, want);
     Ok(())
 }
+
+#[test]
+fn leading_zero_region_is_skipped_without_diagnostics() -> TestResult {
+    let zeros = 3 * 65536 + 8; // spans several reads
+    let mut j = vec![0u8; zeros];
+    j.extend(v2(&Fields::default()));
+    let items = parse(j)?;
+    assert_eq!(only_event(&items)?.offset, u64::try_from(zeros)?);
+    Ok(())
+}
