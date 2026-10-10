@@ -5,7 +5,7 @@ mod support;
 use std::error::Error;
 use std::io::Cursor;
 
-use support::{Fields, u16s, v2, v3};
+use support::{Fields, other_version, u16s, v2, v3};
 use usn_parse::{DiagCode, Diagnostic, Record, UsnEvent, records};
 
 type TestResult = Result<(), Box<dyn Error>>;
@@ -133,5 +133,25 @@ fn zero_padding_between_records_is_skipped() -> TestResult {
         })
         .collect::<Result<_, _>>()?;
     assert_eq!(offsets, [0, 4096]);
+    Ok(())
+}
+
+/// `head` then one V2 record: the diagnostic for `head`, then the event right after it.
+fn diagnostic_then_event(head: Vec<u8>) -> Result<(Diagnostic, u64), Box<dyn Error>> {
+    let next = u64::try_from(head.len())?;
+    let mut j = head;
+    j.extend(v2(&Fields::default()));
+    let items = parse(j)?;
+    let [Record::Diagnostic(d), Record::Event(e)] = items.as_slice() else {
+        return Err(format!("expected a diagnostic then an event, got {items:?}").into());
+    };
+    assert_eq!(e.offset, next);
+    Ok((*d, e.offset))
+}
+
+#[test]
+fn v4_record_is_unsupported_and_skipped() -> TestResult {
+    let (d, _) = diagnostic_then_event(other_version(4, 0x50))?;
+    assert_eq!(d, Diagnostic { code: DiagCode::UnsupportedVersion, offset: 0 });
     Ok(())
 }

@@ -81,3 +81,13 @@ pub(crate) fn v3(f: &Fields, file_high: u64, parent_high: u64) -> Vec<u8> {
     put(&mut r, HEADER, &name);
     r
 }
+
+/// A record with only the common header (`RecordLength`, major and minor version) filled in,
+/// e.g. `USN_RECORD_V4` (range records) or an unknown version. The body is non-zero filler.
+pub(crate) fn other_version(major: u16, len: usize) -> Vec<u8> {
+    let mut r = vec![0xA5u8; len];
+    put(&mut r, 0x00, &u32::try_from(len).unwrap_or(0).to_le_bytes());
+    put(&mut r, 0x04, &major.to_le_bytes());
+    put(&mut r, 0x06, &0u16.to_le_bytes());
+    r
+}

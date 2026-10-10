@@ -176,6 +176,7 @@ fn parse_event(r: &[u8], offset: u64) -> Result<UsnEvent, DiagCode> {
     let l = match u16_at(r, 0x04) {
         Some(2) => &V2,
         Some(3) => &V3,
+        Some(4) => return Err(DiagCode::UnsupportedVersion),
         _ => return Err(DiagCode::Malformed),
     };
     event(r, l, offset).ok_or(DiagCode::Malformed)
