@@ -133,10 +133,7 @@ impl<R: Read> Iterator for Records<R> {
                     continue;
                 }
                 self.resyncing = true;
-                return Some(Ok(Record::Diagnostic(Diagnostic {
-                    code: DiagCode::Malformed,
-                    offset,
-                })));
+                return Some(Ok(diagnostic(DiagCode::Malformed, offset)));
             }
             let record = match self.fill(len) {
                 Ok(record) => record.get(..len)?,
@@ -148,20 +145,18 @@ impl<R: Read> Iterator for Records<R> {
                     self.pos += 8;
                     continue;
                 }
-                Some(None) => Record::Diagnostic(Diagnostic {
-                    code: DiagCode::Malformed,
-                    offset,
-                }),
-                None => Record::Diagnostic(Diagnostic {
-                    code: DiagCode::UnsupportedVersion,
-                    offset,
-                }),
+                Some(None) => diagnostic(DiagCode::Malformed, offset),
+                None => diagnostic(DiagCode::UnsupportedVersion, offset),
             };
             self.resyncing = false;
             self.pos += len;
             return Some(Ok(item));
         }
     }
+}
+
+fn diagnostic(code: DiagCode, offset: u64) -> Record {
+    Record::Diagnostic(Diagnostic { code, offset })
 }
 
 /// Field offsets of one record version.
@@ -247,17 +242,25 @@ fn widen(n: usize) -> u64 {
 }
 
 fn u16_at(b: &[u8], at: usize) -> Option<u16> {
-    Some(u16::from_le_bytes(b.get(at..at.checked_add(2)?)?.try_into().ok()?))
+    Some(u16::from_le_bytes(
+        b.get(at..at.checked_add(2)?)?.try_into().ok()?,
+    ))
 }
 
 fn u32_at(b: &[u8], at: usize) -> Option<u32> {
-    Some(u32::from_le_bytes(b.get(at..at.checked_add(4)?)?.try_into().ok()?))
+    Some(u32::from_le_bytes(
+        b.get(at..at.checked_add(4)?)?.try_into().ok()?,
+    ))
 }
 
 fn u64_at(b: &[u8], at: usize) -> Option<u64> {
-    Some(u64::from_le_bytes(b.get(at..at.checked_add(8)?)?.try_into().ok()?))
+    Some(u64::from_le_bytes(
+        b.get(at..at.checked_add(8)?)?.try_into().ok()?,
+    ))
 }
 
 fn i64_at(b: &[u8], at: usize) -> Option<i64> {
-    Some(i64::from_le_bytes(b.get(at..at.checked_add(8)?)?.try_into().ok()?))
+    Some(i64::from_le_bytes(
+        b.get(at..at.checked_add(8)?)?.try_into().ok()?,
+    ))
 }

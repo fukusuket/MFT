@@ -54,8 +54,16 @@ pub(crate) fn v2(f: &Fields) -> Vec<u8> {
     put(&mut r, 0x20, &f.time.to_le_bytes());
     put(&mut r, 0x28, &f.reason.to_le_bytes());
     put(&mut r, 0x34, &f.attributes.to_le_bytes());
-    put(&mut r, 0x38, &u16::try_from(name.len()).unwrap_or(0).to_le_bytes());
-    put(&mut r, 0x3A, &u16::try_from(HEADER).unwrap_or(0).to_le_bytes());
+    put(
+        &mut r,
+        0x38,
+        &u16::try_from(name.len()).unwrap_or(0).to_le_bytes(),
+    );
+    put(
+        &mut r,
+        0x3A,
+        &u16::try_from(HEADER).unwrap_or(0).to_le_bytes(),
+    );
     put(&mut r, HEADER, &name);
     r
 }
@@ -76,8 +84,16 @@ pub(crate) fn v3(f: &Fields, file_high: u64, parent_high: u64) -> Vec<u8> {
     put(&mut r, 0x30, &f.time.to_le_bytes());
     put(&mut r, 0x38, &f.reason.to_le_bytes());
     put(&mut r, 0x44, &f.attributes.to_le_bytes());
-    put(&mut r, 0x48, &u16::try_from(name.len()).unwrap_or(0).to_le_bytes());
-    put(&mut r, 0x4A, &u16::try_from(HEADER).unwrap_or(0).to_le_bytes());
+    put(
+        &mut r,
+        0x48,
+        &u16::try_from(name.len()).unwrap_or(0).to_le_bytes(),
+    );
+    put(
+        &mut r,
+        0x4A,
+        &u16::try_from(HEADER).unwrap_or(0).to_le_bytes(),
+    );
     put(&mut r, HEADER, &name);
     r
 }

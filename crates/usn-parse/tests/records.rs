@@ -66,7 +66,13 @@ fn v3_record_takes_the_file_refs_from_the_low_64_bits() -> TestResult {
 #[test]
 fn v3_with_nonzero_high_id_bits_is_malformed() -> TestResult {
     let (d, _) = diagnostic_then_event(v3(&Fields::default(), 1, 0))?;
-    assert_eq!(d, Diagnostic { code: DiagCode::Malformed, offset: 0 });
+    assert_eq!(
+        d,
+        Diagnostic {
+            code: DiagCode::Malformed,
+            offset: 0
+        }
+    );
     Ok(())
 }
 
@@ -143,7 +149,13 @@ fn diagnostic_then_event(head: Vec<u8>) -> Result<(Diagnostic, u64), Box<dyn Err
 #[test]
 fn v4_record_is_unsupported_and_skipped() -> TestResult {
     let (d, _) = diagnostic_then_event(other_version(4, 0x50))?;
-    assert_eq!(d, Diagnostic { code: DiagCode::UnsupportedVersion, offset: 0 });
+    assert_eq!(
+        d,
+        Diagnostic {
+            code: DiagCode::UnsupportedVersion,
+            offset: 0
+        }
+    );
     Ok(())
 }
 
@@ -151,7 +163,14 @@ fn v4_record_is_unsupported_and_skipped() -> TestResult {
 fn unknown_major_version_is_unsupported() -> TestResult {
     for major in [0u16, 1, 5, 0xFFFF] {
         let (d, _) = diagnostic_then_event(other_version(major, 0x40))?;
-        assert_eq!(d, Diagnostic { code: DiagCode::UnsupportedVersion, offset: 0 }, "major {major}");
+        assert_eq!(
+            d,
+            Diagnostic {
+                code: DiagCode::UnsupportedVersion,
+                offset: 0
+            },
+            "major {major}"
+        );
     }
     Ok(())
 }
@@ -162,6 +181,15 @@ fn record_length_below_header_is_malformed_and_resyncs() -> TestResult {
     let mut head = other_version(2, 16);
     head[0..4].copy_from_slice(&56u32.to_le_bytes());
     let (d, at) = diagnostic_then_event(head)?;
-    assert_eq!((d, at), (Diagnostic { code: DiagCode::Malformed, offset: 0 }, 16));
+    assert_eq!(
+        (d, at),
+        (
+            Diagnostic {
+                code: DiagCode::Malformed,
+                offset: 0
+            },
+            16
+        )
+    );
     Ok(())
 }
