@@ -377,3 +377,25 @@ fn read_error_inside_a_record_is_an_error_and_stops() -> TestResult {
     assert!(it.next().is_none());
     Ok(())
 }
+
+#[test]
+fn a_length_past_the_end_is_truncated_and_later_records_are_kept() -> TestResult {
+    let f = Fields::default();
+    let mut j = other_version(2, 16);
+    j[0..4].copy_from_slice(&0x1000u32.to_le_bytes()); // claims more than the rest of the input
+    j.extend(v2(&f));
+    j.extend(v2(&f));
+    let items = parse(j)?;
+    let [Record::Diagnostic(d), Record::Event(a), Record::Event(b)] = items.as_slice() else {
+        return Err(format!("expected a diagnostic then two events, got {items:?}").into());
+    };
+    assert_eq!(
+        *d,
+        Diagnostic {
+            code: DiagCode::Truncated,
+            offset: 0
+        }
+    );
+    assert_eq!((a.offset, b.offset), (16, 16 + 72));
+    Ok(())
+}

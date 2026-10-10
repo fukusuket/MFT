@@ -135,8 +135,9 @@ impl<R: Read> Iterator for Records<R> {
             };
             if head.len() < 8 {
                 let zeros = head.iter().all(|&b| b == 0);
+                let quiet = zeros || self.resyncing;
                 self.pos = self.buf.len();
-                return (!zeros).then(|| Ok(diagnostic(DiagCode::Truncated, offset)));
+                return (!quiet).then(|| Ok(diagnostic(DiagCode::Truncated, offset)));
             }
             let len = usize::try_from(u32_at(head, 0)?).ok()?;
             if len == 0 {
@@ -160,7 +161,12 @@ impl<R: Read> Iterator for Records<R> {
                 Err(e) => return self.fail(e),
             };
             let Some(record) = record.get(..len) else {
-                self.pos = self.buf.len();
+                // The input ends inside this record, or its length is wrong: resync after it.
+                self.pos += 8;
+                if self.resyncing {
+                    continue;
+                }
+                self.resyncing = true;
                 return Some(Ok(diagnostic(DiagCode::Truncated, offset)));
             };
             let item = match layout.map(|l| event(record, l, offset)) {
