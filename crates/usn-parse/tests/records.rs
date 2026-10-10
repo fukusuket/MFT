@@ -193,3 +193,14 @@ fn record_length_below_header_is_malformed_and_resyncs() -> TestResult {
     );
     Ok(())
 }
+
+#[test]
+fn record_length_over_the_cap_or_unaligned_is_malformed() -> TestResult {
+    for len in [4096 + 8, 0x7FFF_FFF8, 0x3C + 1, 0x4C + 2] {
+        let mut head = other_version(2, 16);
+        head[0..4].copy_from_slice(&u32::try_from(len)?.to_le_bytes());
+        let (d, at) = diagnostic_then_event(head)?;
+        assert_eq!((d, at), (Diagnostic { code: DiagCode::Malformed, offset: 0 }, 16), "len {len}");
+    }
+    Ok(())
+}
