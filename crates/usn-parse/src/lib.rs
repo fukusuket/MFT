@@ -112,9 +112,8 @@ impl<R: Read> Records<R> {
         }
         Ok(&self.buf[self.pos..])
     }
-}
 
-impl<R> Records<R> {
+    /// Returns the read error once; the stream ends after it.
     fn fail(&mut self, e: std::io::Error) -> Option<Result<Record, Error>> {
         self.failed = true;
         Some(Err(e.into()))
