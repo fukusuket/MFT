@@ -627,4 +627,24 @@ mod tests {
         assert_eq!(csv.split(',').nth(13), Some("FILE_CREATE;CLOSE"));
         Ok(())
     }
+
+    #[test]
+    fn usn_names_are_escaped_like_mft_names() -> Result<(), Box<dyn std::error::Error>> {
+        let records = vec![
+            usn_event(60, 6 | (1 << 48), 0, 0, "=cmd|' /C calc'!A0"),
+            usn_event(61, 6 | (1 << 48), 8, 0, "x\u{1b}[2J\u{202E}fdp.exe"),
+        ];
+
+        let csv = usn_csv(&usn_tree(), records)?;
+        let cells: Vec<Vec<&str>> = csv.lines().map(|l| l.split(',').skip(3).take(2).collect()).collect();
+
+        assert_eq!(
+            cells,
+            [
+                vec!["'=cmd|' /C calc'!A0", r"\Users\=cmd|' /C calc'!A0"],
+                vec![r"x\u{1B}[2J\u{202E}fdp.exe", r"\Users\x\u{1B}[2J\u{202E}fdp.exe"],
+            ]
+        );
+        Ok(())
+    }
 }
