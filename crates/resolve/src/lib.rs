@@ -724,4 +724,24 @@ mod tests {
         assert_eq!(got[1], state("inferred", r"\Gone"));
         assert_eq!(got[2], state("resolved", r"\"));
     }
+
+    #[test]
+    fn rewind_keeps_reused_entries_apart_by_sequence() {
+        let entries = [
+            dir(ROOT, 5, &[(".", ROOT, 5)]),
+            dir(66, 2, &[("Drivers", ROOT, 5)]), // entry 66 reused; it was "Tools" as 66-1
+        ];
+        let events = [
+            usn((40, 1), (66, 1), "a.txt"),
+            usn((66, 1), (ROOT, 5), "Tools"),   // FILE_DELETE of 66-1
+            usn((66, 2), (ROOT, 5), "Drivers"), // FILE_CREATE of 66-2
+            usn((41, 1), (66, 2), "b.sys"),
+        ];
+
+        let resolver = Resolver::new(&entries);
+
+        let got = states(&resolver.rewind(&events));
+        assert_eq!(got[0], state("inferred", r"\Tools"));
+        assert_eq!(got[3], state("resolved", r"\Drivers"));
+    }
 }
