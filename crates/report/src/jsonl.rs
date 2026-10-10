@@ -7,7 +7,8 @@ use ntfs_types::Filetime;
 use serde::Serialize;
 
 use crate::{
-    Error, baseline_name, code, display_text, level_name, path_state, reason_names, usn_path,
+    Error, baseline_name, code, display_text, level_name, path_state, reason_names, usn_code,
+    usn_path,
 };
 
 /// JSON Lines with one object per `$MFT` record.
@@ -25,8 +26,8 @@ impl<W: Write> JsonlWriter<W> {
         let entry = row.entry;
         let name = resolve::chosen_name(&entry.names);
         let record = Record {
-            entry: entry.file_ref.entry(),
-            sequence: entry.file_ref.sequence(),
+            entry: Some(entry.file_ref.entry()),
+            sequence: Some(entry.file_ref.sequence()),
             in_use: Some(entry.in_use),
             name: name.map(|n| display_text(&n.name.to_string())),
             path: row.resolution.path_text().map(|p| display_text(&p)),
@@ -53,12 +54,31 @@ impl<W: Write> JsonlWriter<W> {
 
     /// One object per USN record.
     pub fn write_usn(&mut self, row: &UsnRow<'_>) -> Result<(), Error> {
-        let usn_parse::Record::Event(event) = &row.record else {
-            return Ok(());
+        let event = match &row.record {
+            usn_parse::Record::Event(event) => event,
+            usn_parse::Record::Diagnostic(d) => {
+                return self.line(&Record {
+                    entry: None,
+                    sequence: None,
+                    in_use: None,
+                    name: None,
+                    path: None,
+                    path_state: path_state(&row.directory),
+                    baseline: None,
+                    findings: Vec::new(),
+                    si_created: None,
+                    fn_created: None,
+                    diagnostics: vec![usn_code(d.code)],
+                    source: "usn",
+                    usn: None,
+                    reasons: Vec::new(),
+                    event_time: None,
+                });
+            }
         };
         let record = Record {
-            entry: event.file.entry(),
-            sequence: event.file.sequence(),
+            entry: Some(event.file.entry()),
+            sequence: Some(event.file.sequence()),
             in_use: None,
             name: Some(display_text(&event.name.to_string())),
             path: usn_path(row, event).map(|p| display_text(&p)),
@@ -91,8 +111,8 @@ impl<W: Write> JsonlWriter<W> {
 /// One line; field order is the output order.
 #[derive(Serialize)]
 struct Record {
-    entry: u64,
-    sequence: u16,
+    entry: Option<u64>,
+    sequence: Option<u16>,
     in_use: Option<bool>,
     name: Option<String>,
     path: Option<String>,

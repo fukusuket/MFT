@@ -85,8 +85,16 @@ impl<W: Write> CsvWriter<W> {
 
     /// One row per USN record.
     pub fn write_usn(&mut self, row: &UsnRow<'_>) -> Result<(), Error> {
-        let usn_parse::Record::Event(event) = &row.record else {
-            return Ok(());
+        let event = match &row.record {
+            usn_parse::Record::Event(event) => event,
+            usn_parse::Record::Diagnostic(d) => {
+                let mut cells: [&str; HEADER.len()] = [""; HEADER.len()];
+                cells[5] = path_state(&row.directory);
+                cells[10] = usn_code(d.code);
+                cells[11] = "usn";
+                self.csv.write_record(cells)?;
+                return Ok(());
+            }
         };
         self.csv.write_record([
             event.file.entry().to_string(),
@@ -234,6 +242,14 @@ fn cell_text(text: &str) -> String {
         out.insert(0, '\'');
     }
     out
+}
+
+fn usn_code(code: usn_parse::DiagCode) -> &'static str {
+    match code {
+        usn_parse::DiagCode::UnsupportedVersion => "unsupported_version",
+        usn_parse::DiagCode::Malformed => "malformed",
+        usn_parse::DiagCode::Truncated => "truncated",
+    }
 }
 
 fn code(code: DiagCode) -> &'static str {
@@ -636,14 +652,53 @@ mod tests {
         ];
 
         let csv = usn_csv(&usn_tree(), records)?;
-        let cells: Vec<Vec<&str>> = csv.lines().map(|l| l.split(',').skip(3).take(2).collect()).collect();
+        let cells: Vec<Vec<&str>> = csv
+            .lines()
+            .map(|l| l.split(',').skip(3).take(2).collect())
+            .collect();
 
         assert_eq!(
             cells,
             [
                 vec!["'=cmd|' /C calc'!A0", r"\Users\=cmd|' /C calc'!A0"],
-                vec![r"x\u{1B}[2J\u{202E}fdp.exe", r"\Users\x\u{1B}[2J\u{202E}fdp.exe"],
+                vec![
+                    r"x\u{1B}[2J\u{202E}fdp.exe",
+                    r"\Users\x\u{1B}[2J\u{202E}fdp.exe"
+                ],
             ]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn usn_diagnostics_become_rows() -> Result<(), Box<dyn std::error::Error>> {
+        let diagnostic =
+            |code, offset| usn_parse::Record::Diagnostic(usn_parse::Diagnostic { code, offset });
+        let records = || {
+            vec![
+                diagnostic(usn_parse::DiagCode::Malformed, 8),
+                diagnostic(usn_parse::DiagCode::Truncated, 16),
+                diagnostic(usn_parse::DiagCode::UnsupportedVersion, 24),
+            ]
+        };
+
+        let csv = usn_csv(&usn_tree(), records())?;
+        let mut jsonl = JsonlWriter::new(Vec::new());
+        for row in analyze::usn_rows(&usn_tree(), records().into_iter().map(Ok::<_, ()>)) {
+            jsonl.write_usn(&row.map_err(|()| "read error")?)?;
+        }
+
+        assert_eq!(
+            csv,
+            ",,,,,unknown,,,,,malformed,usn,,,\n\
+             ,,,,,unknown,,,,,truncated,usn,,,\n\
+             ,,,,,unknown,,,,,unsupported_version,usn,,,\n"
+        );
+        assert_eq!(
+            String::from_utf8(jsonl.finish()?)?.lines().next(),
+            Some(
+                r#"{"entry":null,"sequence":null,"in_use":null,"name":null,"path":null,"path_state":"unknown","baseline":null,"findings":[],"si_created":null,"fn_created":null,"diagnostics":["malformed"],"source":"usn","usn":null,"reasons":[],"event_time":null}"#
+            )
         );
         Ok(())
     }
