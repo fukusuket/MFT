@@ -204,3 +204,18 @@ fn record_length_over_the_cap_or_unaligned_is_malformed() -> TestResult {
     }
     Ok(())
 }
+
+fn malformed_v2(edit: impl Fn(&mut Vec<u8>)) -> TestResult {
+    let mut head = v2(&Fields::default());
+    edit(&mut head);
+    let (d, _) = diagnostic_then_event(head)?;
+    assert_eq!(d, Diagnostic { code: DiagCode::Malformed, offset: 0 });
+    Ok(())
+}
+
+#[test]
+fn name_outside_the_record_is_malformed() -> TestResult {
+    // Name offset past the record, then a name length running past it.
+    malformed_v2(|r| r[0x3A..0x3C].copy_from_slice(&0x0100u16.to_le_bytes()))?;
+    malformed_v2(|r| r[0x38..0x3A].copy_from_slice(&0x0040u16.to_le_bytes()))
+}
