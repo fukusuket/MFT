@@ -224,3 +224,8 @@ fn name_outside_the_record_is_malformed() -> TestResult {
 fn odd_name_length_is_malformed() -> TestResult {
     malformed_v2(|r| r[0x38..0x3A].copy_from_slice(&9u16.to_le_bytes()))
 }
+
+#[test]
+fn negative_usn_is_malformed() -> TestResult {
+    malformed_v2(|r| r[0x18..0x20].copy_from_slice(&(-8i64).to_le_bytes()))
+}
