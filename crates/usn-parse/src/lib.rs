@@ -145,9 +145,8 @@ impl<R: Read> Iterator for Records<R> {
             }
             let layout = layout(u16_at(head, 4)?);
             // While resyncing, only a V2/V3 record ends the scan; anything else is skipped silently.
-            let plausible = len % 8 == 0
-                && len <= MAX_RECORD
-                && layout.is_none_or(|l| len >= l.header);
+            let plausible =
+                len % 8 == 0 && len <= MAX_RECORD && layout.is_none_or(|l| len >= l.header);
             if !plausible || (self.resyncing && layout.is_none()) {
                 self.pos += 8;
                 if self.resyncing {

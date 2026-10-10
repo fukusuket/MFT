@@ -22,7 +22,10 @@ fn drain(j: Vec<u8>) {
 }
 
 fn valid_journal() -> Vec<u8> {
-    let f = Fields { name: u16s("Zone.Identifier"), ..Fields::default() };
+    let f = Fields {
+        name: u16s("Zone.Identifier"),
+        ..Fields::default()
+    };
     let mut j = vec![0u8; 64];
     j.extend(v2(&f));
     j.extend(v3(&f, 0, 0));

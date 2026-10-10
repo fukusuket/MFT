@@ -200,7 +200,17 @@ fn record_length_over_the_cap_or_unaligned_is_malformed() -> TestResult {
         let mut head = other_version(2, 16);
         head[0..4].copy_from_slice(&u32::try_from(len)?.to_le_bytes());
         let (d, at) = diagnostic_then_event(head)?;
-        assert_eq!((d, at), (Diagnostic { code: DiagCode::Malformed, offset: 0 }, 16), "len {len}");
+        assert_eq!(
+            (d, at),
+            (
+                Diagnostic {
+                    code: DiagCode::Malformed,
+                    offset: 0
+                },
+                16
+            ),
+            "len {len}"
+        );
     }
     Ok(())
 }
@@ -209,7 +219,13 @@ fn malformed_v2(edit: impl Fn(&mut Vec<u8>)) -> TestResult {
     let mut head = v2(&Fields::default());
     edit(&mut head);
     let (d, _) = diagnostic_then_event(head)?;
-    assert_eq!(d, Diagnostic { code: DiagCode::Malformed, offset: 0 });
+    assert_eq!(
+        d,
+        Diagnostic {
+            code: DiagCode::Malformed,
+            offset: 0
+        }
+    );
     Ok(())
 }
 
@@ -238,9 +254,17 @@ fn truncated_last_record_is_reported_and_ends() -> TestResult {
         j.extend(&whole[..keep]);
         let items = parse(j)?;
         let [Record::Event(_), Record::Diagnostic(d)] = items.as_slice() else {
-            return Err(format!("keep {keep}: expected an event then a diagnostic, got {items:?}").into());
+            return Err(
+                format!("keep {keep}: expected an event then a diagnostic, got {items:?}").into(),
+            );
         };
-        assert_eq!(*d, Diagnostic { code: DiagCode::Truncated, offset: u64::try_from(whole.len())? });
+        assert_eq!(
+            *d,
+            Diagnostic {
+                code: DiagCode::Truncated,
+                offset: u64::try_from(whole.len())?
+            }
+        );
     }
     Ok(())
 }
@@ -250,7 +274,10 @@ fn trailing_zeros_shorter_than_a_slot_end_quietly() -> TestResult {
     for zeros in 1..8 {
         let mut j = v2(&Fields::default());
         j.extend(vec![0u8; zeros]);
-        assert!(matches!(parse(j)?.as_slice(), [Record::Event(_)]), "{zeros} zeros");
+        assert!(
+            matches!(parse(j)?.as_slice(), [Record::Event(_)]),
+            "{zeros} zeros"
+        );
     }
     Ok(())
 }
@@ -258,7 +285,10 @@ fn trailing_zeros_shorter_than_a_slot_end_quietly() -> TestResult {
 #[test]
 fn unpaired_surrogate_in_a_name_survives() -> TestResult {
     let name = vec![0x0061, 0xD800, 0x0062];
-    let items = parse(v2(&Fields { name: name.clone(), ..Fields::default() }))?;
+    let items = parse(v2(&Fields {
+        name: name.clone(),
+        ..Fields::default()
+    }))?;
     assert_eq!(only_event(&items)?.name.units(), name.as_slice());
     Ok(())
 }
@@ -282,7 +312,10 @@ fn records_split_across_reads_parse_the_same() -> TestResult {
     j.extend(other_version(4, 0x50));
     j.extend(&v2(&f)[..20]);
     let whole = format!("{:?}", parse(j.clone())?);
-    let split = format!("{:?}", records(OneByte(Cursor::new(j))).collect::<Result<Vec<_>, _>>()?);
+    let split = format!(
+        "{:?}",
+        records(OneByte(Cursor::new(j))).collect::<Result<Vec<_>, _>>()?
+    );
     assert_eq!(split, whole);
     Ok(())
 }
