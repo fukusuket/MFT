@@ -2,6 +2,8 @@
 
 #[path = "../../mft-parse/tests/support/mod.rs"]
 mod support;
+#[path = "../../usn-parse/tests/support/mod.rs"]
+mod usn_support;
 
 use std::error::Error;
 use std::path::PathBuf;
@@ -1223,5 +1225,104 @@ fn executables_in_temp_are_low() -> TestResult {
     let hit = format!("low:{TEMP}");
     let matched: Vec<bool> = findings.iter().map(|(_, f)| has_finding(f, &hit)).collect();
     assert_eq!(matched, [true, true, false, false, false], "{findings:?}");
+    Ok(())
+}
+
+/// Root (5) and `\Users` (6) as directories, for USN parents.
+fn usn_volume_mft() -> Vec<u8> {
+    let root = 5 | (1 << 48);
+    let dir = |entry: u32, name: &str| {
+        record_with_flags(
+            1024,
+            3, // in use, directory
+            entry,
+            &[
+                standard_information(),
+                file_name_with(root, &u16s(name), 1, 0),
+            ],
+        )
+    };
+    let mut mft = record(
+        1024,
+        true,
+        0,
+        &[
+            standard_information(),
+            file_name_with(root, &u16s("$MFT"), 1, 0),
+        ],
+    );
+    mft.extend(vec![0u8; 4 * 1024]);
+    mft.extend(dir(5, "."));
+    mft.extend(dir(6, "Users"));
+    mft
+}
+
+/// A `$J` with an event under `\Users`, an event whose parent is gone, and a V4 record.
+fn usn_journal() -> Vec<u8> {
+    use usn_support::{Fields, other_version, v2};
+    let mut j = vec![0u8; 64]; // sparse head
+    j.extend(v2(&Fields {
+        file: 40 | (1 << 48),
+        parent: 6 | (1 << 48),
+        usn: 64,
+        reason: 0x8000_0100,
+        name: u16s("new.txt"),
+        ..Fields::default()
+    }));
+    j.extend(v2(&Fields {
+        file: 41 | (1 << 48),
+        parent: 77 | (1 << 48),
+        usn: 136,
+        reason: 0x0000_0200,
+        name: u16s("gone.txt"),
+        ..Fields::default()
+    }));
+    j.extend(other_version(4, 0x50));
+    j
+}
+
+#[test]
+fn analyze_usn_adds_rows_after_the_mft_rows() -> TestResult {
+    let dir = scratch("analyze_usn_adds_rows_after_the_mft_rows")?;
+    let (mft, j) = (dir.join("MFT"), dir.join("J"));
+    let (csv, jsonl) = (dir.join("out.csv"), dir.join("out.jsonl"));
+    std::fs::write(&mft, usn_volume_mft())?;
+    std::fs::write(&j, usn_journal())?;
+
+    let status = tool()
+        .args(["analyze", "-i"])
+        .arg(&mft)
+        .arg("--usn")
+        .arg(&j)
+        .arg("--csv")
+        .arg(&csv)
+        .arg("--jsonl")
+        .arg(&jsonl)
+        .status()?;
+
+    assert!(status.success());
+    let text = std::fs::read_to_string(&csv)?;
+    let shown: Vec<String> = csv_rows(&text)
+        .iter()
+        .map(|r| {
+            [0, 3, 4, 5, 10, 11, 12, 13]
+                .map(|i| r[i].as_str())
+                .join("|")
+        })
+        .collect();
+    assert_eq!(
+        shown,
+        [
+            "0|$MFT|\\$MFT|resolved||mft||",
+            "5|.|\\|resolved||mft||",
+            "6|Users|\\Users|resolved||mft||",
+            "40|new.txt|\\Users\\new.txt|resolved||usn|64|FILE_CREATE;CLOSE",
+            "41|gone.txt||unknown||usn|136|FILE_DELETE",
+            "|||unknown|unsupported_version|usn||",
+        ]
+    );
+    let sources: Vec<serde_json::Value> = jsonl_field(&std::fs::read_to_string(&jsonl)?, "source")?;
+    assert_eq!(sources, ["mft", "mft", "mft", "usn", "usn", "usn"]);
+    assert_no_temporary_outputs(&dir)?;
     Ok(())
 }

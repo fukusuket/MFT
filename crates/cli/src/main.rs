@@ -1,4 +1,4 @@
-//! `tool analyze -i <$MFT> [--csv <out>] [-o <report.html>] [--jsonl <out>] [--baseline <file>] [--rules <dir>]`
+//! `tool analyze -i <$MFT> [--usn <$J>] [--csv <out>] [-o <report.html>] [--jsonl <out>] [--baseline <file>] [--rules <dir>]`
 //! and `tool baseline build`.
 
 use std::ffi::OsString;
@@ -27,6 +27,9 @@ enum Command {
         /// Raw $MFT file.
         #[arg(short, long)]
         input: PathBuf,
+        /// Raw $UsnJrnl:$J file; adds one CSV/JSONL row per USN record after the $MFT rows.
+        #[arg(long)]
+        usn: Option<PathBuf>,
         /// CSV output path.
         #[arg(long)]
         csv: Option<PathBuf>,
@@ -66,6 +69,7 @@ fn main() -> anyhow::Result<()> {
     match command {
         Command::Analyze {
             input,
+            usn,
             csv,
             output,
             jsonl,
@@ -73,6 +77,7 @@ fn main() -> anyhow::Result<()> {
             rules,
         } => analyze(
             &input,
+            usn.as_deref(),
             csv.as_deref(),
             output.as_deref(),
             jsonl.as_deref(),
@@ -85,6 +90,7 @@ fn main() -> anyhow::Result<()> {
 
 fn analyze(
     input: &Path,
+    usn: Option<&Path>,
     csv: Option<&Path>,
     output: Option<&Path>,
     jsonl: Option<&Path>,
@@ -98,6 +104,9 @@ fn analyze(
     ];
     for (n, &(path, name)) in outputs.iter().enumerate() {
         refuse_same_file(input, path, "input", name)?;
+        if let Some(usn) = usn {
+            refuse_same_file(usn, path, "USN input", name)?;
+        }
         let Some(path) = path else { continue };
         for &(later, later_name) in &outputs[n + 1..] {
             refuse_same_file(path, later, name, later_name)?;
@@ -117,6 +126,9 @@ fn analyze(
         })
         .transpose()?;
     let mft = File::open(input).with_context(|| format!("opening {}", input.display()))?;
+    let journal = usn
+        .map(|path| File::open(path).with_context(|| format!("opening {}", path.display())))
+        .transpose()?;
     let mut csv_writer = csv
         .map(|path| {
             let (pending, file) = AtomicOutput::create(path)?;
@@ -152,6 +164,18 @@ fn analyze(
         }
         if let Some((_, _, report)) = &mut html {
             report.add(&row);
+        }
+    }
+    if let Some(journal) = journal {
+        // After the $MFT rows, in $J order; the HTML report does not show USN rows yet.
+        for row in analyze::usn_rows(&entries, usn_parse::records(BufReader::new(journal))) {
+            let row = row.context("reading the USN journal")?;
+            if let Some((_, writer)) = &mut csv_writer {
+                writer.write_usn(&row)?;
+            }
+            if let Some((_, writer)) = &mut jsonl_writer {
+                writer.write_usn(&row)?;
+            }
         }
     }
     if let Some((pending, writer)) = jsonl_writer {

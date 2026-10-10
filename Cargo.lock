@@ -235,6 +235,7 @@ dependencies = [
  "report",
  "serde_json",
  "sigma",
+ "usn-parse",
 ]
 
 [[package]]
