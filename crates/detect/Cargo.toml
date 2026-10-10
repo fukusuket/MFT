@@ -12,6 +12,7 @@ baseline = { path = "../baseline" }
 mft-parse = { path = "../mft-parse" }
 resolve = { path = "../resolve" }
 sigma = { path = "../sigma" }
+usn-parse = { path = "../usn-parse" }
 
 [dev-dependencies]
 ntfs-types = { path = "../ntfs-types" }

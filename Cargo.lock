@@ -340,6 +340,7 @@ dependencies = [
  "ntfs-types",
  "resolve",
  "sigma",
+ "usn-parse",
 ]
 
 [[package]]

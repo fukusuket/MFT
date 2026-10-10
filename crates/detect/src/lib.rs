@@ -4,6 +4,7 @@ use baseline::Status;
 use mft_parse::Entry;
 use resolve::Resolution;
 use sigma::Event;
+use usn_parse::UsnEvent;
 
 /// The `file_event` for a file, or `None` when there is nothing to match on.
 pub fn file_event(
@@ -31,6 +32,35 @@ pub fn file_event(
     })
 }
 
+/// The Sigma events for a USN record whose file had the path `target` (and `source` before a
+/// rename), or none when there is nothing to match on.
+pub fn usn_events(
+    event: &UsnEvent,
+    target: &str,
+    source: Option<&str>,
+    baseline: Option<Status>,
+) -> Vec<Event> {
+    let _ = (source, baseline);
+    let time = event.time.sysmon();
+    let mut events = Vec::new();
+    if event.reason & FILE_CREATE != 0 {
+        events.push(Event {
+            product: "windows",
+            category: "file_event",
+            service: None,
+            fields: vec![
+                ("TargetFilename", format!("C:{target}")),
+                ("CreationUtcTime", time.clone()),
+                ("UtcTime", time),
+            ],
+        });
+    }
+    events
+}
+
+/// `USN_REASON_*` flags (winioctl.h).
+const FILE_CREATE: u32 = 0x0000_0100;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -56,6 +86,53 @@ mod tests {
             }],
             diagnostics: vec![],
         }
+    }
+
+    fn usn(reason: u32) -> UsnEvent {
+        UsnEvent {
+            offset: 0,
+            usn: 4096,
+            file: FileRef::from_raw(40),
+            parent: FileRef::from_raw(5),
+            time: Filetime::from_raw(133_536_836_961_234_567),
+            reason,
+            attributes: 0x20, // FILE_ATTRIBUTE_ARCHIVE
+            name: name("x.exe"),
+        }
+    }
+
+    const CLOSE: u32 = 0x8000_0000;
+
+    /// Category, service and fields of each event.
+    type Shown = (
+        &'static str,
+        Option<&'static str>,
+        Vec<(&'static str, String)>,
+    );
+
+    fn shown(events: Vec<Event>) -> Vec<Shown> {
+        events
+            .into_iter()
+            .map(|e| (e.category, e.service, e.fields))
+            .collect()
+    }
+
+    #[test]
+    fn a_closed_usn_create_is_a_file_event_at_the_usn_time() {
+        let events = usn_events(&usn(0x100 | CLOSE), r"\Windows\Temp\x.exe", None, None);
+
+        assert_eq!(
+            shown(events),
+            [(
+                "file_event",
+                None,
+                vec![
+                    ("TargetFilename", r"C:\Windows\Temp\x.exe".to_string()),
+                    ("CreationUtcTime", "2024-02-29 12:34:56.123".to_string()),
+                    ("UtcTime", "2024-02-29 12:34:56.123".to_string()),
+                ]
+            )]
+        );
     }
 
     #[test]
