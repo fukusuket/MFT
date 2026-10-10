@@ -40,7 +40,7 @@ Facts shown next to findings, never used to rank them: baseline status, timestom
 
 ## Crates
 
-So far: `ntfs-types`, `mft-parse`, `resolve` (MFT-only), `baseline` (no zstd yet), `sigma`, `detect`, `analyze`, `report` (CSV, JSONL timeline and a static HTML template; viewer per ADR 0020 not built yet), `cli`, `xtask` (synthetic `$MFT` for the gate). `fuzz/` is a separate workspace (ADR 0013).
+So far: `ntfs-types`, `mft-parse`, `usn-parse`, `resolve` (MFT paths and USN Rewind, [research](research/rewind.md)), `baseline` (no zstd yet), `sigma`, `detect`, `analyze`, `report` (CSV, JSONL timeline and a static HTML template; viewer per ADR 0020 not built yet), `cli`, `xtask` (synthetic `$MFT` for the gate). `fuzz/` is a separate workspace (ADR 0013).
 
 | Crate | Role | Depends on | Built on |
 |---|---|---|---|

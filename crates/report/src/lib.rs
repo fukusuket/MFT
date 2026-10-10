@@ -194,6 +194,7 @@ fn baseline_name(status: Option<Status>) -> Option<&'static str> {
 fn path_state(resolution: &Resolution<'_>) -> &'static str {
     match resolution {
         Resolution::Resolved(_) => "resolved",
+        Resolution::Inferred(_) => "inferred",
         Resolution::Unknown => "unknown",
     }
 }
@@ -552,8 +553,8 @@ mod tests {
         records: Vec<usn_parse::Record>,
     ) -> Result<String, Box<dyn std::error::Error>> {
         let mut w = CsvWriter::new(Vec::new())?;
-        for row in analyze::usn_rows(entries, records.into_iter().map(Ok::<_, ()>)) {
-            w.write_usn(&row.map_err(|()| "read error")?)?;
+        for row in analyze::usn_rows(entries, &records) {
+            w.write_usn(&row)?;
         }
         Ok(String::from_utf8(w.finish()?)?
             .lines()
@@ -684,8 +685,9 @@ mod tests {
 
         let csv = usn_csv(&usn_tree(), records())?;
         let mut jsonl = JsonlWriter::new(Vec::new());
-        for row in analyze::usn_rows(&usn_tree(), records().into_iter().map(Ok::<_, ()>)) {
-            jsonl.write_usn(&row.map_err(|()| "read error")?)?;
+        let (tree, records) = (usn_tree(), records());
+        for row in analyze::usn_rows(&tree, &records) {
+            jsonl.write_usn(&row)?;
         }
 
         assert_eq!(
@@ -699,6 +701,51 @@ mod tests {
             Some(
                 r#"{"entry":null,"sequence":null,"in_use":null,"name":null,"path":null,"path_state":"unknown","baseline":null,"findings":[],"si_created":null,"fn_created":null,"diagnostics":["malformed"],"source":"usn","usn":null,"reasons":[],"event_time":null}"#
             )
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn inferred_paths_are_marked_in_csv_and_jsonl() -> Result<(), Box<dyn std::error::Error>> {
+        let entries = vec![dir(5, 5, "."), dir(6, 5, "New")];
+        let records = || {
+            vec![
+                usn_event(60 | (1 << 48), 6 | (1 << 48), 0, 0, "a.txt"),
+                usn_event(6 | (1 << 48), 5 | (1 << 48), 8, 0x1000, "Old"),
+                usn_event(6 | (1 << 48), 5 | (1 << 48), 16, 0x2000, "New"),
+            ]
+            .into_iter()
+            .map(|mut r| {
+                if let usn_parse::Record::Event(e) = &mut r
+                    && e.file.entry() == 6
+                {
+                    e.attributes = 0x10; // FILE_ATTRIBUTE_DIRECTORY
+                }
+                r
+            })
+            .collect::<Vec<_>>()
+        };
+
+        let csv = usn_csv(&entries, records())?;
+        let mut jsonl = JsonlWriter::new(Vec::new());
+        let records = records();
+        for row in analyze::usn_rows(&entries, &records) {
+            jsonl.write_usn(&row)?;
+        }
+        let jsonl = String::from_utf8(jsonl.finish()?)?;
+
+        assert_eq!(
+            csv.lines()
+                .next()
+                .map(|l| l.split(',').skip(4).take(2).collect::<Vec<_>>()),
+            Some(vec![r"\Old\a.txt", "inferred"])
+        );
+        assert!(
+            jsonl
+                .lines()
+                .next()
+                .is_some_and(|l| l.contains(r#""path":"\\Old\\a.txt","path_state":"inferred""#)),
+            "{jsonl}"
         );
         Ok(())
     }

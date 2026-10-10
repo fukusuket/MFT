@@ -329,8 +329,8 @@ mod tests {
         });
         let entries = [root];
         let mut w = JsonlWriter::new(Vec::new());
-        for row in analyze::usn_rows(&entries, [Ok::<_, ()>(record)]) {
-            w.write_usn(&row.map_err(|()| "read error")?)?;
+        for row in analyze::usn_rows(&entries, &[record]) {
+            w.write_usn(&row)?;
         }
 
         assert_eq!(

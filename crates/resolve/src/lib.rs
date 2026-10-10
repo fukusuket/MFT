@@ -1,7 +1,11 @@
-//! Paths for `$MFT` entries from `$FILE_NAME` parent references (MFT only in Phase 1).
+//! Paths for `$MFT` entries from `$FILE_NAME` parent references, and for USN records at the
+//! time each was written (Rewind, docs/research/rewind.md).
+
+use std::collections::HashMap;
 
 use mft_parse::{Entry, FileName, Namespace};
 use ntfs_types::{FileRef, NtfsName};
+use usn_parse::Record;
 
 /// The root directory's MFT entry number.
 const ROOT: u64 = 5;
@@ -15,6 +19,9 @@ const MAX_PATH_UNITS: usize = 32_767;
 pub enum Resolution<'a> {
     /// Names from the root down; the root itself has none.
     Resolved(Vec<&'a NtfsName>),
+    /// Like `Resolved`, but at least one step came from the USN journal or a deleted record
+    /// rather than the current `$MFT` (Rewind).
+    Inferred(Vec<&'a NtfsName>),
     /// The chain of parents is broken (missing, deleted or reused); no path is invented.
     Unknown,
 }
@@ -23,7 +30,7 @@ impl Resolution<'_> {
     /// `\` plus the escaped names joined by `\` (a `\` inside a name shows as `\\`); the root
     /// is `\`. `None` if unknown. No drive letter: a `$MFT` doesn't record one.
     pub fn path_text(&self) -> Option<String> {
-        let Resolution::Resolved(segments) = self else {
+        let (Resolution::Resolved(segments) | Resolution::Inferred(segments)) = self else {
             return None;
         };
         if segments.is_empty() {
@@ -91,19 +98,59 @@ impl<'a> Resolver<'a> {
         Resolution::Resolved(segments)
     }
 
-    /// The path of the directory `parent` refers to (e.g. a USN record's parent).
-    pub fn directory(&self, parent: FileRef) -> Resolution<'a> {
-        let position = usize::try_from(parent.entry())
-            .ok()
-            .and_then(|number| self.by_number.get(number).copied().flatten());
-        match position.map(|position| &self.entries[position]) {
-            Some(dir)
-                if dir.in_use && dir.is_dir && dir.file_ref.sequence() == parent.sequence() =>
-            {
-                self.path(dir)
-            }
-            _ => Resolution::Unknown,
+    /// For each USN record, the directory its parent reference pointed to when it was written;
+    /// `Unknown` for diagnostics.
+    pub fn rewind<'b>(&self, records: &'b [Record]) -> Vec<Resolution<'b>>
+    where
+        'a: 'b,
+    {
+        let mut known: HashMap<u64, Known<'b>> = HashMap::new();
+        for entry in self.entries {
+            let Some(name) = chosen_name(&entry.names) else {
+                continue;
+            };
+            // NTFS bumps the sequence number when it frees a record, so a deleted record
+            // describes the file as it was under the previous sequence number.
+            let key = if entry.in_use {
+                entry.file_ref.raw()
+            } else if entry.file_ref.sequence() > 0 {
+                entry.file_ref.raw() - (1 << 48)
+            } else {
+                continue;
+            };
+            let known_entry = Known {
+                name: &name.name,
+                parent: name.parent,
+                is_dir: entry.is_dir,
+                from_mft: entry.in_use,
+            };
+            known.insert(key, known_entry);
         }
+        // Newest first: each record says where its file was at that moment, so after it is
+        // applied the map describes the volume just before the record was written.
+        let mut paths: Vec<Resolution<'b>> = records.iter().map(|_| Resolution::Unknown).collect();
+        for (record, path) in records.iter().zip(paths.iter_mut()).rev() {
+            let Record::Event(event) = record else {
+                continue;
+            };
+            *path = walk(&known, event.parent);
+            let is_dir = event.attributes & FILE_ATTRIBUTE_DIRECTORY != 0;
+            let unchanged = known.get(&event.file.raw()).is_some_and(|k| {
+                k.name.units() == event.name.units()
+                    && k.parent.raw() == event.parent.raw()
+                    && k.is_dir == is_dir
+            });
+            if !unchanged {
+                let learned = Known {
+                    name: &event.name,
+                    parent: event.parent,
+                    is_dir,
+                    from_mft: false,
+                };
+                known.insert(event.file.raw(), learned);
+            }
+        }
+        paths
     }
 
     /// The chosen name and the position of its parent, if that parent is the same, live record.
@@ -150,6 +197,45 @@ impl<'a> Resolver<'a> {
             }
         }
         state.into_iter().map(|s| s == State::Done(true)).collect()
+    }
+}
+
+/// What Rewind knows about one `(entry, sequence)`: its name and parent at the current point
+/// of the walk, and whether that still matches the current `$MFT`.
+#[derive(Debug, Clone, Copy)]
+struct Known<'a> {
+    name: &'a NtfsName,
+    parent: FileRef,
+    is_dir: bool,
+    from_mft: bool,
+}
+
+/// `FILE_ATTRIBUTE_DIRECTORY` in a USN record's attributes.
+const FILE_ATTRIBUTE_DIRECTORY: u32 = 0x10;
+
+/// The directory `parent` names, from the root down, using what Rewind knows.
+fn walk<'a>(known: &HashMap<u64, Known<'a>>, parent: FileRef) -> Resolution<'a> {
+    let mut segments = Vec::new();
+    let mut from_mft = true;
+    let mut current = parent;
+    let mut units = 0usize;
+    while current.entry() != ROOT {
+        let Some(step) = known.get(&current.raw()).filter(|k| k.is_dir) else {
+            return Resolution::Unknown; // missing, or not a directory
+        };
+        units += 1 + step.name.units().len(); // `\` + name; also ends a cycle
+        if units > MAX_PATH_UNITS {
+            return Resolution::Unknown;
+        }
+        from_mft &= step.from_mft;
+        segments.push(step.name);
+        current = step.parent;
+    }
+    segments.reverse();
+    if from_mft {
+        Resolution::Resolved(segments)
+    } else {
+        Resolution::Inferred(segments)
     }
 }
 
@@ -227,7 +313,7 @@ mod tests {
             Resolution::Resolved(segments) => {
                 Some(segments.iter().map(|s| s.to_string()).collect())
             }
-            Resolution::Unknown => None,
+            Resolution::Inferred(_) | Resolution::Unknown => None, // MFT paths are never inferred
         }
     }
 
@@ -480,7 +566,7 @@ mod tests {
                 prop_assert!(parent.in_use && parent.file_ref.sequence() == name.parent.sequence());
                 let parent_segments = match resolver.path(parent) {
                     Resolution::Resolved(p) => Some(p.iter().map(|s| s.units().to_vec()).collect::<Vec<_>>()),
-                    Resolution::Unknown => None,
+                    Resolution::Inferred(_) | Resolution::Unknown => None,
                 };
                 let expected: Vec<Vec<u16>> =
                     segments[..segments.len() - 1].iter().map(|s| s.units().to_vec()).collect();
@@ -500,42 +586,220 @@ mod tests {
         FileRef::from_raw(number | (u64::from(sequence) << 48))
     }
 
+    /// A USN record: `file` named `name` in `parent` (refs as `(entry, sequence)`).
+    fn usn(file: (u64, u16), parent: (u64, u16), name: &str) -> Record {
+        Record::Event(usn_parse::UsnEvent {
+            offset: 0,
+            usn: 0,
+            file: reference(file.0, file.1),
+            parent: reference(parent.0, parent.1),
+            time: Filetime::from_raw(0),
+            reason: 0,
+            attributes: FILE_ATTRIBUTE_DIRECTORY, // only parents matter in these tests
+            name: NtfsName::from_units(&name.encode_utf16().collect::<Vec<_>>()),
+        })
+    }
+
+    fn states(resolutions: &[Resolution<'_>]) -> Vec<(String, Option<String>)> {
+        resolutions
+            .iter()
+            .map(|r| {
+                let state = match r {
+                    Resolution::Resolved(_) => "resolved",
+                    Resolution::Inferred(_) => "inferred",
+                    Resolution::Unknown => "unknown",
+                };
+                (state.to_string(), r.path_text())
+            })
+            .collect()
+    }
+
+    fn state(s: &str, path: &str) -> (String, Option<String>) {
+        (s.to_string(), Some(path.to_string()))
+    }
+
     #[test]
-    fn directory_resolves_a_live_parent_with_matching_sequence() {
+    fn rewind_matches_the_mft_when_the_journal_changes_nothing() {
         let entries = [
             dir(ROOT, 5, &[(".", ROOT, 5)]),
-            dir(30, 1, &[("Windows", ROOT, 5)]),
-            dir(31, 4, &[("System32", 30, 1)]),
+            dir(30, 1, &[("Users", ROOT, 5)]),
+        ];
+        // A file created in \Users, then \Users itself touched without a rename.
+        let events = [
+            usn((40, 1), (30, 1), "a.txt"),
+            usn((30, 1), (ROOT, 5), "Users"),
         ];
 
         let resolver = Resolver::new(&entries);
 
-        assert_eq!(shown(&resolver.directory(reference(ROOT, 5))), Some(vec![]));
         assert_eq!(
-            shown(&resolver.directory(reference(31, 4))),
-            Some(vec!["Windows".to_string(), "System32".to_string()])
+            states(&resolver.rewind(&events)),
+            [state("resolved", r"\Users"), state("resolved", r"\")]
         );
     }
 
     #[test]
-    fn directory_is_unknown_for_missing_reused_deleted_or_file_parents() {
-        let mut deleted = dir(32, 1, &[("Old", ROOT, 5)]);
-        deleted.in_use = false;
+    fn rewind_gives_earlier_events_the_old_name_of_a_renamed_parent() {
         let entries = [
             dir(ROOT, 5, &[(".", ROOT, 5)]),
-            dir(30, 2, &[("Windows", ROOT, 5)]),
-            deleted,
-            entry(33, 1, &[("a.txt", ROOT, 5)]),
+            dir(30, 1, &[("New", ROOT, 5)]),
+        ];
+        let events = [
+            usn((40, 1), (30, 1), "a.txt"), // while the directory was still "Old"
+            usn((30, 1), (ROOT, 5), "Old"), // RENAME_OLD_NAME
+            usn((30, 1), (ROOT, 5), "New"), // RENAME_NEW_NAME
+            usn((41, 1), (30, 1), "b.txt"),
         ];
 
         let resolver = Resolver::new(&entries);
 
-        for (number, sequence) in [(77, 1), (30, 1), (32, 1), (33, 1)] {
-            assert_eq!(
-                shown(&resolver.directory(reference(number, sequence))),
-                None,
-                "entry {number} sequence {sequence}"
-            );
+        assert_eq!(
+            states(&resolver.rewind(&events)),
+            [
+                state("inferred", r"\Old"),
+                state("resolved", r"\"),
+                state("resolved", r"\"),
+                state("resolved", r"\New"),
+            ]
+        );
+    }
+
+    #[test]
+    fn rewind_follows_a_parent_moved_to_another_directory() {
+        let entries = [
+            dir(ROOT, 5, &[(".", ROOT, 5)]),
+            dir(30, 1, &[("Users", ROOT, 5)]),
+            dir(31, 1, &[("Archive", ROOT, 5)]),
+            dir(32, 1, &[("work", 31, 1)]), // now \Archive\work
+        ];
+        let events = [
+            usn((40, 1), (32, 1), "a.txt"), // while work was \Users\work
+            usn((32, 1), (30, 1), "work"),  // RENAME_OLD_NAME: old parent
+            usn((32, 1), (31, 1), "work"),  // RENAME_NEW_NAME: new parent
+            usn((41, 1), (32, 1), "b.txt"),
+        ];
+
+        let resolver = Resolver::new(&entries);
+
+        let got = states(&resolver.rewind(&events));
+        assert_eq!(got[0], state("inferred", r"\Users\work"));
+        assert_eq!(got[3], state("resolved", r"\Archive\work"));
+    }
+
+    #[test]
+    fn rewind_finds_files_under_a_deleted_directory() {
+        let entries = [dir(ROOT, 5, &[(".", ROOT, 5)])]; // \Gone is no longer in the $MFT
+        let events = [
+            usn((40, 1), (30, 1), "a.txt"),
+            usn((40, 1), (30, 1), "a.txt"),  // FILE_DELETE
+            usn((30, 1), (ROOT, 5), "Gone"), // FILE_DELETE of the directory
+        ];
+
+        let resolver = Resolver::new(&entries);
+
+        let got = states(&resolver.rewind(&events));
+        assert_eq!(got[0], state("inferred", r"\Gone"));
+        assert_eq!(got[1], state("inferred", r"\Gone"));
+        assert_eq!(got[2], state("resolved", r"\"));
+    }
+
+    #[test]
+    fn rewind_keeps_reused_entries_apart_by_sequence() {
+        let entries = [
+            dir(ROOT, 5, &[(".", ROOT, 5)]),
+            dir(66, 2, &[("Drivers", ROOT, 5)]), // entry 66 reused; it was "Tools" as 66-1
+        ];
+        let events = [
+            usn((40, 1), (66, 1), "a.txt"),
+            usn((66, 1), (ROOT, 5), "Tools"), // FILE_DELETE of 66-1
+            usn((66, 2), (ROOT, 5), "Drivers"), // FILE_CREATE of 66-2
+            usn((41, 1), (66, 2), "b.sys"),
+        ];
+
+        let resolver = Resolver::new(&entries);
+
+        let got = states(&resolver.rewind(&events));
+        assert_eq!(got[0], state("inferred", r"\Tools"));
+        assert_eq!(got[3], state("resolved", r"\Drivers"));
+    }
+
+    #[test]
+    fn deleted_mft_records_name_their_previous_sequence() {
+        let mut deleted = dir(30, 2, &[("Old", ROOT, 5)]); // deleted as 30-1; the header says 2
+        deleted.in_use = false;
+        let entries = [dir(ROOT, 5, &[(".", ROOT, 5)]), deleted];
+        let events = [
+            usn((40, 1), (30, 1), "a.txt"),
+            usn((41, 1), (30, 2), "b.txt"),
+        ];
+
+        let resolver = Resolver::new(&entries);
+
+        assert_eq!(
+            states(&resolver.rewind(&events)),
+            [state("inferred", r"\Old"), ("unknown".to_string(), None)]
+        );
+    }
+
+    #[test]
+    fn rewind_never_invents_a_path_for_an_unseen_parent() {
+        let entries = [dir(ROOT, 5, &[(".", ROOT, 5)])];
+        // 30-1 appears only as a parent; 31-1 is known, but its own parent 77-1 is not.
+        let events = [
+            usn((40, 1), (30, 1), "a.txt"),
+            usn((41, 1), (31, 1), "b.txt"),
+            usn((31, 1), (77, 1), "Sub"),
+        ];
+
+        let resolver = Resolver::new(&entries);
+
+        let got = states(&resolver.rewind(&events));
+        assert_eq!(
+            got[..2],
+            [("unknown".to_string(), None), ("unknown".to_string(), None)]
+        );
+    }
+
+    #[test]
+    fn rewind_stops_on_a_cycle_without_hanging() {
+        let entries = [dir(ROOT, 5, &[(".", ROOT, 5)])];
+        // Corrupt records: 30-1 lives in 31-1 and 31-1 lives in 30-1.
+        let events = [
+            usn((40, 1), (30, 1), "a.txt"),
+            usn((30, 1), (31, 1), "A"),
+            usn((31, 1), (30, 1), "B"),
+        ];
+
+        let resolver = Resolver::new(&entries);
+
+        assert_eq!(
+            states(&resolver.rewind(&events))[0],
+            ("unknown".to_string(), None)
+        );
+    }
+
+    #[test]
+    fn rewind_does_not_walk_through_a_file() {
+        let entries = [
+            dir(ROOT, 5, &[(".", ROOT, 5)]),
+            entry(33, 1, &[("a.txt", ROOT, 5)]), // a file, not a directory
+        ];
+        let mut journal_file = usn((34, 1), (ROOT, 5), "b.txt");
+        if let Record::Event(e) = &mut journal_file {
+            e.attributes = 0x20; // ARCHIVE, no DIRECTORY bit
         }
+        let events = [
+            usn((40, 1), (33, 1), "x"),
+            usn((41, 1), (34, 1), "y"),
+            journal_file,
+        ];
+
+        let resolver = Resolver::new(&entries);
+
+        let got = states(&resolver.rewind(&events));
+        assert_eq!(
+            got[..2],
+            [("unknown".to_string(), None), ("unknown".to_string(), None)]
+        );
     }
 }

@@ -1408,3 +1408,49 @@ fn same_input_with_usn_gives_byte_identical_outputs() -> TestResult {
     assert!(first.0.ends_with(b"unsupported_version,usn,,,\n")); // the V4 row comes last
     Ok(())
 }
+
+#[test]
+fn analyze_usn_rewinds_a_renamed_directory() -> TestResult {
+    use usn_support::{Fields, v2};
+    let dir = scratch("analyze_usn_rewinds_a_renamed_directory")?;
+    let (mft, j, csv) = (dir.join("MFT"), dir.join("J"), dir.join("out.csv"));
+    std::fs::write(&mft, usn_volume_mft())?;
+    let users = 6 | (1 << 48);
+    let root = 5 | (1 << 48);
+    let mut journal = v2(&Fields {
+        file: 40 | (1 << 48),
+        parent: users,
+        name: u16s("early.txt"),
+        ..Fields::default()
+    });
+    for (reason, name) in [(0x1000, "Profiles"), (0x2000, "Users")] {
+        journal.extend(v2(&Fields {
+            file: users,
+            parent: root,
+            reason,
+            attributes: 0x10, // FILE_ATTRIBUTE_DIRECTORY
+            name: u16s(name),
+            ..Fields::default()
+        }));
+    }
+    std::fs::write(&j, journal)?;
+
+    let status = tool()
+        .args(["analyze", "-i"])
+        .arg(&mft)
+        .arg("--usn")
+        .arg(&j)
+        .arg("--csv")
+        .arg(&csv)
+        .status()?;
+
+    assert!(status.success());
+    let text = std::fs::read_to_string(&csv)?;
+    let early: Vec<String> = csv_rows(&text)
+        .into_iter()
+        .filter(|r| r[3] == "early.txt")
+        .map(|r| format!("{}|{}", r[4], r[5]))
+        .collect();
+    assert_eq!(early, [r"\Profiles\early.txt|inferred"]);
+    Ok(())
+}

@@ -10,6 +10,7 @@ publish.workspace = true
 [dependencies]
 mft-parse = { path = "../mft-parse" }
 ntfs-types = { path = "../ntfs-types" }
+usn-parse = { path = "../usn-parse" }
 
 [dev-dependencies]
 proptest = { version = "=1.11.0", default-features = false, features = ["std"] } # ADR 0008

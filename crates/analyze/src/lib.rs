@@ -47,29 +47,24 @@ pub fn rows<'a>(
     })
 }
 
-/// One USN row: a record from `$J` and the directory its parent reference points to in the
-/// current `$MFT` (no Rewind yet, so renamed or reused parents are `Unknown`).
+/// One USN row: a record from `$J` and the directory its parent reference pointed to when the
+/// record was written (Rewind).
 #[derive(Debug)]
 pub struct UsnRow<'a> {
-    pub record: usn_parse::Record,
+    pub record: &'a usn_parse::Record,
     pub directory: Resolution<'a>,
 }
 
-/// One row per `$J` item, in stream order; read errors pass through.
-pub fn usn_rows<'a, E>(
+/// One row per `$J` item, in `$J` order.
+pub fn usn_rows<'a>(
     entries: &'a [Entry],
-    records: impl IntoIterator<Item = Result<usn_parse::Record, E>>,
-) -> impl Iterator<Item = Result<UsnRow<'a>, E>> {
-    let resolver = Resolver::new(entries);
-    records.into_iter().map(move |record| {
-        record.map(|record| {
-            let directory = match &record {
-                usn_parse::Record::Event(event) => resolver.directory(event.parent),
-                usn_parse::Record::Diagnostic(_) => Resolution::Unknown,
-            };
-            UsnRow { record, directory }
-        })
-    })
+    records: &'a [usn_parse::Record],
+) -> impl Iterator<Item = UsnRow<'a>> {
+    let directories = Resolver::new(entries).rewind(records);
+    records
+        .iter()
+        .zip(directories)
+        .map(|(record, directory)| UsnRow { record, directory })
 }
 
 #[cfg(test)]
@@ -107,7 +102,7 @@ mod tests {
             .map(|r| {
                 let depth = match &r.resolution {
                     Resolution::Resolved(segments) => Some(segments.len()),
-                    Resolution::Unknown => None,
+                    Resolution::Inferred(_) | Resolution::Unknown => None,
                 };
                 (r.entry.file_ref.entry(), depth)
             })
@@ -194,20 +189,55 @@ mod tests {
             code: usn_parse::DiagCode::Malformed,
             offset: 8,
         });
+        let records = [usn_event("a.txt", 6), usn_event("b.txt", 77), diagnostic];
+
+        let shown: Vec<Option<String>> = usn_rows(&entries, &records)
+            .map(|r| r.directory.path_text())
+            .collect();
+
+        assert_eq!(shown, [Some("\\Users".to_string()), None, None]);
+    }
+
+    #[test]
+    fn usn_rows_use_the_path_at_the_time_of_each_event() {
+        let mut root = entry(5, 5, ".");
+        root.is_dir = true;
+        let mut renamed = entry(6, 5, "New");
+        renamed.is_dir = true;
+        let entries = [root, renamed];
         let records = [
-            Ok::<_, ()>(usn_event("a.txt", 6)),
-            Ok(usn_event("b.txt", 77)),
-            Ok(diagnostic),
-            Err(()),
+            usn_event("a.txt", 6),    // while \New was still \Old
+            usn_dir_rename(6, "Old"), // RENAME_OLD_NAME
+            usn_dir_rename(6, "New"), // RENAME_NEW_NAME
+            usn_event("b.txt", 6),
         ];
 
-        let shown: Vec<Result<Option<String>, ()>> = usn_rows(&entries, records)
-            .map(|row| row.map(|r| r.directory.path_text()))
+        let shown: Vec<(Option<String>, bool)> = usn_rows(&entries, &records)
+            .map(|r| {
+                (
+                    r.directory.path_text(),
+                    matches!(r.directory, Resolution::Inferred(_)),
+                )
+            })
             .collect();
 
         assert_eq!(
             shown,
-            [Ok(Some("\\Users".to_string())), Ok(None), Ok(None), Err(())]
+            [
+                (Some("\\Old".to_string()), true),
+                (Some("\\".to_string()), false),
+                (Some("\\".to_string()), false),
+                (Some("\\New".to_string()), false),
+            ]
         );
+    }
+
+    fn usn_dir_rename(dir: u64, name: &str) -> usn_parse::Record {
+        let usn_parse::Record::Event(mut event) = usn_event(name, 5) else {
+            return usn_event(name, 5);
+        };
+        event.file = FileRef::from_raw(dir | (1 << 48));
+        event.attributes = 0x10; // FILE_ATTRIBUTE_DIRECTORY
+        usn_parse::Record::Event(event)
     }
 }

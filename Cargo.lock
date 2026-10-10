@@ -901,6 +901,7 @@ dependencies = [
  "mft-parse",
  "ntfs-types",
  "proptest",
+ "usn-parse",
 ]
 
 [[package]]
