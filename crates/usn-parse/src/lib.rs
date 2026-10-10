@@ -48,9 +48,10 @@ pub struct Diagnostic {
 pub enum DiagCode {
     /// A V4 record or an unknown major version; skipped.
     UnsupportedVersion,
-    /// The record's lengths, offsets or values are impossible; parsing resumes 8 bytes later.
+    /// The record's lengths, offsets or values are impossible. With a plausible length the record
+    /// is skipped; otherwise parsing scans on 8 bytes at a time for the next valid record.
     Malformed,
-    /// The `$J` ends inside this record.
+    /// The `$J` ends inside this record (or its length is wrong); parsing scans on after it.
     Truncated,
 }
 

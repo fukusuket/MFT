@@ -46,7 +46,7 @@ So far: `ntfs-types`, `mft-parse`, `resolve` (MFT-only), `baseline` (no zstd yet
 |---|---|---|---|
 | `ntfs-types` | `NtfsName`, `NormPath`, `Filetime`, `FileRef`. No I/O, no logic | — | — |
 | `mft-parse` | `$MFT` → `Entry` + `Diagnostic` | ntfs-types | `mft` @ `18b6c05`, no default features (ADR 0004) |
-| `usn-parse` | `$J` → `UsnEvent` (V2–V4) | ntfs-types | own code (ADR 0021) |
+| `usn-parse` | `$J` → `UsnEvent` (V2/V3; V4 reported) | ntfs-types | own code (ADR 0021) |
 | `resolve` | MFT↔USN join, Rewind | mft-parse, usn-parse | own code (ADR 0021) |
 | `baseline` | Normalize, `fst` lookup, manifest | ntfs-types | `fst`, `zstd` |
 | `sigma` | Thin adapter over the Sigma engine; NTFS-agnostic | — | `rsigma-eval` `=0.23.0`, no default features (ADR 0003) |
