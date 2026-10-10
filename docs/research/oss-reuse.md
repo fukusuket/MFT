@@ -7,7 +7,7 @@ Surveyed 2026-10-04 (GitHub/crates.io metadata, READMEs, source). Criteria: AGPL
 | Area | Choice | Why / caveat |
 |---|---|---|
 | `$MFT` parsing | `mft` crate (MIT/Apache-2.0) at commit `18b6c05`; decided in ADR 0004 | Most mature. Lossless `Utf16LeStr` names are on `master` (PR #147) but not in 0.7.0. Fixup bounds-check panic issue #129 still open |
-| `$J` parsing, Rewind | Own implementation, ported from `ntfs-core` (Apache-2.0) | `ntfs-core` has everything (MFT, USN V2–V4, Rewind, carving) but stores names via `from_utf16_lossy`, has 1 star and a single maintainer. Use it as port source and test oracle; credit in `NOTICE` |
+| `$J` parsing, Rewind | Own implementation (ADR 0021) | `ntfs-core` (Apache-2.0) has everything (MFT, USN V2–V4, Rewind, carving) but stores names via `from_utf16_lossy`, has 1 star and a single maintainer. Used only as an optional test oracle, run outside the repo |
 | Sigma engine | `rsigma-eval` (MIT), behind our own adapter; decided in ADR 0003 (Hayabusa's engine as fallback) | All 8 correlation types, `Event` trait, explicit timestamps (`process_event_at`), `explain` traces. 0.x with frequent minor bumps; uses `HashMap`, so we sort output |
 | Collector | `ntfs-reader` (MIT/Apache-2.0) `=0.6.0`; decided in ADR 0005 | Reads the raw volume and named streams on Windows; its `unsafe` stays inside the dependency. Sparse `$J` extents skipped correctly (S3); 4Kn untested |
 | Baseline seed (v0.1) | VanillaWindowsReference (MIT) | Clean-install file lists with hashes and SDDL for Win10/11/Server. One build per version, no post-update state, no 25H2, may lack hidden files. Replaced by our own CI in v0.3 |
