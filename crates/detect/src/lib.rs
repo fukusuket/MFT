@@ -40,13 +40,13 @@ pub fn usn_events(
     source: Option<&str>,
     baseline: Option<Status>,
 ) -> Vec<Event> {
-    let _ = baseline;
     // The closing record carries every reason of the handle: one event per operation.
     // Directories are skipped as for `file_event` from `$MFT`.
     if event.reason & CLOSE == 0 || event.attributes & FILE_ATTRIBUTE_DIRECTORY != 0 {
         return Vec::new();
     }
     let time = event.time.sysmon();
+    let service = (baseline == Some(Status::Outside)).then_some("baseline_outside");
     [
         (FILE_CREATE, "file_event"),
         (RENAME_NEW_NAME, "file_rename"),
@@ -68,7 +68,7 @@ pub fn usn_events(
         Event {
             product: "windows",
             category,
-            service: None,
+            service,
             fields,
         }
     })
@@ -81,6 +81,7 @@ const FILE_DELETE: u32 = 0x0000_0200;
 const RENAME_NEW_NAME: u32 = 0x0000_2000;
 const BASIC_INFO_CHANGE: u32 = 0x0000_8000;
 const CLOSE: u32 = 0x8000_0000;
+/// `FILE_ATTRIBUTE_DIRECTORY` (winnt.h).
 const FILE_ATTRIBUTE_DIRECTORY: u32 = 0x10;
 
 #[cfg(test)]
@@ -237,6 +238,23 @@ mod tests {
         dir.attributes = 0x10; // FILE_ATTRIBUTE_DIRECTORY
 
         assert!(usn_events(&dir, r"\Temp", None, None).is_empty());
+    }
+
+    #[test]
+    fn outside_baseline_usn_events_get_the_baseline_outside_service() {
+        let services = |status| -> Vec<Option<&str>> {
+            usn_events(&usn(0x100 | 0x200 | CLOSE), r"\x.exe", None, status)
+                .iter()
+                .map(|e| e.service)
+                .collect()
+        };
+
+        assert_eq!(
+            services(Some(Status::Outside)),
+            [Some("baseline_outside"); 2]
+        );
+        assert_eq!(services(Some(Status::Standard)), [None; 2]);
+        assert_eq!(services(None), [None; 2]);
     }
 
     #[test]
