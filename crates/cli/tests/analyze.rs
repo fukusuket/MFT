@@ -1345,7 +1345,10 @@ fn missing_usn_input_fails_with_a_message_and_leaves_no_output() -> TestResult {
 
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert_eq!(out.status.code(), Some(1), "{stderr}");
-    assert!(stderr.contains("opening") && stderr.contains("no-such-J"), "{stderr}");
+    assert!(
+        stderr.contains("opening") && stderr.contains("no-such-J"),
+        "{stderr}"
+    );
     assert!(!stderr.contains("panicked"), "{stderr}");
     assert!(!csv.exists());
     assert_no_temporary_outputs(&dir)?;
@@ -1375,5 +1378,33 @@ fn analyze_refuses_the_same_file_for_usn_and_an_output() -> TestResult {
         assert!(stderr.contains("same file"), "{output}: {stderr}");
         assert_eq!(std::fs::read(&j)?, journal, "{output}");
     }
+    Ok(())
+}
+
+#[test]
+fn same_input_with_usn_gives_byte_identical_outputs() -> TestResult {
+    let dir = scratch("same_input_with_usn_gives_byte_identical_outputs")?;
+    let (mft, j) = (dir.join("MFT"), dir.join("J"));
+    std::fs::write(&mft, usn_volume_mft())?;
+    std::fs::write(&j, usn_journal())?;
+    let run = |n: u8| -> Result<(Vec<u8>, Vec<u8>), Box<dyn Error>> {
+        let (csv, jsonl) = (dir.join(format!("{n}.csv")), dir.join(format!("{n}.jsonl")));
+        let status = tool()
+            .args(["analyze", "-i"])
+            .arg(&mft)
+            .arg("--usn")
+            .arg(&j)
+            .arg("--csv")
+            .arg(&csv)
+            .arg("--jsonl")
+            .arg(&jsonl)
+            .status()?;
+        assert!(status.success());
+        Ok((std::fs::read(csv)?, std::fs::read(jsonl)?))
+    };
+
+    let first = run(1)?;
+    assert_eq!(run(2)?, first);
+    assert!(first.0.ends_with(b"unsupported_version,usn,,,\n")); // the V4 row comes last
     Ok(())
 }
