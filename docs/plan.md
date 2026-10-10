@@ -115,7 +115,7 @@ Goal: add `$J` to the same end-to-end path: USN events with their paths at the t
 - [x] **P2-2 `--usn <$J>` in `tool analyze`** (`cli`, `analyze`, `report`)
   - Done when: `--usn` adds one row per USN event to CSV and JSONL (`source` = `mft`/`usn`, the USN, reason names, event time). Its path comes from the current `$MFT` with a sequence check, otherwise `unknown`. Rows are sorted by explicit keys, and output is byte-identical across runs. `--usn` without a readable `$J` fails with a message. Existing MFT rows are unchanged.
   - Out of scope: Rewind, detection on USN, directory/zip input (Phase 3, M2), HTML changes.
-- [ ] **P2-3 Rewind** (`resolve`)
+- [x] **P2-3 Rewind** (`resolve`)
   - Done when: each USN event gets the path it had at that moment, including renamed and deleted files and reused MFT entries. Its state is `resolved`, `inferred` (built partly from the journal) or `unknown`, and a path is never invented. Unit tests cover rename, delete, entry reuse and parent move on synthetic journals. On the 9 Yamato hosts and Simulated-Case-1, the share of events with a full path is ≥ usnjrnl_rewind's. Recorded in `docs/research/rewind.md`; this is the gate metric.
   - Out of scope: carving, cross-volume moves, `$LogFile`.
 - [ ] **P2-4 Sigma on USN events** (`detect`, `analyze`)
