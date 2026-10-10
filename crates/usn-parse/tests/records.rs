@@ -65,17 +65,8 @@ fn v3_record_takes_the_file_refs_from_the_low_64_bits() -> TestResult {
 
 #[test]
 fn v3_with_nonzero_high_id_bits_is_malformed() -> TestResult {
-    let f = Fields::default();
-    let bad = v3(&f, 1, 0);
-    let next = u64::try_from(bad.len())?;
-    let mut j = bad;
-    j.extend(v2(&f));
-    let items = parse(j)?;
-    let [Record::Diagnostic(d), Record::Event(e)] = items.as_slice() else {
-        return Err(format!("expected a diagnostic then an event, got {items:?}").into());
-    };
-    assert_eq!(*d, Diagnostic { code: DiagCode::Malformed, offset: 0 });
-    assert_eq!(e.offset, next);
+    let (d, _) = diagnostic_then_event(v3(&Fields::default(), 1, 0))?;
+    assert_eq!(d, Diagnostic { code: DiagCode::Malformed, offset: 0 });
     Ok(())
 }
 
