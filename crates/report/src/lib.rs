@@ -714,6 +714,16 @@ mod tests {
                 usn_event(6 | (1 << 48), 5 | (1 << 48), 8, 0x1000, "Old"),
                 usn_event(6 | (1 << 48), 5 | (1 << 48), 16, 0x2000, "New"),
             ]
+            .into_iter()
+            .map(|mut r| {
+                if let usn_parse::Record::Event(e) = &mut r
+                    && e.file.entry() == 6
+                {
+                    e.attributes = 0x10; // FILE_ATTRIBUTE_DIRECTORY
+                }
+                r
+            })
+            .collect::<Vec<_>>()
         };
 
         let csv = usn_csv(&entries, records())?;

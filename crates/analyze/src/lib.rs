@@ -47,8 +47,8 @@ pub fn rows<'a>(
     })
 }
 
-/// One USN row: a record from `$J` and the directory its parent reference points to in the
-/// current `$MFT` (no Rewind yet, so renamed or reused parents are `Unknown`).
+/// One USN row: a record from `$J` and the directory its parent reference pointed to when the
+/// record was written (Rewind).
 #[derive(Debug)]
 pub struct UsnRow<'a> {
     pub record: &'a usn_parse::Record,
@@ -237,6 +237,7 @@ mod tests {
             return usn_event(name, 5);
         };
         event.file = FileRef::from_raw(dir | (1 << 48));
+        event.attributes = 0x10; // FILE_ATTRIBUTE_DIRECTORY
         usn_parse::Record::Event(event)
     }
 }

@@ -1,4 +1,5 @@
-//! Paths for `$MFT` entries from `$FILE_NAME` parent references (MFT only in Phase 1).
+//! Paths for `$MFT` entries from `$FILE_NAME` parent references, and for USN records at the
+//! time each was written (Rewind, docs/research/rewind.md).
 
 use std::collections::HashMap;
 
@@ -120,6 +121,7 @@ impl<'a> Resolver<'a> {
             let known_entry = Known {
                 name: &name.name,
                 parent: name.parent,
+                is_dir: entry.is_dir,
                 from_mft: entry.in_use,
             };
             known.insert(key, known_entry);
@@ -132,13 +134,17 @@ impl<'a> Resolver<'a> {
                 continue;
             };
             *path = walk(&known, event.parent);
+            let is_dir = event.attributes & FILE_ATTRIBUTE_DIRECTORY != 0;
             let unchanged = known.get(&event.file.raw()).is_some_and(|k| {
-                k.name.units() == event.name.units() && k.parent.raw() == event.parent.raw()
+                k.name.units() == event.name.units()
+                    && k.parent.raw() == event.parent.raw()
+                    && k.is_dir == is_dir
             });
             if !unchanged {
                 let learned = Known {
                     name: &event.name,
                     parent: event.parent,
+                    is_dir,
                     from_mft: false,
                 };
                 known.insert(event.file.raw(), learned);
@@ -200,8 +206,12 @@ impl<'a> Resolver<'a> {
 struct Known<'a> {
     name: &'a NtfsName,
     parent: FileRef,
+    is_dir: bool,
     from_mft: bool,
 }
+
+/// `FILE_ATTRIBUTE_DIRECTORY` in a USN record's attributes.
+const FILE_ATTRIBUTE_DIRECTORY: u32 = 0x10;
 
 /// The directory `parent` names, from the root down, using what Rewind knows.
 fn walk<'a>(known: &HashMap<u64, Known<'a>>, parent: FileRef) -> Resolution<'a> {
@@ -210,8 +220,8 @@ fn walk<'a>(known: &HashMap<u64, Known<'a>>, parent: FileRef) -> Resolution<'a> 
     let mut current = parent;
     let mut units = 0usize;
     while current.entry() != ROOT {
-        let Some(step) = known.get(&current.raw()) else {
-            return Resolution::Unknown;
+        let Some(step) = known.get(&current.raw()).filter(|k| k.is_dir) else {
+            return Resolution::Unknown; // missing, or not a directory
         };
         units += 1 + step.name.units().len(); // `\` + name; also ends a cycle
         if units > MAX_PATH_UNITS {
@@ -585,7 +595,7 @@ mod tests {
             parent: reference(parent.0, parent.1),
             time: Filetime::from_raw(0),
             reason: 0,
-            attributes: 0,
+            attributes: FILE_ATTRIBUTE_DIRECTORY, // only parents matter in these tests
             name: NtfsName::from_units(&name.encode_utf16().collect::<Vec<_>>()),
         })
     }
@@ -765,6 +775,31 @@ mod tests {
         assert_eq!(
             states(&resolver.rewind(&events))[0],
             ("unknown".to_string(), None)
+        );
+    }
+
+    #[test]
+    fn rewind_does_not_walk_through_a_file() {
+        let entries = [
+            dir(ROOT, 5, &[(".", ROOT, 5)]),
+            entry(33, 1, &[("a.txt", ROOT, 5)]), // a file, not a directory
+        ];
+        let mut journal_file = usn((34, 1), (ROOT, 5), "b.txt");
+        if let Record::Event(e) = &mut journal_file {
+            e.attributes = 0x20; // ARCHIVE, no DIRECTORY bit
+        }
+        let events = [
+            usn((40, 1), (33, 1), "x"),
+            usn((41, 1), (34, 1), "y"),
+            journal_file,
+        ];
+
+        let resolver = Resolver::new(&entries);
+
+        let got = states(&resolver.rewind(&events));
+        assert_eq!(
+            got[..2],
+            [("unknown".to_string(), None), ("unknown".to_string(), None)]
         );
     }
 }

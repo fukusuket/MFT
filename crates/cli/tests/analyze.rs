@@ -1428,6 +1428,7 @@ fn analyze_usn_rewinds_a_renamed_directory() -> TestResult {
             file: users,
             parent: root,
             reason,
+            attributes: 0x10, // FILE_ATTRIBUTE_DIRECTORY
             name: u16s(name),
             ..Fields::default()
         }));
