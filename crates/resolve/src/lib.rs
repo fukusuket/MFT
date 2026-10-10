@@ -216,10 +216,15 @@ fn walk<'a>(known: &HashMap<u64, Known<'a>>, parent: FileRef) -> Resolution<'a> 
     let mut segments = Vec::new();
     let mut from_mft = true;
     let mut current = parent;
+    let mut units = 0usize;
     while current.entry() != ROOT {
         let Some(step) = known.get(&current.raw()) else {
             return Resolution::Unknown;
         };
+        units += 1 + step.name.units().len(); // `\` + name; also ends a cycle
+        if units > MAX_PATH_UNITS {
+            return Resolution::Unknown;
+        }
         from_mft &= step.from_mft;
         segments.push(step.name);
         current = step.parent;
@@ -777,11 +782,36 @@ mod tests {
     fn rewind_never_invents_a_path_for_an_unseen_parent() {
         let entries = [dir(ROOT, 5, &[(".", ROOT, 5)])];
         // 30-1 appears only as a parent; 31-1 is known, but its own parent 77-1 is not.
-        let events = [usn((40, 1), (30, 1), "a.txt"), usn((41, 1), (31, 1), "b.txt"), usn((31, 1), (77, 1), "Sub")];
+        let events = [
+            usn((40, 1), (30, 1), "a.txt"),
+            usn((41, 1), (31, 1), "b.txt"),
+            usn((31, 1), (77, 1), "Sub"),
+        ];
 
         let resolver = Resolver::new(&entries);
 
         let got = states(&resolver.rewind(&events));
-        assert_eq!(got[..2], [("unknown".to_string(), None), ("unknown".to_string(), None)]);
+        assert_eq!(
+            got[..2],
+            [("unknown".to_string(), None), ("unknown".to_string(), None)]
+        );
+    }
+
+    #[test]
+    fn rewind_stops_on_a_cycle_without_hanging() {
+        let entries = [dir(ROOT, 5, &[(".", ROOT, 5)])];
+        // Corrupt records: 30-1 lives in 31-1 and 31-1 lives in 30-1.
+        let events = [
+            usn((40, 1), (30, 1), "a.txt"),
+            usn((30, 1), (31, 1), "A"),
+            usn((31, 1), (30, 1), "B"),
+        ];
+
+        let resolver = Resolver::new(&entries);
+
+        assert_eq!(
+            states(&resolver.rewind(&events))[0],
+            ("unknown".to_string(), None)
+        );
     }
 }
