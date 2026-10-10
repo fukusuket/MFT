@@ -1,5 +1,7 @@
 //! Pipeline from parsed `$MFT` entries to report rows.
 
+use std::collections::HashMap;
+
 use baseline::{Baseline, Status};
 use mft_parse::Entry;
 use resolve::{Resolution, Resolver};
@@ -66,19 +68,34 @@ pub fn usn_rows<'a>(
 ) -> impl Iterator<Item = UsnRow<'a>> {
     let _ = baseline;
     let directories = Resolver::new(entries).rewind(records);
+    // A rename's old path by file (entry, sequence), until the handle closes.
+    let mut old_paths: HashMap<(u64, u16), String> = HashMap::new();
     records
         .iter()
         .zip(directories)
         .map(move |(record, directory)| {
             let mut findings = Vec::new();
-            if let (usn_parse::Record::Event(event), Some(rules)) = (record, rules)
-                && let Some(path) = file_path(&directory, event)
-            {
-                for event in detect::usn_events(event, &path, None, None) {
-                    findings.extend(rules.evaluate(&event));
+            if let usn_parse::Record::Event(event) = record {
+                let path = file_path(&directory, event);
+                let file = (event.file.entry(), event.file.sequence());
+                if event.reason & RENAME_OLD_NAME != 0 {
+                    match &path {
+                        Some(path) => old_paths.insert(file, path.clone()),
+                        None => old_paths.remove(&file),
+                    };
                 }
-                // Same order as `Rules::evaluate`, across the record's events.
-                findings.sort_by(|a, b| b.level.cmp(&a.level).then_with(|| a.id.cmp(&b.id)));
+                let source = if event.reason & CLOSE != 0 {
+                    old_paths.remove(&file)
+                } else {
+                    None
+                };
+                if let (Some(rules), Some(path)) = (rules, &path) {
+                    for event in detect::usn_events(event, path, source.as_deref(), None) {
+                        findings.extend(rules.evaluate(&event));
+                    }
+                    // Same order as `Rules::evaluate`, across the record's events.
+                    findings.sort_by(|a, b| b.level.cmp(&a.level).then_with(|| a.id.cmp(&b.id)));
+                }
             }
             UsnRow {
                 record,
@@ -87,6 +104,10 @@ pub fn usn_rows<'a>(
             }
         })
 }
+
+/// `USN_REASON_*` flags (winioctl.h).
+const RENAME_OLD_NAME: u32 = 0x0000_1000;
+const CLOSE: u32 = 0x8000_0000;
 
 /// The path of a USN event's file: its parent directory then its name; `None` if unknown.
 fn file_path(directory: &Resolution<'_>, event: &usn_parse::UsnEvent) -> Option<String> {
@@ -347,6 +368,39 @@ mod tests {
             .collect();
 
         assert_eq!(ids, [["b-high".to_string(), "a-low".to_string()]]);
+        Ok(())
+    }
+
+    #[test]
+    fn a_rename_takes_its_source_from_the_old_name_of_the_same_file()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let rules = rules(
+            "usn-rename",
+            "file_rename",
+            "    SourceFilename|endswith: '\\a.txt'\n    TargetFilename|endswith: '.exe'\n",
+        )?;
+        let entries = usn_tree();
+        let of = |file: u64, reason: u32, name: &str| match with_reason(reason, usn_event(name, 6))
+        {
+            usn_parse::Record::Event(mut event) => {
+                event.file = FileRef::from_raw(file | (1 << 48));
+                usn_parse::Record::Event(event)
+            }
+            diagnostic => diagnostic,
+        };
+        let records = [
+            of(60, 0x1000, "a.txt"),      // RENAME_OLD_NAME
+            of(60, 0x2000, "a.exe"),      // RENAME_NEW_NAME
+            of(61, 0x8000_2000, "b.exe"), // another file's rename
+            of(60, 0x8000_2000, "a.exe"), // ... | CLOSE
+            of(60, 0x8000_2000, "a.exe"), // a later handle: the old name is used up
+        ];
+
+        let hits: Vec<bool> = usn_rows(&entries, &records, None, Some(&rules))
+            .map(|r| !r.findings.is_empty())
+            .collect();
+
+        assert_eq!(hits, [false, false, false, true, false]);
         Ok(())
     }
 
