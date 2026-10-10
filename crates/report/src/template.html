@@ -100,7 +100,7 @@ footer { margin-top: 3em; border-top: 1px solid var(--line); padding-top: 8px; }
   });
 
   document.getElementById("findings").appendChild(table(
-    ["Level", "Created ($SI)", "Path", "Rule", "Author", "Rule id"],
+    ["Level", "Time ($SI created / USN)", "USN", "Path", "Rule", "Author", "Rule id"],
     data.findings.map((f) => {
       const rule = el("td");
       rule.appendChild(el("div", f.title));
@@ -110,8 +110,9 @@ footer { margin-top: 3em; border-top: 1px solid var(--line); padding-top: 8px; }
       rule.appendChild(details);
       return [
         el("td", f.level, "level level-" + f.level),
-        el("td", f.created, "mono"),
-        el("td", f.path, "path"),
+        el("td", f.created !== null ? f.created : f.event_time, "mono"),
+        el("td", f.usn, "mono"),
+        el("td", f.path_state === "resolved" ? f.path : f.path + " (" + f.path_state + ")", "path"),
         rule,
         el("td", f.author === null ? "unknown" : f.author),
         el("td", f.id, "mono"),

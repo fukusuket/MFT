@@ -2,7 +2,7 @@
 
 use std::io::{BufWriter, Write};
 
-use analyze::Row;
+use analyze::{Row, UsnRow};
 use baseline::Status;
 use mft_parse::DiagCode;
 use ntfs_types::Filetime;
@@ -11,7 +11,7 @@ use serde::{Serialize, Serializer};
 use sigma::Level;
 
 use crate::base64::Encoder;
-use crate::{Error, display_text, level_name};
+use crate::{Error, display_text, level_name, path_state, usn_path};
 
 const TEMPLATE: &str = include_str!("template.html");
 const PLACEHOLDER: &str = "__REPORT_DATA__";
@@ -69,6 +69,31 @@ impl HtmlReport {
         }
     }
 
+    /// Adds a USN row's findings; USN rows are not listed otherwise yet.
+    pub fn add_usn(&mut self, row: &UsnRow<'_>) {
+        let usn_parse::Record::Event(event) = row.record else {
+            return; // diagnostics have no findings
+        };
+        for finding in &row.findings {
+            self.summary.findings.count(finding.level);
+            self.findings.push(FindingItem {
+                level: finding.level,
+                title: display_text(&finding.title),
+                id: display_text(&finding.id),
+                author: finding.author.as_deref().map(display_text),
+                created: None,
+                event_time: Some(event.time),
+                usn: Some(event.usn),
+                path: usn_path(row, event)
+                    .map(|p| display_text(&p))
+                    .unwrap_or_default(),
+                path_state: path_state(&row.directory),
+                entry: event.file.entry(),
+                explain: display_text(&finding.explain),
+            });
+        }
+    }
+
     pub fn add(&mut self, row: &Row<'_>) {
         let s = &mut self.summary;
         s.entries += 1;
@@ -98,22 +123,17 @@ impl HtmlReport {
             });
         }
         for finding in &row.findings {
-            let l = &mut s.findings;
-            *match finding.level {
-                Some(Level::Critical) => &mut l.critical,
-                Some(Level::High) => &mut l.high,
-                Some(Level::Medium) => &mut l.medium,
-                Some(Level::Low) => &mut l.low,
-                Some(Level::Informational) => &mut l.informational,
-                None => &mut l.none,
-            } += 1;
+            s.findings.count(finding.level);
             self.findings.push(FindingItem {
                 level: finding.level,
                 title: display_text(&finding.title),
                 id: display_text(&finding.id),
                 author: finding.author.as_deref().map(display_text),
                 created: row.entry.si_created,
+                event_time: None,
+                usn: None,
                 path: path_text(&row.resolution),
+                path_state: path_state(&row.resolution),
                 entry: row.entry.file_ref.entry(),
                 explain: display_text(&finding.explain),
             });
@@ -124,8 +144,8 @@ impl HtmlReport {
     pub fn finish<W: Write>(mut self, mut out: W) -> Result<W, Error> {
         // Level, then newest first (no time last), then a total order for byte-identical output.
         self.findings.sort_by(|a, b| {
-            (b.level, b.created)
-                .cmp(&(a.level, a.created))
+            (b.level, b.created.or(b.event_time))
+                .cmp(&(a.level, a.created.or(a.event_time)))
                 .then_with(|| (&a.path, a.entry, &a.id).cmp(&(&b.path, b.entry, &b.id)))
         });
         self.outside.sort_by(|a, b| {
@@ -207,10 +227,15 @@ struct FindingItem {
     title: String,
     id: String,
     author: Option<String>,
-    /// `$SI` created time.
+    /// `$SI` created time, for a finding on a `$MFT` record.
     #[serde(serialize_with = "iso8601")]
     created: Option<Filetime>,
+    /// USN time, for a finding on a USN record.
+    #[serde(serialize_with = "iso8601")]
+    event_time: Option<Filetime>,
+    usn: Option<u64>,
     path: String,
+    path_state: &'static str,
     entry: u64,
     explain: String,
 }
@@ -251,6 +276,19 @@ struct Levels {
     low: u64,
     informational: u64,
     none: u64,
+}
+
+impl Levels {
+    fn count(&mut self, level: Option<Level>) {
+        *match level {
+            Some(Level::Critical) => &mut self.critical,
+            Some(Level::High) => &mut self.high,
+            Some(Level::Medium) => &mut self.medium,
+            Some(Level::Low) => &mut self.low,
+            Some(Level::Informational) => &mut self.informational,
+            None => &mut self.none,
+        } += 1;
+    }
 }
 
 #[cfg(test)]
@@ -466,6 +504,62 @@ mod tests {
             data["summary"]["findings"],
             serde_json::json!({"critical": 0, "high": 4, "medium": 1, "low": 4, "informational": 0, "none": 1})
         );
+        Ok(())
+    }
+
+    fn usn_event(file: u64, reason: u32, attributes: u32, name: &str) -> usn_parse::Record {
+        usn_parse::Record::Event(usn_parse::UsnEvent {
+            offset: 0,
+            usn: 4096 + file,
+            file: FileRef::from_raw(file | (1 << 48)),
+            parent: FileRef::from_raw(6 | (1 << 48)),
+            time: Filetime::from_raw(300),
+            reason,
+            attributes,
+            name: NtfsName::from_units(&units(name)),
+        })
+    }
+
+    #[test]
+    fn usn_findings_are_listed_and_counted_with_their_usn_time_and_path_state() -> Result<()> {
+        let rules = rules("usn", &[("rule-high", "high", "", ".exe")])?;
+        let mut new = file(6 | (1 << 48), 5, "New");
+        new.is_dir = true;
+        let entries = [root(), new, created(file(40, 5, "a.exe"), 100)];
+        let mut old = usn_event(6, 0x1000, 0x10, "Old"); // \New was \Old: RENAME_OLD_NAME
+        if let usn_parse::Record::Event(e) = &mut old {
+            e.parent = FileRef::from_raw(5 | (1 << 48));
+        }
+        let records = [usn_event(60, 0x8000_0100, 0x20, "b.exe"), old];
+
+        let mut report = HtmlReport::new(PROVENANCE, input());
+        for row in analyze::rows(&entries, None, Some(&rules)) {
+            report.add(&row);
+        }
+        for row in analyze::usn_rows(&entries, &records, None, Some(&rules)) {
+            report.add_usn(&row);
+        }
+        let html = String::from_utf8(report.finish(Vec::new())?)?;
+
+        let data = decode(payload(&html)?)?;
+        assert_eq!(
+            data["findings"],
+            serde_json::json!([
+                {
+                    "level": "high", "title": "Title rule-high", "id": "rule-high", "author": null,
+                    "created": null, "event_time": "1601-01-01T00:00:00.0000300Z", "usn": 4156,
+                    "path": "\\Old\\b.exe", "path_state": "inferred", "entry": 60,
+                    "explain": data["findings"][0]["explain"]
+                },
+                {
+                    "level": "high", "title": "Title rule-high", "id": "rule-high", "author": null,
+                    "created": "1601-01-01T00:00:00.0000100Z", "event_time": null, "usn": null,
+                    "path": "\\a.exe", "path_state": "resolved", "entry": 40,
+                    "explain": data["findings"][1]["explain"]
+                }
+            ])
+        );
+        assert_eq!(data["summary"]["findings"]["high"], 2);
         Ok(())
     }
 
