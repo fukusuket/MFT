@@ -15,10 +15,18 @@ cargo-fuzz = true
 [dependencies]
 libfuzzer-sys = "=0.4.13" # ADR 0013
 mft-parse = { path = "../crates/mft-parse" }
+usn-parse = { path = "../crates/usn-parse" }
 
 [[bin]]
 name = "mft_records"
 path = "fuzz_targets/mft_records.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "usn_records"
+path = "fuzz_targets/usn_records.rs"
 test = false
 doc = false
 bench = false
