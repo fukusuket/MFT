@@ -90,11 +90,7 @@ pub fn usn_rows<'a>(
                     None
                 };
                 if let (Some(rules), Some(path)) = (rules, &path) {
-                    for event in detect::usn_events(event, path, source.as_deref(), None) {
-                        findings.extend(rules.evaluate(&event));
-                    }
-                    // Same order as `Rules::evaluate`, across the record's events.
-                    findings.sort_by(|a, b| b.level.cmp(&a.level).then_with(|| a.id.cmp(&b.id)));
+                    findings = usn_findings(rules, event, path, source.as_deref());
                 }
             }
             UsnRow {
@@ -103,6 +99,21 @@ pub fn usn_rows<'a>(
                 findings,
             }
         })
+}
+
+/// Matches of every event of one USN record, in the order `Rules::evaluate` uses.
+fn usn_findings(
+    rules: &Rules,
+    event: &usn_parse::UsnEvent,
+    path: &str,
+    source: Option<&str>,
+) -> Vec<Finding> {
+    let mut findings: Vec<Finding> = detect::usn_events(event, path, source, None)
+        .iter()
+        .flat_map(|e| rules.evaluate(e))
+        .collect();
+    findings.sort_by(|a, b| b.level.cmp(&a.level).then_with(|| a.id.cmp(&b.id)));
+    findings
 }
 
 /// `USN_REASON_*` flags (winioctl.h).
