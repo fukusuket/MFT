@@ -77,6 +77,8 @@ pub fn usn_rows<'a>(
                 for event in detect::usn_events(event, &path, None, None) {
                     findings.extend(rules.evaluate(&event));
                 }
+                // Same order as `Rules::evaluate`, across the record's events.
+                findings.sort_by(|a, b| b.level.cmp(&a.level).then_with(|| a.id.cmp(&b.id)));
             }
             UsnRow {
                 record,
@@ -317,6 +319,34 @@ mod tests {
             with,
             [vec![], vec!["rule-usn-findings".to_string()], vec![]]
         );
+        Ok(())
+    }
+
+    #[test]
+    fn findings_from_one_usn_record_are_most_severe_first() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let dir = std::env::temp_dir().join(format!("analyze-usn-order-{}", std::process::id()));
+        std::fs::create_dir_all(&dir)?;
+        for (id, level, category) in [
+            ("a-low", "low", "file_event"),
+            ("b-high", "high", "file_delete"),
+        ] {
+            std::fs::write(
+                dir.join(format!("{id}.yml")),
+                format!(
+                    "title: T\nid: {id}\nlevel: {level}\nlogsource:\n  product: windows\n  category: {category}\ndetection:\n  sel:\n    TargetFilename|endswith: '.evtx'\n  condition: sel\n"
+                ),
+            )?;
+        }
+        let rules = Rules::load(&dir)?;
+        let entries = usn_tree();
+        let records = [with_reason(0x8000_0300, usn_event("a.evtx", 6))];
+
+        let ids: Vec<Vec<String>> = usn_rows(&entries, &records, None, Some(&rules))
+            .map(|r| r.findings.into_iter().map(|f| f.id).collect())
+            .collect();
+
+        assert_eq!(ids, [["b-high".to_string(), "a-low".to_string()]]);
         Ok(())
     }
 
