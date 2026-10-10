@@ -41,6 +41,10 @@ pub fn usn_events(
     baseline: Option<Status>,
 ) -> Vec<Event> {
     let _ = (source, baseline);
+    // The closing record carries every reason of the handle: one event per operation.
+    if event.reason & CLOSE == 0 {
+        return Vec::new();
+    }
     let time = event.time.sysmon();
     let mut events = Vec::new();
     if event.reason & FILE_CREATE != 0 {
@@ -60,6 +64,7 @@ pub fn usn_events(
 
 /// `USN_REASON_*` flags (winioctl.h).
 const FILE_CREATE: u32 = 0x0000_0100;
+const CLOSE: u32 = 0x8000_0000;
 
 #[cfg(test)]
 mod tests {
@@ -101,8 +106,6 @@ mod tests {
         }
     }
 
-    const CLOSE: u32 = 0x8000_0000;
-
     /// Category, service and fields of each event.
     type Shown = (
         &'static str,
@@ -133,6 +136,12 @@ mod tests {
                 ]
             )]
         );
+    }
+
+    #[test]
+    fn records_before_the_close_are_not_events() {
+        assert!(usn_events(&usn(0x100), r"\x.exe", None, None).is_empty());
+        assert!(usn_events(&usn(0x100 | 0x2), r"\x.exe", None, None).is_empty());
     }
 
     #[test]
