@@ -59,3 +59,25 @@ pub(crate) fn v2(f: &Fields) -> Vec<u8> {
     put(&mut r, HEADER, &name);
     r
 }
+
+/// `USN_RECORD_V3`: 128-bit file ids (`high` goes in the upper 8 bytes), 76-byte header.
+pub(crate) fn v3(f: &Fields, file_high: u64, parent_high: u64) -> Vec<u8> {
+    const HEADER: usize = 0x4C;
+    let name: Vec<u8> = f.name.iter().flat_map(|u| u.to_le_bytes()).collect();
+    let len = align8(HEADER + name.len());
+    let mut r = vec![0u8; len];
+    put(&mut r, 0x00, &u32::try_from(len).unwrap_or(0).to_le_bytes());
+    put(&mut r, 0x04, &3u16.to_le_bytes());
+    put(&mut r, 0x08, &f.file.to_le_bytes());
+    put(&mut r, 0x10, &file_high.to_le_bytes());
+    put(&mut r, 0x18, &f.parent.to_le_bytes());
+    put(&mut r, 0x20, &parent_high.to_le_bytes());
+    put(&mut r, 0x28, &f.usn.to_le_bytes());
+    put(&mut r, 0x30, &f.time.to_le_bytes());
+    put(&mut r, 0x38, &f.reason.to_le_bytes());
+    put(&mut r, 0x44, &f.attributes.to_le_bytes());
+    put(&mut r, 0x48, &u16::try_from(name.len()).unwrap_or(0).to_le_bytes());
+    put(&mut r, 0x4A, &u16::try_from(HEADER).unwrap_or(0).to_le_bytes());
+    put(&mut r, HEADER, &name);
+    r
+}

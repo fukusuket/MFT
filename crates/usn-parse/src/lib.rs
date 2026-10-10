@@ -120,15 +120,53 @@ impl<R: Read> Iterator for Records<R> {
             Ok(record) => record.get(..len)?,
             Err(e) => return Some(Err(e.into())),
         };
-        let event = parse_v2(record, offset)?;
+        let event = parse_event(record, offset)?;
         self.pos += len;
         Some(Ok(Record::Event(event)))
     }
 }
 
-fn parse_v2(r: &[u8], offset: u64) -> Option<UsnEvent> {
-    let name_len = usize::from(u16_at(r, 0x38)?);
-    let name_off = usize::from(u16_at(r, 0x3A)?);
+/// Field offsets of one record version.
+struct Layout {
+    file: usize,
+    parent: usize,
+    usn: usize,
+    time: usize,
+    reason: usize,
+    attributes: usize,
+    name_len: usize,
+}
+
+/// `USN_RECORD_V2`: 64-bit file references.
+const V2: Layout = Layout {
+    file: 0x08,
+    parent: 0x10,
+    usn: 0x18,
+    time: 0x20,
+    reason: 0x28,
+    attributes: 0x34,
+    name_len: 0x38,
+};
+
+/// `USN_RECORD_V3`: 128-bit file ids; NTFS keeps the file reference in the low 64 bits.
+const V3: Layout = Layout {
+    file: 0x08,
+    parent: 0x18,
+    usn: 0x28,
+    time: 0x30,
+    reason: 0x38,
+    attributes: 0x44,
+    name_len: 0x48,
+};
+
+fn parse_event(r: &[u8], offset: u64) -> Option<UsnEvent> {
+    let l = match u16_at(r, 0x04)? {
+        2 => &V2,
+        3 => &V3,
+        _ => return None,
+    };
+    let name_len = usize::from(u16_at(r, l.name_len)?);
+    let name_off = usize::from(u16_at(r, l.name_len + 2)?);
     let name_bytes = r.get(name_off..name_off.checked_add(name_len)?)?;
     let units: Vec<u16> = name_bytes
         .as_chunks::<2>()
@@ -138,12 +176,12 @@ fn parse_v2(r: &[u8], offset: u64) -> Option<UsnEvent> {
         .collect();
     Some(UsnEvent {
         offset,
-        usn: u64::try_from(i64::from_le_bytes(r.get(0x18..0x20)?.try_into().ok()?)).ok()?,
-        file: FileRef::from_raw(u64_at(r, 0x08)?),
-        parent: FileRef::from_raw(u64_at(r, 0x10)?),
-        time: Filetime::from_raw(u64_at(r, 0x20)?),
-        reason: u32_at(r, 0x28)?,
-        attributes: u32_at(r, 0x34)?,
+        usn: u64::try_from(i64::from_le_bytes(r.get(l.usn..l.usn + 8)?.try_into().ok()?)).ok()?,
+        file: FileRef::from_raw(u64_at(r, l.file)?),
+        parent: FileRef::from_raw(u64_at(r, l.parent)?),
+        time: Filetime::from_raw(u64_at(r, l.time)?),
+        reason: u32_at(r, l.reason)?,
+        attributes: u32_at(r, l.attributes)?,
         name: NtfsName::from_units(&units),
     })
 }

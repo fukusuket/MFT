@@ -5,8 +5,8 @@ mod support;
 use std::error::Error;
 use std::io::Cursor;
 
-use support::{Fields, v2};
-use usn_parse::{Record, records};
+use support::{Fields, u16s, v2, v3};
+use usn_parse::{Record, UsnEvent, records};
 
 type TestResult = Result<(), Box<dyn Error>>;
 
@@ -28,6 +28,31 @@ fn v2_record_yields_all_fields() -> TestResult {
         return Err(format!("expected one event, got {items:?}").into());
     };
     assert_eq!(e.offset, 0);
+    assert_eq!(e.usn, 4096);
+    assert_eq!(e.file.raw(), f.file);
+    assert_eq!(e.parent.raw(), f.parent);
+    assert_eq!(e.time.raw(), f.time);
+    assert_eq!(e.reason, f.reason);
+    assert_eq!(e.attributes, f.attributes);
+    assert_eq!(e.name.units(), f.name.as_slice());
+    Ok(())
+}
+
+fn only_event(items: &[Record]) -> Result<&UsnEvent, Box<dyn Error>> {
+    match items {
+        [Record::Event(e)] => Ok(e),
+        _ => Err(format!("expected one event, got {items:?}").into()),
+    }
+}
+
+#[test]
+fn v3_record_takes_the_file_refs_from_the_low_64_bits() -> TestResult {
+    let f = Fields {
+        name: u16s("v3.log"),
+        ..Fields::default()
+    };
+    let items = parse(v3(&f, 0, 0))?;
+    let e = only_event(&items)?;
     assert_eq!(e.usn, 4096);
     assert_eq!(e.file.raw(), f.file);
     assert_eq!(e.parent.raw(), f.parent);
