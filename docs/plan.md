@@ -112,7 +112,7 @@ Goal: add `$J` to the same end-to-end path: USN events with their paths at the t
 - [x] **P2-1 `usn-parse`** (new crate; `ntfs-types` only)
   - Done when: `$J` bytes → `UsnEvent` (USN, `FileRef` of the file and parent, `Filetime`, reason flags, attributes, `NtfsName`) for V2 and V3. V4 range records and unknown versions become a `Diagnostic` and are skipped. The leading zero (sparse) region is skipped without diagnostics. A truncated or corrupt record becomes a `Diagnostic`, never a panic, and parsing resumes at the next 8-byte-aligned record. Synthetic records come from a test builder. There are proptest no-panic properties and a `cargo fuzz` target. On the 9 Yamato hosts and Simulated-Case-1, the record count equals the oracle's (counts in the hand-over).
   - Out of scope: carving from free space, `$LogFile`, paths, the CLI.
-- [ ] **P2-2 `--usn <$J>` in `tool analyze`** (`cli`, `analyze`, `report`)
+- [x] **P2-2 `--usn <$J>` in `tool analyze`** (`cli`, `analyze`, `report`)
   - Done when: `--usn` adds one row per USN event to CSV and JSONL (`source` = `mft`/`usn`, the USN, reason names, event time). Its path comes from the current `$MFT` with a sequence check, otherwise `unknown`. Rows are sorted by explicit keys, and output is byte-identical across runs. `--usn` without a readable `$J` fails with a message. Existing MFT rows are unchanged.
   - Out of scope: Rewind, detection on USN, directory/zip input (Phase 3, M2), HTML changes.
 - [ ] **P2-3 Rewind** (`resolve`)
