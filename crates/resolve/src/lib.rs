@@ -707,4 +707,21 @@ mod tests {
         assert_eq!(got[0], state("inferred", r"\Users\work"));
         assert_eq!(got[3], state("resolved", r"\Archive\work"));
     }
+
+    #[test]
+    fn rewind_finds_files_under_a_deleted_directory() {
+        let entries = [dir(ROOT, 5, &[(".", ROOT, 5)])]; // \Gone is no longer in the $MFT
+        let events = [
+            usn((40, 1), (30, 1), "a.txt"),
+            usn((40, 1), (30, 1), "a.txt"),  // FILE_DELETE
+            usn((30, 1), (ROOT, 5), "Gone"), // FILE_DELETE of the directory
+        ];
+
+        let resolver = Resolver::new(&entries);
+
+        let got = states(&resolver.rewind(&events));
+        assert_eq!(got[0], state("inferred", r"\Gone"));
+        assert_eq!(got[1], state("inferred", r"\Gone"));
+        assert_eq!(got[2], state("resolved", r"\"));
+    }
 }
