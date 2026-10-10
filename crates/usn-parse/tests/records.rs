@@ -155,3 +155,13 @@ fn unknown_major_version_is_unsupported() -> TestResult {
     }
     Ok(())
 }
+
+#[test]
+fn record_length_below_header_is_malformed_and_resyncs() -> TestResult {
+    // Claims 56 bytes (a V2 header is 60) but the next real record starts 16 bytes in.
+    let mut head = other_version(2, 16);
+    head[0..4].copy_from_slice(&56u32.to_le_bytes());
+    let (d, at) = diagnostic_then_event(head)?;
+    assert_eq!((d, at), (Diagnostic { code: DiagCode::Malformed, offset: 0 }, 16));
+    Ok(())
+}

@@ -62,6 +62,8 @@ pub struct Records<R> {
     buf: Vec<u8>,
     pos: usize,
     base: u64,
+    /// After a malformed record: scanning 8 bytes at a time for the next V2/V3 record.
+    resyncing: bool,
 }
 
 /// Starts reading a `$J`.
@@ -71,6 +73,7 @@ pub fn records<R: Read>(reader: R) -> Records<R> {
         buf: Vec::new(),
         pos: 0,
         base: 0,
+        resyncing: false,
     }
 }
 
@@ -110,33 +113,61 @@ impl<R: Read> Iterator for Records<R> {
     type Item = Result<Record, Error>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let (offset, len) = loop {
+        loop {
             let offset = self.base + widen(self.pos);
             let head = match self.fill(8) {
                 Ok(head) => head,
                 Err(e) => return Some(Err(e.into())),
             };
             let len = usize::try_from(u32_at(head, 0)?).ok()?;
-            if len != 0 {
-                break (offset, len);
+            if len == 0 {
+                self.pos += 8; // sparse or padding: zeros up to the next 8-byte slot
+                continue;
             }
-            self.pos += 8; // sparse or padding: zeros up to the next 8-byte slot
-        };
-        let record = match self.fill(len) {
-            Ok(record) => record.get(..len)?,
-            Err(e) => return Some(Err(e.into())),
-        };
-        let item = match parse_event(record, offset) {
-            Ok(event) => Record::Event(event),
-            Err(code) => Record::Diagnostic(Diagnostic { code, offset }),
-        };
-        self.pos += len;
-        Some(Ok(item))
+            let layout = layout(u16_at(head, 4)?);
+            // While resyncing, only a V2/V3 record ends the scan; anything else is skipped silently.
+            let plausible = layout.is_none_or(|l| len >= l.header);
+            if !plausible || (self.resyncing && layout.is_none()) {
+                self.pos += 8;
+                if self.resyncing {
+                    continue;
+                }
+                self.resyncing = true;
+                return Some(Ok(Record::Diagnostic(Diagnostic {
+                    code: DiagCode::Malformed,
+                    offset,
+                })));
+            }
+            let record = match self.fill(len) {
+                Ok(record) => record.get(..len)?,
+                Err(e) => return Some(Err(e.into())),
+            };
+            let item = match layout.map(|l| event(record, l, offset)) {
+                Some(Some(event)) => Record::Event(event),
+                _ if self.resyncing => {
+                    self.pos += 8;
+                    continue;
+                }
+                Some(None) => Record::Diagnostic(Diagnostic {
+                    code: DiagCode::Malformed,
+                    offset,
+                }),
+                None => Record::Diagnostic(Diagnostic {
+                    code: DiagCode::UnsupportedVersion,
+                    offset,
+                }),
+            };
+            self.resyncing = false;
+            self.pos += len;
+            return Some(Ok(item));
+        }
     }
 }
 
 /// Field offsets of one record version.
 struct Layout {
+    /// Bytes before the name.
+    header: usize,
     /// Bytes of the file and parent ids; ids wider than 8 bytes must have zero upper bytes.
     id_size: usize,
     file: usize,
@@ -150,6 +181,7 @@ struct Layout {
 
 /// `USN_RECORD_V2`: 64-bit file references.
 const V2: Layout = Layout {
+    header: 0x3C,
     id_size: 8,
     file: 0x08,
     parent: 0x10,
@@ -162,6 +194,7 @@ const V2: Layout = Layout {
 
 /// `USN_RECORD_V3`: 128-bit file ids; NTFS keeps the file reference in the low 64 bits.
 const V3: Layout = Layout {
+    header: 0x4C,
     id_size: 16,
     file: 0x08,
     parent: 0x18,
@@ -172,13 +205,13 @@ const V3: Layout = Layout {
     name_len: 0x48,
 };
 
-fn parse_event(r: &[u8], offset: u64) -> Result<UsnEvent, DiagCode> {
-    let l = match u16_at(r, 0x04) {
-        Some(2) => &V2,
-        Some(3) => &V3,
-        _ => return Err(DiagCode::UnsupportedVersion),
-    };
-    event(r, l, offset).ok_or(DiagCode::Malformed)
+/// The layout of a parsed version; `None` for V4 and unknown versions.
+fn layout(major: u16) -> Option<&'static Layout> {
+    match major {
+        2 => Some(&V2),
+        3 => Some(&V3),
+        _ => None,
+    }
 }
 
 fn event(r: &[u8], l: &Layout, offset: u64) -> Option<UsnEvent> {
