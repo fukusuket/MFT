@@ -60,14 +60,11 @@ pub fn usn_rows<'a>(
     entries: &'a [Entry],
     records: &'a [usn_parse::Record],
 ) -> impl Iterator<Item = UsnRow<'a>> {
-    let resolver = Resolver::new(entries);
-    records.iter().map(move |record| {
-        let directory = match record {
-            usn_parse::Record::Event(event) => resolver.directory(event.parent),
-            usn_parse::Record::Diagnostic(_) => Resolution::Unknown,
-        };
-        UsnRow { record, directory }
-    })
+    let directories = Resolver::new(entries).rewind(records);
+    records
+        .iter()
+        .zip(directories)
+        .map(|(record, directory)| UsnRow { record, directory })
 }
 
 #[cfg(test)]
@@ -199,5 +196,47 @@ mod tests {
             .collect();
 
         assert_eq!(shown, [Some("\\Users".to_string()), None, None]);
+    }
+
+    #[test]
+    fn usn_rows_use_the_path_at_the_time_of_each_event() {
+        let mut root = entry(5, 5, ".");
+        root.is_dir = true;
+        let mut renamed = entry(6, 5, "New");
+        renamed.is_dir = true;
+        let entries = [root, renamed];
+        let records = [
+            usn_event("a.txt", 6),    // while \New was still \Old
+            usn_dir_rename(6, "Old"), // RENAME_OLD_NAME
+            usn_dir_rename(6, "New"), // RENAME_NEW_NAME
+            usn_event("b.txt", 6),
+        ];
+
+        let shown: Vec<(Option<String>, bool)> = usn_rows(&entries, &records)
+            .map(|r| {
+                (
+                    r.directory.path_text(),
+                    matches!(r.directory, Resolution::Inferred(_)),
+                )
+            })
+            .collect();
+
+        assert_eq!(
+            shown,
+            [
+                (Some("\\Old".to_string()), true),
+                (Some("\\".to_string()), false),
+                (Some("\\".to_string()), false),
+                (Some("\\New".to_string()), false),
+            ]
+        );
+    }
+
+    fn usn_dir_rename(dir: u64, name: &str) -> usn_parse::Record {
+        let usn_parse::Record::Event(mut event) = usn_event(name, 5) else {
+            return usn_event(name, 5);
+        };
+        event.file = FileRef::from_raw(dir | (1 << 48));
+        usn_parse::Record::Event(event)
     }
 }

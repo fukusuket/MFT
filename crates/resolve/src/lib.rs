@@ -114,7 +114,10 @@ impl<'a> Resolver<'a> {
 
     /// For each USN record, the directory its parent reference pointed to when it was written;
     /// `Unknown` for diagnostics.
-    pub fn rewind<'b>(&'b self, records: &'b [Record]) -> Vec<Resolution<'b>> {
+    pub fn rewind<'b>(&self, records: &'b [Record]) -> Vec<Resolution<'b>>
+    where
+        'a: 'b,
+    {
         let mut known: HashMap<u64, Known<'b>> = HashMap::new();
         for entry in self.entries {
             let Some(name) = chosen_name(&entry.names) else {
