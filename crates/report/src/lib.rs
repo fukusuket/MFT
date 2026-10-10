@@ -104,7 +104,7 @@ impl<W: Write> CsvWriter<W> {
             String::new(),
             "usn".to_string(),
             event.usn.to_string(),
-            String::new(),
+            reason_names(event.reason).join(";"),
             event.time.iso8601(),
         ])?;
         Ok(())
@@ -125,6 +125,48 @@ fn path_cell(resolution: &Resolution<'_>) -> String {
         .map(|p| cell_text(&p))
         .unwrap_or_default()
 }
+
+/// `USN_REASON_*` flag names without the prefix, in bit order; unknown bits as `0x…`.
+fn reason_names(flags: u32) -> Vec<String> {
+    (0..32)
+        .map(|bit| 1u32 << bit)
+        .filter(|&flag| flags & flag != 0)
+        .map(
+            |flag| match REASONS.iter().find(|&&(known, _)| known == flag) {
+                Some(&(_, name)) => name.to_string(),
+                None => format!("0x{flag:08X}"),
+            },
+        )
+        .collect()
+}
+
+/// Microsoft's `USN_REASON_*` flags (winioctl.h).
+const REASONS: [(u32, &str); 24] = [
+    (0x0000_0001, "DATA_OVERWRITE"),
+    (0x0000_0002, "DATA_EXTEND"),
+    (0x0000_0004, "DATA_TRUNCATION"),
+    (0x0000_0010, "NAMED_DATA_OVERWRITE"),
+    (0x0000_0020, "NAMED_DATA_EXTEND"),
+    (0x0000_0040, "NAMED_DATA_TRUNCATION"),
+    (0x0000_0100, "FILE_CREATE"),
+    (0x0000_0200, "FILE_DELETE"),
+    (0x0000_0400, "EA_CHANGE"),
+    (0x0000_0800, "SECURITY_CHANGE"),
+    (0x0000_1000, "RENAME_OLD_NAME"),
+    (0x0000_2000, "RENAME_NEW_NAME"),
+    (0x0000_4000, "INDEXABLE_CHANGE"),
+    (0x0000_8000, "BASIC_INFO_CHANGE"),
+    (0x0001_0000, "HARD_LINK_CHANGE"),
+    (0x0002_0000, "COMPRESSION_CHANGE"),
+    (0x0004_0000, "ENCRYPTION_CHANGE"),
+    (0x0008_0000, "OBJECT_ID_CHANGE"),
+    (0x0010_0000, "REPARSE_POINT_CHANGE"),
+    (0x0020_0000, "STREAM_CHANGE"),
+    (0x0040_0000, "TRANSACTED_CHANGE"),
+    (0x0080_0000, "INTEGRITY_CHANGE"),
+    (0x0100_0000, "DESIRED_STORAGE_CLASS_CHANGE"),
+    (0x8000_0000, "CLOSE"),
+];
 
 /// The parent directory's path plus the record's name; `None` if the parent is unknown.
 fn usn_path(row: &UsnRow<'_>, event: &usn_parse::UsnEvent) -> Option<String> {
@@ -530,6 +572,59 @@ mod tests {
         let csv = usn_csv(&entries, records)?;
 
         assert_eq!(csv.split(',').nth(4), Some(r"\odd\\\b.txt"));
+        Ok(())
+    }
+
+    #[test]
+    fn reason_flags_become_names_in_bit_order_and_unknown_bits_hex()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let all_known = [
+            (0x0000_0001, "DATA_OVERWRITE"),
+            (0x0000_0002, "DATA_EXTEND"),
+            (0x0000_0004, "DATA_TRUNCATION"),
+            (0x0000_0010, "NAMED_DATA_OVERWRITE"),
+            (0x0000_0020, "NAMED_DATA_EXTEND"),
+            (0x0000_0040, "NAMED_DATA_TRUNCATION"),
+            (0x0000_0100, "FILE_CREATE"),
+            (0x0000_0200, "FILE_DELETE"),
+            (0x0000_0400, "EA_CHANGE"),
+            (0x0000_0800, "SECURITY_CHANGE"),
+            (0x0000_1000, "RENAME_OLD_NAME"),
+            (0x0000_2000, "RENAME_NEW_NAME"),
+            (0x0000_4000, "INDEXABLE_CHANGE"),
+            (0x0000_8000, "BASIC_INFO_CHANGE"),
+            (0x0001_0000, "HARD_LINK_CHANGE"),
+            (0x0002_0000, "COMPRESSION_CHANGE"),
+            (0x0004_0000, "ENCRYPTION_CHANGE"),
+            (0x0008_0000, "OBJECT_ID_CHANGE"),
+            (0x0010_0000, "REPARSE_POINT_CHANGE"),
+            (0x0020_0000, "STREAM_CHANGE"),
+            (0x0040_0000, "TRANSACTED_CHANGE"),
+            (0x0080_0000, "INTEGRITY_CHANGE"),
+            (0x0100_0000, "DESIRED_STORAGE_CLASS_CHANGE"),
+            (0x8000_0000, "CLOSE"),
+        ];
+        for (bit, name) in all_known {
+            assert_eq!(reason_names(bit), [name]);
+        }
+        assert_eq!(reason_names(0), Vec::<String>::new());
+        assert_eq!(
+            reason_names(0xC000_010B),
+            [
+                "DATA_OVERWRITE",
+                "DATA_EXTEND",
+                "0x00000008",
+                "FILE_CREATE",
+                "0x40000000",
+                "CLOSE"
+            ]
+        );
+
+        let csv = usn_csv(
+            &usn_tree(),
+            vec![usn_event(60, 6 | (1 << 48), 0, 0x8000_0100, "a")],
+        )?;
+        assert_eq!(csv.split(',').nth(13), Some("FILE_CREATE;CLOSE"));
         Ok(())
     }
 }

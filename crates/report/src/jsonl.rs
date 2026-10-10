@@ -6,7 +6,9 @@ use analyze::{Row, UsnRow};
 use ntfs_types::Filetime;
 use serde::Serialize;
 
-use crate::{Error, baseline_name, code, display_text, level_name, path_state, usn_path};
+use crate::{
+    Error, baseline_name, code, display_text, level_name, path_state, reason_names, usn_path,
+};
 
 /// JSON Lines with one object per `$MFT` record.
 #[derive(Debug)]
@@ -68,7 +70,7 @@ impl<W: Write> JsonlWriter<W> {
             diagnostics: Vec::new(),
             source: "usn",
             usn: Some(event.usn),
-            reasons: Vec::new(),
+            reasons: reason_names(event.reason),
             event_time: Some(event.time.iso8601()),
         };
         self.line(&record)
