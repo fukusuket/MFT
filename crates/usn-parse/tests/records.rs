@@ -146,3 +146,12 @@ fn v4_record_is_unsupported_and_skipped() -> TestResult {
     assert_eq!(d, Diagnostic { code: DiagCode::UnsupportedVersion, offset: 0 });
     Ok(())
 }
+
+#[test]
+fn unknown_major_version_is_unsupported() -> TestResult {
+    for major in [0u16, 1, 5, 0xFFFF] {
+        let (d, _) = diagnostic_then_event(other_version(major, 0x40))?;
+        assert_eq!(d, Diagnostic { code: DiagCode::UnsupportedVersion, offset: 0 }, "major {major}");
+    }
+    Ok(())
+}
