@@ -1,7 +1,7 @@
 //! Paths for `$MFT` entries from `$FILE_NAME` parent references (MFT only in Phase 1).
 
 use mft_parse::{Entry, FileName, Namespace};
-use ntfs_types::NtfsName;
+use ntfs_types::{FileRef, NtfsName};
 
 /// The root directory's MFT entry number.
 const ROOT: u64 = 5;
@@ -89,6 +89,17 @@ impl<'a> Resolver<'a> {
         }
         segments.reverse();
         Resolution::Resolved(segments)
+    }
+
+    /// The path of the directory `parent` refers to (e.g. a USN record's parent).
+    pub fn directory(&self, parent: FileRef) -> Resolution<'a> {
+        let position = usize::try_from(parent.entry())
+            .ok()
+            .and_then(|number| self.by_number.get(number).copied().flatten());
+        match position {
+            Some(position) => self.path(&self.entries[position]),
+            None => Resolution::Unknown,
+        }
     }
 
     /// The chosen name and the position of its parent, if that parent is the same, live record.
@@ -472,5 +483,33 @@ mod tests {
                 prop_assert_eq!(parent_segments, Some(expected));
             }
         }
+    }
+
+    fn dir(number: u64, sequence: u16, names: &[(&str, u64, u16)]) -> Entry {
+        Entry {
+            is_dir: true,
+            ..entry(number, sequence, names)
+        }
+    }
+
+    fn reference(number: u64, sequence: u16) -> FileRef {
+        FileRef::from_raw(number | (u64::from(sequence) << 48))
+    }
+
+    #[test]
+    fn directory_resolves_a_live_parent_with_matching_sequence() {
+        let entries = [
+            dir(ROOT, 5, &[(".", ROOT, 5)]),
+            dir(30, 1, &[("Windows", ROOT, 5)]),
+            dir(31, 4, &[("System32", 30, 1)]),
+        ];
+
+        let resolver = Resolver::new(&entries);
+
+        assert_eq!(shown(&resolver.directory(reference(ROOT, 5))), Some(vec![]));
+        assert_eq!(
+            shown(&resolver.directory(reference(31, 4))),
+            Some(vec!["Windows".to_string(), "System32".to_string()])
+        );
     }
 }
