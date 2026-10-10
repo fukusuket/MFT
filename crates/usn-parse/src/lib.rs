@@ -121,6 +121,11 @@ impl<R: Read> Iterator for Records<R> {
                 Ok(head) => head,
                 Err(e) => return Some(Err(e.into())),
             };
+            if head.len() < 8 {
+                let zeros = head.iter().all(|&b| b == 0);
+                self.pos = self.buf.len();
+                return (!zeros).then(|| Ok(diagnostic(DiagCode::Truncated, offset)));
+            }
             let len = usize::try_from(u32_at(head, 0)?).ok()?;
             if len == 0 {
                 self.pos += 8; // sparse or padding: zeros up to the next 8-byte slot
@@ -140,8 +145,12 @@ impl<R: Read> Iterator for Records<R> {
                 return Some(Ok(diagnostic(DiagCode::Malformed, offset)));
             }
             let record = match self.fill(len) {
-                Ok(record) => record.get(..len)?,
+                Ok(record) => record,
                 Err(e) => return Some(Err(e.into())),
+            };
+            let Some(record) = record.get(..len) else {
+                self.pos = self.buf.len();
+                return Some(Ok(diagnostic(DiagCode::Truncated, offset)));
             };
             let item = match layout.map(|l| event(record, l, offset)) {
                 Some(Some(event)) => Record::Event(event),

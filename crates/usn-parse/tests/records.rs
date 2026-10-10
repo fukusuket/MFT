@@ -229,3 +229,28 @@ fn odd_name_length_is_malformed() -> TestResult {
 fn negative_usn_is_malformed() -> TestResult {
     malformed_v2(|r| r[0x18..0x20].copy_from_slice(&(-8i64).to_le_bytes()))
 }
+
+#[test]
+fn truncated_last_record_is_reported_and_ends() -> TestResult {
+    let whole = v2(&Fields::default());
+    for keep in [1, 4, 7, 8, 0x3C, whole.len() - 1] {
+        let mut j = whole.clone();
+        j.extend(&whole[..keep]);
+        let items = parse(j)?;
+        let [Record::Event(_), Record::Diagnostic(d)] = items.as_slice() else {
+            return Err(format!("keep {keep}: expected an event then a diagnostic, got {items:?}").into());
+        };
+        assert_eq!(*d, Diagnostic { code: DiagCode::Truncated, offset: u64::try_from(whole.len())? });
+    }
+    Ok(())
+}
+
+#[test]
+fn trailing_zeros_shorter_than_a_slot_end_quietly() -> TestResult {
+    for zeros in 1..8 {
+        let mut j = v2(&Fields::default());
+        j.extend(vec![0u8; zeros]);
+        assert!(matches!(parse(j)?.as_slice(), [Record::Event(_)]), "{zeros} zeros");
+    }
+    Ok(())
+}
