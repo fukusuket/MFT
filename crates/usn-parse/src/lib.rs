@@ -222,12 +222,10 @@ fn event(r: &[u8], l: &Layout, offset: u64) -> Option<UsnEvent> {
     let name_len = usize::from(u16_at(r, l.name_len)?);
     let name_off = usize::from(u16_at(r, l.name_len + 2)?);
     let name_bytes = r.get(name_off..name_off.checked_add(name_len)?)?;
-    let units: Vec<u16> = name_bytes
-        .as_chunks::<2>()
-        .0
-        .iter()
-        .map(|&c| u16::from_le_bytes(c))
-        .collect();
+    let (pairs, []) = name_bytes.as_chunks::<2>() else {
+        return None; // odd byte count
+    };
+    let units: Vec<u16> = pairs.iter().map(|&c| u16::from_le_bytes(c)).collect();
     Some(UsnEvent {
         offset,
         usn: u64::try_from(i64_at(r, l.usn)?).ok()?,
