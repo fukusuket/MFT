@@ -168,8 +168,10 @@ fn analyze(
     }
     if let Some(journal) = journal {
         // After the $MFT rows, in $J order; the HTML report does not show USN rows yet.
-        for row in analyze::usn_rows(&entries, usn_parse::records(BufReader::new(journal))) {
-            let row = row.context("reading the USN journal")?;
+        let records = usn_parse::records(BufReader::new(journal))
+            .collect::<Result<Vec<_>, _>>()
+            .context("reading the USN journal")?;
+        for row in analyze::usn_rows(&entries, &records) {
             if let Some((_, writer)) = &mut csv_writer {
                 writer.write_usn(&row)?;
             }

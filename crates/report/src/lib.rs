@@ -553,8 +553,8 @@ mod tests {
         records: Vec<usn_parse::Record>,
     ) -> Result<String, Box<dyn std::error::Error>> {
         let mut w = CsvWriter::new(Vec::new())?;
-        for row in analyze::usn_rows(entries, records.into_iter().map(Ok::<_, ()>)) {
-            w.write_usn(&row.map_err(|()| "read error")?)?;
+        for row in analyze::usn_rows(entries, &records) {
+            w.write_usn(&row)?;
         }
         Ok(String::from_utf8(w.finish()?)?
             .lines()
@@ -685,8 +685,9 @@ mod tests {
 
         let csv = usn_csv(&usn_tree(), records())?;
         let mut jsonl = JsonlWriter::new(Vec::new());
-        for row in analyze::usn_rows(&usn_tree(), records().into_iter().map(Ok::<_, ()>)) {
-            jsonl.write_usn(&row.map_err(|()| "read error")?)?;
+        let (tree, records) = (usn_tree(), records());
+        for row in analyze::usn_rows(&tree, &records) {
+            jsonl.write_usn(&row)?;
         }
 
         assert_eq!(

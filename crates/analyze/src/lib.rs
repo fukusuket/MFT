@@ -51,24 +51,22 @@ pub fn rows<'a>(
 /// current `$MFT` (no Rewind yet, so renamed or reused parents are `Unknown`).
 #[derive(Debug)]
 pub struct UsnRow<'a> {
-    pub record: usn_parse::Record,
+    pub record: &'a usn_parse::Record,
     pub directory: Resolution<'a>,
 }
 
-/// One row per `$J` item, in stream order; read errors pass through.
-pub fn usn_rows<'a, E>(
+/// One row per `$J` item, in `$J` order.
+pub fn usn_rows<'a>(
     entries: &'a [Entry],
-    records: impl IntoIterator<Item = Result<usn_parse::Record, E>>,
-) -> impl Iterator<Item = Result<UsnRow<'a>, E>> {
+    records: &'a [usn_parse::Record],
+) -> impl Iterator<Item = UsnRow<'a>> {
     let resolver = Resolver::new(entries);
-    records.into_iter().map(move |record| {
-        record.map(|record| {
-            let directory = match &record {
-                usn_parse::Record::Event(event) => resolver.directory(event.parent),
-                usn_parse::Record::Diagnostic(_) => Resolution::Unknown,
-            };
-            UsnRow { record, directory }
-        })
+    records.iter().map(move |record| {
+        let directory = match record {
+            usn_parse::Record::Event(event) => resolver.directory(event.parent),
+            usn_parse::Record::Diagnostic(_) => Resolution::Unknown,
+        };
+        UsnRow { record, directory }
     })
 }
 
@@ -194,20 +192,12 @@ mod tests {
             code: usn_parse::DiagCode::Malformed,
             offset: 8,
         });
-        let records = [
-            Ok::<_, ()>(usn_event("a.txt", 6)),
-            Ok(usn_event("b.txt", 77)),
-            Ok(diagnostic),
-            Err(()),
-        ];
+        let records = [usn_event("a.txt", 6), usn_event("b.txt", 77), diagnostic];
 
-        let shown: Vec<Result<Option<String>, ()>> = usn_rows(&entries, records)
-            .map(|row| row.map(|r| r.directory.path_text()))
+        let shown: Vec<Option<String>> = usn_rows(&entries, &records)
+            .map(|r| r.directory.path_text())
             .collect();
 
-        assert_eq!(
-            shown,
-            [Ok(Some("\\Users".to_string())), Ok(None), Ok(None), Err(())]
-        );
+        assert_eq!(shown, [Some("\\Users".to_string()), None, None]);
     }
 }
