@@ -216,6 +216,20 @@ mod tests {
     }
 
     #[test]
+    fn one_record_gives_one_event_per_reason_in_a_fixed_order() {
+        let all = 0x100 | 0x200 | 0x2000 | 0x8000 | CLOSE;
+        let categories: Vec<&str> = usn_events(&usn(all), r"\x.exe", None, None)
+            .iter()
+            .map(|e| e.category)
+            .collect();
+
+        assert_eq!(
+            categories,
+            ["file_event", "file_rename", "file_change", "file_delete"]
+        );
+    }
+
+    #[test]
     fn file_event_has_target_filename_with_drive_and_both_created_times() {
         let (windows, temp, exe) = (name("Windows"), name("Temp"), name("x.exe"));
         let resolution = Resolution::Resolved(vec![&windows, &temp, &exe]);
