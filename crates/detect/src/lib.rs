@@ -40,34 +40,43 @@ pub fn usn_events(
     source: Option<&str>,
     baseline: Option<Status>,
 ) -> Vec<Event> {
-    let _ = (source, baseline);
+    let _ = baseline;
     // The closing record carries every reason of the handle: one event per operation.
     if event.reason & CLOSE == 0 {
         return Vec::new();
     }
     let time = event.time.sysmon();
-    [(FILE_CREATE, "file_event"), (FILE_DELETE, "file_delete")]
-        .into_iter()
-        .filter(|&(flag, _)| event.reason & flag != 0)
-        .map(|(_, category)| {
-            let mut fields = vec![("TargetFilename", format!("C:{target}"))];
-            if category == "file_event" {
-                fields.push(("CreationUtcTime", time.clone()));
-            }
-            fields.push(("UtcTime", time.clone()));
-            Event {
-                product: "windows",
-                category,
-                service: None,
-                fields,
-            }
-        })
-        .collect()
+    [
+        (FILE_CREATE, "file_event"),
+        (RENAME_NEW_NAME, "file_rename"),
+        (FILE_DELETE, "file_delete"),
+    ]
+    .into_iter()
+    .filter(|&(flag, _)| event.reason & flag != 0)
+    .map(|(_, category)| {
+        let mut fields = Vec::new();
+        if category == "file_rename" {
+            fields.extend(source.map(|s| ("SourceFilename", format!("C:{s}"))));
+        }
+        fields.push(("TargetFilename", format!("C:{target}")));
+        if category == "file_event" {
+            fields.push(("CreationUtcTime", time.clone()));
+        }
+        fields.push(("UtcTime", time.clone()));
+        Event {
+            product: "windows",
+            category,
+            service: None,
+            fields,
+        }
+    })
+    .collect()
 }
 
 /// `USN_REASON_*` flags (winioctl.h).
 const FILE_CREATE: u32 = 0x0000_0100;
 const FILE_DELETE: u32 = 0x0000_0200;
+const RENAME_NEW_NAME: u32 = 0x0000_2000;
 const CLOSE: u32 = 0x8000_0000;
 
 #[cfg(test)]
@@ -163,6 +172,27 @@ mod tests {
                 ]
             )]
         );
+    }
+
+    #[test]
+    fn a_closed_usn_rename_is_a_file_rename_with_the_old_path_when_known() {
+        let rename = |source| shown(usn_events(&usn(0x2000 | CLOSE), r"\a.exe", source, None));
+        let time = ("UtcTime", "2024-02-29 12:34:56.123".to_string());
+        let target = ("TargetFilename", r"C:\a.exe".to_string());
+
+        assert_eq!(
+            rename(Some(r"\a.txt")),
+            [(
+                "file_rename",
+                None,
+                vec![
+                    ("SourceFilename", r"C:\a.txt".to_string()),
+                    target.clone(),
+                    time.clone()
+                ]
+            )]
+        );
+        assert_eq!(rename(None), [("file_rename", None, vec![target, time])]);
     }
 
     #[test]
