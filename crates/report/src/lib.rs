@@ -105,8 +105,8 @@ impl<W: Write> CsvWriter<W> {
                 .map(|p| cell_text(&p))
                 .unwrap_or_default(),
             path_state(&row.directory).to_string(),
-            String::new(),
-            String::new(),
+            baseline_name(row.baseline).unwrap_or_default().to_string(),
+            findings_cell(&row.findings),
             String::new(),
             String::new(),
             String::new(),
@@ -553,7 +553,7 @@ mod tests {
         records: Vec<usn_parse::Record>,
     ) -> Result<String, Box<dyn std::error::Error>> {
         let mut w = CsvWriter::new(Vec::new())?;
-        for row in analyze::usn_rows(entries, &records) {
+        for row in analyze::usn_rows(entries, &records, None, None) {
             w.write_usn(&row)?;
         }
         Ok(String::from_utf8(w.finish()?)?
@@ -686,7 +686,7 @@ mod tests {
         let csv = usn_csv(&usn_tree(), records())?;
         let mut jsonl = JsonlWriter::new(Vec::new());
         let (tree, records) = (usn_tree(), records());
-        for row in analyze::usn_rows(&tree, &records) {
+        for row in analyze::usn_rows(&tree, &records, None, None) {
             jsonl.write_usn(&row)?;
         }
 
@@ -701,6 +701,64 @@ mod tests {
             Some(
                 r#"{"entry":null,"sequence":null,"in_use":null,"name":null,"path":null,"path_state":"unknown","baseline":null,"findings":[],"si_created":null,"fn_created":null,"diagnostics":["malformed"],"source":"usn","usn":null,"reasons":[],"event_time":null}"#
             )
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn usn_rows_write_their_baseline_status_and_findings() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let vwr = "\"DirectoryName\",\"Name\",\"FullName\"\n\"C:\\Users\",\"a.txt\",\"C:\\Users\\a.txt\"\n";
+        let mut file = Vec::new();
+        baseline::build(vwr.as_bytes(), &mut file)?;
+        let baseline = baseline::Baseline::load(file)?;
+        let dir = std::env::temp_dir().join(format!("report-usn-rules-{}", std::process::id()));
+        std::fs::create_dir_all(&dir)?;
+        std::fs::write(
+            dir.join("a.yml"),
+            "title: T\nid: rule-usn\nlevel: high\nlogsource:\n  product: windows\n  category: file_event\ndetection:\n  sel:\n    TargetFilename|endswith: 'b.txt'\n  condition: sel\n",
+        )?;
+        let rules = sigma::Rules::load(&dir)?;
+        let entries = usn_tree();
+        let records = vec![
+            usn_event(60 | (1 << 48), 6 | (1 << 48), 0, 0x8000_0100, "a.txt"),
+            usn_event(61 | (1 << 48), 6 | (1 << 48), 8, 0x8000_0100, "b.txt"),
+        ];
+
+        let mut csv = CsvWriter::new(Vec::new())?;
+        let mut jsonl = JsonlWriter::new(Vec::new());
+        for row in analyze::usn_rows(&entries, &records, Some(&baseline), Some(&rules)) {
+            csv.write_usn(&row)?;
+            jsonl.write_usn(&row)?;
+        }
+        let csv = String::from_utf8(csv.finish()?)?;
+        let jsonl = String::from_utf8(jsonl.finish()?)?;
+
+        let columns: Vec<Vec<&str>> = csv
+            .lines()
+            .skip(1)
+            .map(|row| row.split(',').skip(6).take(2).collect())
+            .collect();
+        assert_eq!(
+            columns,
+            [vec!["standard", ""], vec!["outside", "high:rule-usn"]]
+        );
+        let objects: Vec<(serde_json::Value, serde_json::Value)> = jsonl
+            .lines()
+            .map(|l| {
+                serde_json::from_str::<serde_json::Value>(l)
+                    .map(|v| (v["baseline"].clone(), v["findings"].clone()))
+            })
+            .collect::<Result<_, _>>()?;
+        assert_eq!(
+            objects,
+            [
+                (serde_json::json!("standard"), serde_json::json!([])),
+                (
+                    serde_json::json!("outside"),
+                    serde_json::json!([{"level": "high", "id": "rule-usn"}])
+                ),
+            ]
         );
         Ok(())
     }
@@ -729,7 +787,7 @@ mod tests {
         let csv = usn_csv(&entries, records())?;
         let mut jsonl = JsonlWriter::new(Vec::new());
         let records = records();
-        for row in analyze::usn_rows(&entries, &records) {
+        for row in analyze::usn_rows(&entries, &records, None, None) {
             jsonl.write_usn(&row)?;
         }
         let jsonl = String::from_utf8(jsonl.finish()?)?;

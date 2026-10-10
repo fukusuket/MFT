@@ -118,7 +118,7 @@ Goal: add `$J` to the same end-to-end path: USN events with their paths at the t
 - [x] **P2-3 Rewind** (`resolve`)
   - Done when: each USN event gets the path it had at that moment, including renamed and deleted files and reused MFT entries. Its state is `resolved`, `inferred` (built partly from the journal) or `unknown`, and a path is never invented. Unit tests cover rename, delete, entry reuse and parent move on synthetic journals. On the 9 Yamato hosts and Simulated-Case-1, the share of events with a full path is ≥ usnjrnl_rewind's. Recorded in `docs/research/rewind.md`; this is the gate metric.
   - Out of scope: carving, cross-volume moves, `$LogFile`.
-- [ ] **P2-4 Sigma on USN events** (`detect`, `analyze`)
+- [x] **P2-4 Sigma on USN events** (`detect`, `analyze`)
   - Done when: USN events are emitted as `file_event` (create), `file_delete`, `file_rename` (`SourceFilename`, `TargetFilename`) and `file_change`, with the USN time. Outside-baseline USN events also match `service: baseline_outside`. Findings carry the USN and the path state. An e2e test covers each category with a near-miss.
   - Out of scope: correlations (Phase 3), new rules.
 - [ ] **P2-5 Own generic USN rules** (`testdata/rules`; ADR 0016, ADR 0019)

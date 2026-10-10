@@ -1454,3 +1454,267 @@ fn analyze_usn_rewinds_a_renamed_directory() -> TestResult {
     assert_eq!(early, [r"\Profiles\early.txt|inferred"]);
     Ok(())
 }
+
+/// The `findings` cell of each USN row after running `rule` (id `usn-rule`, level high) on
+/// `\Users` events (file entry, reason, name), with an optional VWR `FullName` baseline.
+fn usn_rule_hits(
+    test: &str,
+    rule: &str,
+    events: &[(u64, u32, &str)],
+    baseline: Option<&str>,
+) -> Result<Vec<String>, Box<dyn Error>> {
+    use usn_support::{Fields, v2};
+    let dir = scratch(test)?;
+    let (mft, j, csv, rules) = (
+        dir.join("MFT"),
+        dir.join("J"),
+        dir.join("out.csv"),
+        dir.join("rules"),
+    );
+    std::fs::write(&mft, usn_volume_mft())?;
+    let mut journal = Vec::new();
+    for &(file, reason, name) in events {
+        journal.extend(v2(&Fields {
+            file: file | (1 << 48),
+            parent: 6 | (1 << 48),
+            reason,
+            attributes: 0x20,
+            name: u16s(name),
+            ..Fields::default()
+        }));
+    }
+    std::fs::write(&j, journal)?;
+    std::fs::create_dir_all(&rules)?;
+    std::fs::write(
+        rules.join("rule.yml"),
+        format!("title: USN rule\nid: usn-rule\nlevel: high\n{rule}"),
+    )?;
+    let mut command = tool();
+    command
+        .args(["analyze", "-i"])
+        .arg(&mft)
+        .arg("--usn")
+        .arg(&j)
+        .arg("--csv")
+        .arg(&csv)
+        .arg("--rules")
+        .arg(&rules);
+    if let Some(full_name) = baseline {
+        let (vwr, index) = (dir.join("vwr.csv"), dir.join("b.fst"));
+        std::fs::write(&vwr, format!("\"FullName\"\n\"{full_name}\"\n"))?;
+        let built = tool()
+            .args(["baseline", "build", "--vwr"])
+            .arg(&vwr)
+            .arg("-o")
+            .arg(&index)
+            .status()?;
+        if !built.success() {
+            return Err("baseline build failed".into());
+        }
+        command.arg("--baseline").arg(&index);
+    }
+
+    if !command.status()?.success() {
+        return Err("analyze failed".into());
+    }
+    Ok(csv_rows(&std::fs::read_to_string(&csv)?)
+        .into_iter()
+        .filter(|r| r[11] == "usn")
+        .map(|r| r[7].clone())
+        .collect())
+}
+
+const HIT: &str = "high:usn-rule";
+
+#[test]
+fn a_closed_usn_create_matches_a_file_event_rule() -> TestResult {
+    let rule = "logsource:\n  product: windows\n  category: file_event\ndetection:\n  sel:\n    TargetFilename: 'C:\\Users\\x.exe'\n  condition: sel\n";
+    let events = [
+        (40, 0x0000_0100, "x.exe"), // FILE_CREATE before the close: near miss
+        (40, 0x8000_0102, "x.exe"), // FILE_CREATE | DATA_EXTEND | CLOSE
+    ];
+
+    let hits = usn_rule_hits(
+        "a_closed_usn_create_matches_a_file_event_rule",
+        rule,
+        &events,
+        None,
+    )?;
+
+    assert_eq!(hits, ["", HIT]);
+    Ok(())
+}
+
+#[test]
+fn a_usn_delete_matches_a_file_delete_rule() -> TestResult {
+    let rule = "logsource:\n  product: windows\n  category: file_delete\ndetection:\n  sel:\n    TargetFilename|endswith: '.evtx'\n  condition: sel\n";
+    let events = [
+        (41, 0x8000_0100, "Security.evtx"), // created, not deleted: near miss
+        (41, 0x8000_0200, "Security.evtx"),
+    ];
+
+    let hits = usn_rule_hits(
+        "a_usn_delete_matches_a_file_delete_rule",
+        rule,
+        &events,
+        None,
+    )?;
+
+    assert_eq!(hits, ["", HIT]);
+    Ok(())
+}
+
+#[test]
+fn a_usn_rename_matches_a_file_rename_rule_on_both_names() -> TestResult {
+    let rule = "logsource:\n  product: windows\n  category: file_rename\ndetection:\n  sel:\n    SourceFilename|endswith: '.txt'\n    TargetFilename|endswith: '.exe'\n  condition: sel\n";
+    let events = [
+        (42, 0x0000_1000, "a.txt"), // RENAME_OLD_NAME
+        (42, 0x0000_2000, "a.exe"), // RENAME_NEW_NAME
+        (42, 0x8000_2000, "a.exe"), // ... | CLOSE
+        (43, 0x0000_1000, "b.exe"), // near miss: .exe to .exe
+        (43, 0x0000_2000, "c.exe"),
+        (43, 0x8000_2000, "c.exe"),
+    ];
+
+    let hits = usn_rule_hits(
+        "a_usn_rename_matches_a_file_rename_rule_on_both_names",
+        rule,
+        &events,
+        None,
+    )?;
+
+    assert_eq!(hits, ["", "", HIT, "", "", ""]);
+    Ok(())
+}
+
+#[test]
+fn a_usn_basic_info_change_matches_a_file_change_rule() -> TestResult {
+    let rule = "logsource:\n  product: windows\n  category: file_change\ndetection:\n  sel:\n    TargetFilename|endswith: '.exe'\n  condition: sel\n";
+    let events = [
+        (40, 0x8000_8000, "x.exe"), // BASIC_INFO_CHANGE | CLOSE
+        (40, 0x8000_0002, "x.exe"), // DATA_EXTEND | CLOSE: near miss
+    ];
+
+    let hits = usn_rule_hits(
+        "a_usn_basic_info_change_matches_a_file_change_rule",
+        rule,
+        &events,
+        None,
+    )?;
+
+    assert_eq!(hits, [HIT, ""]);
+    Ok(())
+}
+
+#[test]
+fn an_outside_baseline_usn_event_matches_a_baseline_outside_rule() -> TestResult {
+    let rule = "logsource:\n  product: windows\n  category: file_event\n  service: baseline_outside\ndetection:\n  sel:\n    TargetFilename|endswith: '.exe'\n  condition: sel\n";
+    let events = [
+        (40, 0x8000_0100, "std.exe"), // in the baseline: near miss
+        (41, 0x8000_0100, "new.exe"),
+    ];
+
+    let hits = usn_rule_hits(
+        "an_outside_baseline_usn_event_matches_a_baseline_outside_rule",
+        rule,
+        &events,
+        Some("C:\\Users\\std.exe"),
+    )?;
+
+    assert_eq!(hits, ["", HIT]);
+    Ok(())
+}
+
+#[test]
+fn a_usn_finding_carries_its_usn_and_inferred_path_in_every_output() -> TestResult {
+    use usn_support::{Fields, v2};
+    let dir = scratch("a_usn_finding_carries_its_usn_and_inferred_path_in_every_output")?;
+    let (mft, j, rules) = (dir.join("MFT"), dir.join("J"), dir.join("rules"));
+    let (csv, jsonl, html) = (
+        dir.join("out.csv"),
+        dir.join("out.jsonl"),
+        dir.join("out.html"),
+    );
+    std::fs::write(&mft, usn_volume_mft())?;
+    let (users, root) = (6 | (1 << 48), 5 | (1 << 48));
+    let mut journal = v2(&Fields {
+        file: 40 | (1 << 48),
+        parent: users,
+        usn: 64,
+        reason: 0x8000_0100, // FILE_CREATE | CLOSE, while \Users was \Profiles
+        name: u16s("x.exe"),
+        ..Fields::default()
+    });
+    for (usn, reason, name) in [(136, 0x1000, "Profiles"), (208, 0x2000, "Users")] {
+        journal.extend(v2(&Fields {
+            file: users,
+            parent: root,
+            usn,
+            reason,
+            attributes: 0x10, // FILE_ATTRIBUTE_DIRECTORY
+            name: u16s(name),
+            ..Fields::default()
+        }));
+    }
+    std::fs::write(&j, journal)?;
+    std::fs::create_dir_all(&rules)?;
+    std::fs::write(
+        rules.join("rule.yml"),
+        "title: USN rule\nid: usn-rule\nlevel: high\nlogsource:\n  product: windows\n  category: file_event\ndetection:\n  sel:\n    TargetFilename|endswith: '.exe'\n  condition: sel\n",
+    )?;
+
+    let status = tool()
+        .args(["analyze", "-i"])
+        .arg(&mft)
+        .arg("--usn")
+        .arg(&j)
+        .args(["--rules".as_ref(), rules.as_os_str()])
+        .args(["--csv".as_ref(), csv.as_os_str()])
+        .args(["--jsonl".as_ref(), jsonl.as_os_str()])
+        .args(["-o".as_ref(), html.as_os_str()])
+        .status()?;
+
+    assert!(status.success());
+    let rows: Vec<String> = csv_rows(&std::fs::read_to_string(&csv)?)
+        .into_iter()
+        .filter(|r| !r[7].is_empty())
+        .map(|r| [4, 5, 7, 12].map(|i| r[i].as_str()).join("|"))
+        .collect();
+    assert_eq!(rows, [r"\Profiles\x.exe|inferred|high:usn-rule|64"]);
+    let jsonl = std::fs::read_to_string(&jsonl)?;
+    let found: Vec<String> = jsonl
+        .lines()
+        .map(serde_json::from_str::<serde_json::Value>)
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .filter(|v| v["findings"].as_array().is_some_and(|f| !f.is_empty()))
+        .map(|v| {
+            format!(
+                "{}|{}|{}|{}",
+                v["path"], v["path_state"], v["findings"], v["usn"]
+            )
+        })
+        .collect();
+    assert_eq!(
+        found,
+        [r#""\\Profiles\\x.exe"|"inferred"|[{"id":"usn-rule","level":"high"}]|64"#]
+    );
+    let data = report_data(&std::fs::read_to_string(&html)?)?;
+    let finding = &data["findings"][0];
+    assert_eq!(
+        [
+            &finding["path"],
+            &finding["path_state"],
+            &finding["usn"],
+            &finding["id"]
+        ],
+        [
+            &serde_json::json!(r"\Profiles\x.exe"),
+            &serde_json::json!("inferred"),
+            &serde_json::json!(64),
+            &serde_json::json!("usn-rule")
+        ]
+    );
+    assert_eq!(data["summary"]["findings"]["high"], 1);
+    Ok(())
+}

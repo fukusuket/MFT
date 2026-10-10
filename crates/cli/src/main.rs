@@ -167,16 +167,19 @@ fn analyze(
         }
     }
     if let Some(journal) = journal {
-        // After the $MFT rows, in $J order; the HTML report does not show USN rows yet.
+        // After the $MFT rows, in $J order; the HTML report shows only their findings.
         let records = usn_parse::records(BufReader::new(journal))
             .collect::<Result<Vec<_>, _>>()
             .context("reading the USN journal")?;
-        for row in analyze::usn_rows(&entries, &records) {
+        for row in analyze::usn_rows(&entries, &records, baseline.as_ref(), rules.as_ref()) {
             if let Some((_, writer)) = &mut csv_writer {
                 writer.write_usn(&row)?;
             }
             if let Some((_, writer)) = &mut jsonl_writer {
                 writer.write_usn(&row)?;
+            }
+            if let Some((_, _, report)) = &mut html {
+                report.add_usn(&row);
             }
         }
     }

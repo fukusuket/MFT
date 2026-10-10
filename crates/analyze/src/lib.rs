@@ -1,5 +1,7 @@
 //! Pipeline from parsed `$MFT` entries to report rows.
 
+use std::collections::HashMap;
+
 use baseline::{Baseline, Status};
 use mft_parse::Entry;
 use resolve::{Resolution, Resolver};
@@ -53,19 +55,91 @@ pub fn rows<'a>(
 pub struct UsnRow<'a> {
     pub record: &'a usn_parse::Record,
     pub directory: Resolution<'a>,
+    /// For events on files with a known path, when a baseline is given; `None` otherwise.
+    pub baseline: Option<Status>,
+    /// Matched rules, most severe first (empty without rules).
+    pub findings: Vec<Finding>,
 }
 
 /// One row per `$J` item, in `$J` order.
 pub fn usn_rows<'a>(
     entries: &'a [Entry],
     records: &'a [usn_parse::Record],
+    baseline: Option<&'a Baseline>,
+    rules: Option<&'a Rules>,
 ) -> impl Iterator<Item = UsnRow<'a>> {
     let directories = Resolver::new(entries).rewind(records);
+    // A rename's old path by file (entry, sequence), until the handle closes.
+    let mut old_paths: HashMap<(u64, u16), String> = HashMap::new();
     records
         .iter()
         .zip(directories)
-        .map(|(record, directory)| UsnRow { record, directory })
+        .map(move |(record, directory)| {
+            let mut row = UsnRow {
+                record,
+                directory,
+                baseline: None,
+                findings: Vec::new(),
+            };
+            let usn_parse::Record::Event(event) = record else {
+                return row;
+            };
+            // The file's names from the root: its directory's, then its own.
+            let segments = match &row.directory {
+                Resolution::Resolved(segments) | Resolution::Inferred(segments) => {
+                    let mut segments = segments.clone();
+                    segments.push(&event.name);
+                    Some(segments)
+                }
+                Resolution::Unknown => None,
+            };
+            if let (Some(segments), Some(baseline)) = (&segments, baseline)
+                && event.attributes & FILE_ATTRIBUTE_DIRECTORY == 0
+            {
+                let units: Vec<&[u16]> = segments.iter().map(|s| s.units()).collect();
+                row.baseline = Some(baseline.status(&units));
+            }
+            let path = segments.and_then(|s| Resolution::Resolved(s).path_text());
+            let file = (event.file.entry(), event.file.sequence());
+            if event.reason & RENAME_OLD_NAME != 0 {
+                match &path {
+                    Some(path) => old_paths.insert(file, path.clone()),
+                    None => old_paths.remove(&file),
+                };
+            }
+            let source = if event.reason & CLOSE != 0 {
+                old_paths.remove(&file)
+            } else {
+                None
+            };
+            if let (Some(rules), Some(path)) = (rules, &path) {
+                row.findings = usn_findings(rules, event, path, source.as_deref(), row.baseline);
+            }
+            row
+        })
 }
+
+/// Matches of every event of one USN record, in the order `Rules::evaluate` uses.
+fn usn_findings(
+    rules: &Rules,
+    event: &usn_parse::UsnEvent,
+    path: &str,
+    source: Option<&str>,
+    baseline: Option<Status>,
+) -> Vec<Finding> {
+    let mut findings: Vec<Finding> = detect::usn_events(event, path, source, baseline)
+        .iter()
+        .flat_map(|e| rules.evaluate(e))
+        .collect();
+    findings.sort_by(|a, b| b.level.cmp(&a.level).then_with(|| a.id.cmp(&b.id)));
+    findings
+}
+
+/// `USN_REASON_*` flags (winioctl.h).
+const RENAME_OLD_NAME: u32 = 0x0000_1000;
+const CLOSE: u32 = 0x8000_0000;
+/// `FILE_ATTRIBUTE_DIRECTORY` (winnt.h).
+const FILE_ATTRIBUTE_DIRECTORY: u32 = 0x10;
 
 #[cfg(test)]
 mod tests {
@@ -191,7 +265,7 @@ mod tests {
         });
         let records = [usn_event("a.txt", 6), usn_event("b.txt", 77), diagnostic];
 
-        let shown: Vec<Option<String>> = usn_rows(&entries, &records)
+        let shown: Vec<Option<String>> = usn_rows(&entries, &records, None, None)
             .map(|r| r.directory.path_text())
             .collect();
 
@@ -212,7 +286,7 @@ mod tests {
             usn_event("b.txt", 6),
         ];
 
-        let shown: Vec<(Option<String>, bool)> = usn_rows(&entries, &records)
+        let shown: Vec<(Option<String>, bool)> = usn_rows(&entries, &records, None, None)
             .map(|r| {
                 (
                     r.directory.path_text(),
@@ -230,6 +304,164 @@ mod tests {
                 (Some("\\New".to_string()), false),
             ]
         );
+    }
+
+    fn rules(
+        test: &str,
+        category: &str,
+        detection: &str,
+    ) -> Result<Rules, Box<dyn std::error::Error>> {
+        let dir = std::env::temp_dir().join(format!("analyze-{test}-{}", std::process::id()));
+        std::fs::create_dir_all(&dir)?;
+        std::fs::write(
+            dir.join("rule.yml"),
+            format!(
+                "title: T\nid: rule-{test}\nlevel: high\nlogsource:\n  product: windows\n  category: {category}\ndetection:\n  sel:\n{detection}  condition: sel\n"
+            ),
+        )?;
+        Ok(Rules::load(&dir)?)
+    }
+
+    fn with_reason(reason: u32, record: usn_parse::Record) -> usn_parse::Record {
+        match record {
+            usn_parse::Record::Event(mut event) => {
+                event.reason = reason;
+                usn_parse::Record::Event(event)
+            }
+            diagnostic => diagnostic,
+        }
+    }
+
+    fn usn_tree() -> [Entry; 2] {
+        let mut root = entry(5, 5, ".");
+        root.is_dir = true;
+        let mut users = entry(6, 5, "Users");
+        users.is_dir = true;
+        [root, users]
+    }
+
+    #[test]
+    fn usn_rows_carry_findings_when_rules_are_given() -> Result<(), Box<dyn std::error::Error>> {
+        let rules = rules(
+            "usn-findings",
+            "file_delete",
+            "    TargetFilename|endswith: '\\a.evtx'\n",
+        )?;
+        let entries = usn_tree();
+        let records = [
+            with_reason(0x200, usn_event("a.evtx", 6)),
+            with_reason(0x8000_0200, usn_event("a.evtx", 6)),
+            with_reason(0x8000_0200, usn_event("b.evtx", 6)),
+        ];
+
+        let with: Vec<Vec<String>> = usn_rows(&entries, &records, None, Some(&rules))
+            .map(|r| r.findings.into_iter().map(|f| f.id).collect())
+            .collect();
+
+        assert_eq!(
+            with,
+            [vec![], vec!["rule-usn-findings".to_string()], vec![]]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn findings_from_one_usn_record_are_most_severe_first() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let dir = std::env::temp_dir().join(format!("analyze-usn-order-{}", std::process::id()));
+        std::fs::create_dir_all(&dir)?;
+        for (id, level, category) in [
+            ("a-low", "low", "file_event"),
+            ("b-high", "high", "file_delete"),
+        ] {
+            std::fs::write(
+                dir.join(format!("{id}.yml")),
+                format!(
+                    "title: T\nid: {id}\nlevel: {level}\nlogsource:\n  product: windows\n  category: {category}\ndetection:\n  sel:\n    TargetFilename|endswith: '.evtx'\n  condition: sel\n"
+                ),
+            )?;
+        }
+        let rules = Rules::load(&dir)?;
+        let entries = usn_tree();
+        let records = [with_reason(0x8000_0300, usn_event("a.evtx", 6))];
+
+        let ids: Vec<Vec<String>> = usn_rows(&entries, &records, None, Some(&rules))
+            .map(|r| r.findings.into_iter().map(|f| f.id).collect())
+            .collect();
+
+        assert_eq!(ids, [["b-high".to_string(), "a-low".to_string()]]);
+        Ok(())
+    }
+
+    #[test]
+    fn a_rename_takes_its_source_from_the_old_name_of_the_same_file()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let rules = rules(
+            "usn-rename",
+            "file_rename",
+            "    SourceFilename|endswith: '\\a.txt'\n    TargetFilename|endswith: '.exe'\n",
+        )?;
+        let entries = usn_tree();
+        let of = |file: u64, reason: u32, name: &str| match with_reason(reason, usn_event(name, 6))
+        {
+            usn_parse::Record::Event(mut event) => {
+                event.file = FileRef::from_raw(file | (1 << 48));
+                usn_parse::Record::Event(event)
+            }
+            diagnostic => diagnostic,
+        };
+        let records = [
+            of(60, 0x1000, "a.txt"),      // RENAME_OLD_NAME
+            of(60, 0x2000, "a.exe"),      // RENAME_NEW_NAME
+            of(61, 0x8000_2000, "b.exe"), // another file's rename
+            of(60, 0x8000_2000, "a.exe"), // ... | CLOSE
+            of(60, 0x8000_2000, "a.exe"), // a later handle: the old name is used up
+        ];
+
+        let hits: Vec<bool> = usn_rows(&entries, &records, None, Some(&rules))
+            .map(|r| !r.findings.is_empty())
+            .collect();
+
+        assert_eq!(hits, [false, false, false, true, false]);
+        Ok(())
+    }
+
+    #[test]
+    fn usn_rows_of_files_with_a_known_path_get_a_baseline_status()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let vwr = "\"DirectoryName\",\"Name\",\"FullName\"\n\"C:\\Users\",\"a.txt\",\"C:\\Users\\a.txt\"\n";
+        let mut file = Vec::new();
+        baseline::build(vwr.as_bytes(), &mut file)?;
+        let baseline = Baseline::load(file)?;
+        let rules = rules(
+            "usn-outside",
+            "file_event\n  service: baseline_outside",
+            "    TargetFilename|endswith: '.txt'\n",
+        )?;
+        let entries = usn_tree();
+        let records = [
+            with_reason(0x8000_0100, usn_event("a.txt", 6)),
+            with_reason(0x8000_0100, usn_event("b.txt", 6)),
+            usn_dir_rename(6, "Users"),
+            usn_event("c.txt", 77),
+        ];
+
+        let shown: Vec<(Option<Status>, usize)> =
+            usn_rows(&entries, &records, Some(&baseline), Some(&rules))
+                .map(|r| (r.baseline, r.findings.len()))
+                .collect();
+
+        use Status::*;
+        assert_eq!(
+            shown,
+            [
+                (Some(Standard), 0),
+                (Some(Outside), 1),
+                (None, 0),
+                (None, 0)
+            ]
+        );
+        Ok(())
     }
 
     fn usn_dir_rename(dir: u64, name: &str) -> usn_parse::Record {
