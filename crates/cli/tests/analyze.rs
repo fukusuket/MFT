@@ -1351,3 +1351,29 @@ fn missing_usn_input_fails_with_a_message_and_leaves_no_output() -> TestResult {
     assert_no_temporary_outputs(&dir)?;
     Ok(())
 }
+
+#[test]
+fn analyze_refuses_the_same_file_for_usn_and_an_output() -> TestResult {
+    let dir = scratch("analyze_refuses_the_same_file_for_usn_and_an_output")?;
+    let (mft, j) = (dir.join("MFT"), dir.join("J"));
+    std::fs::write(&mft, usn_volume_mft())?;
+    let journal = usn_journal();
+
+    for output in ["--csv", "--jsonl", "-o"] {
+        std::fs::write(&j, &journal)?;
+        let out = tool()
+            .args(["analyze", "-i"])
+            .arg(&mft)
+            .arg("--usn")
+            .arg(&j)
+            .arg(output)
+            .arg(&j)
+            .output()?;
+
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(out.status.code(), Some(1), "{output}: {stderr}");
+        assert!(stderr.contains("same file"), "{output}: {stderr}");
+        assert_eq!(std::fs::read(&j)?, journal, "{output}");
+    }
+    Ok(())
+}
