@@ -254,3 +254,35 @@ fn trailing_zeros_shorter_than_a_slot_end_quietly() -> TestResult {
     }
     Ok(())
 }
+
+#[test]
+fn unpaired_surrogate_in_a_name_survives() -> TestResult {
+    let name = vec![0x0061, 0xD800, 0x0062];
+    let items = parse(v2(&Fields { name: name.clone(), ..Fields::default() }))?;
+    assert_eq!(only_event(&items)?.name.units(), name.as_slice());
+    Ok(())
+}
+
+/// Hands out at most one byte per `read`.
+struct OneByte(Cursor<Vec<u8>>);
+
+impl std::io::Read for OneByte {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let n = buf.len().min(1);
+        self.0.read(&mut buf[..n])
+    }
+}
+
+#[test]
+fn records_split_across_reads_parse_the_same() -> TestResult {
+    let f = Fields::default();
+    let mut j = vec![0u8; 24];
+    j.extend(v2(&f));
+    j.extend(v3(&f, 0, 0));
+    j.extend(other_version(4, 0x50));
+    j.extend(&v2(&f)[..20]);
+    let whole = format!("{:?}", parse(j.clone())?);
+    let split = format!("{:?}", records(OneByte(Cursor::new(j))).collect::<Result<Vec<_>, _>>()?);
+    assert_eq!(split, whole);
+    Ok(())
+}
