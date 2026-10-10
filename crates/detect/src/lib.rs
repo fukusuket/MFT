@@ -42,7 +42,8 @@ pub fn usn_events(
 ) -> Vec<Event> {
     let _ = baseline;
     // The closing record carries every reason of the handle: one event per operation.
-    if event.reason & CLOSE == 0 {
+    // Directories are skipped as for `file_event` from `$MFT`.
+    if event.reason & CLOSE == 0 || event.attributes & FILE_ATTRIBUTE_DIRECTORY != 0 {
         return Vec::new();
     }
     let time = event.time.sysmon();
@@ -80,6 +81,7 @@ const FILE_DELETE: u32 = 0x0000_0200;
 const RENAME_NEW_NAME: u32 = 0x0000_2000;
 const BASIC_INFO_CHANGE: u32 = 0x0000_8000;
 const CLOSE: u32 = 0x8000_0000;
+const FILE_ATTRIBUTE_DIRECTORY: u32 = 0x10;
 
 #[cfg(test)]
 mod tests {
@@ -227,6 +229,14 @@ mod tests {
             categories,
             ["file_event", "file_rename", "file_change", "file_delete"]
         );
+    }
+
+    #[test]
+    fn no_usn_events_for_directories() {
+        let mut dir = usn(0x100 | 0x200 | CLOSE);
+        dir.attributes = 0x10; // FILE_ATTRIBUTE_DIRECTORY
+
+        assert!(usn_events(&dir, r"\Temp", None, None).is_empty());
     }
 
     #[test]
