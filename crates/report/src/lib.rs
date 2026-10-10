@@ -128,9 +128,10 @@ fn path_cell(resolution: &Resolution<'_>) -> String {
 
 /// The parent directory's path plus the record's name; `None` if the parent is unknown.
 fn usn_path(row: &UsnRow<'_>, event: &usn_parse::UsnEvent) -> Option<String> {
-    let directory = row.directory.path_text()?;
-    let separator = if directory.ends_with('\\') { "" } else { "\\" };
-    Some(format!("{directory}{separator}{}", event.name))
+    match &row.directory {
+        Resolution::Resolved(segments) if segments.is_empty() => Some(format!("\\{}", event.name)),
+        directory => Some(format!("{}\\{}", directory.path_text()?, event.name)),
+    }
 }
 
 fn baseline_name(status: Option<Status>) -> Option<&'static str> {
@@ -517,6 +518,18 @@ mod tests {
              61,2,,b.txt,,unknown,,,,,,usn,4160,,2023-11-14T17:12:46.6777888Z\n\
              62,1,,c.txt,\\c.txt,resolved,,,,,,usn,4224,,2023-11-14T17:12:46.6777888Z\n"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn usn_path_keeps_a_backslash_at_the_end_of_a_directory_name()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let entries = vec![dir(5, 5, "."), dir(6, 5, "odd\\")];
+        let records = vec![usn_event(60 | (1 << 48), 6 | (1 << 48), 0, 0, "b.txt")];
+
+        let csv = usn_csv(&entries, records)?;
+
+        assert_eq!(csv.split(',').nth(4), Some(r"\odd\\\b.txt"));
         Ok(())
     }
 }
