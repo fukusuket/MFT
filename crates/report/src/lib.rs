@@ -704,4 +704,39 @@ mod tests {
         );
         Ok(())
     }
+
+    #[test]
+    fn inferred_paths_are_marked_in_csv_and_jsonl() -> Result<(), Box<dyn std::error::Error>> {
+        let entries = vec![dir(5, 5, "."), dir(6, 5, "New")];
+        let records = || {
+            vec![
+                usn_event(60 | (1 << 48), 6 | (1 << 48), 0, 0, "a.txt"),
+                usn_event(6 | (1 << 48), 5 | (1 << 48), 8, 0x1000, "Old"),
+                usn_event(6 | (1 << 48), 5 | (1 << 48), 16, 0x2000, "New"),
+            ]
+        };
+
+        let csv = usn_csv(&entries, records())?;
+        let mut jsonl = JsonlWriter::new(Vec::new());
+        let records = records();
+        for row in analyze::usn_rows(&entries, &records) {
+            jsonl.write_usn(&row)?;
+        }
+        let jsonl = String::from_utf8(jsonl.finish()?)?;
+
+        assert_eq!(
+            csv.lines()
+                .next()
+                .map(|l| l.split(',').skip(4).take(2).collect::<Vec<_>>()),
+            Some(vec![r"\Old\a.txt", "inferred"])
+        );
+        assert!(
+            jsonl
+                .lines()
+                .next()
+                .is_some_and(|l| l.contains(r#""path":"\\Old\\a.txt","path_state":"inferred""#)),
+            "{jsonl}"
+        );
+        Ok(())
+    }
 }
