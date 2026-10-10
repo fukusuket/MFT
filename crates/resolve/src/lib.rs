@@ -1,7 +1,10 @@
 //! Paths for `$MFT` entries from `$FILE_NAME` parent references (MFT only in Phase 1).
 
+use std::collections::HashMap;
+
 use mft_parse::{Entry, FileName, Namespace};
 use ntfs_types::{FileRef, NtfsName};
+use usn_parse::UsnEvent;
 
 /// The root directory's MFT entry number.
 const ROOT: u64 = 5;
@@ -104,6 +107,32 @@ impl<'a> Resolver<'a> {
             }
             _ => Resolution::Unknown,
         }
+    }
+
+    /// For each USN record, the directory its parent reference pointed to when it was written.
+    pub fn rewind<'b>(&'b self, events: &'b [UsnEvent]) -> Vec<Resolution<'b>> {
+        let mut known: HashMap<u64, (&'b NtfsName, FileRef)> = HashMap::new();
+        for entry in self.entries.iter().filter(|e| e.in_use) {
+            if let Some(name) = chosen_name(&entry.names) {
+                known.insert(entry.file_ref.raw(), (&name.name, name.parent));
+            }
+        }
+        events
+            .iter()
+            .map(|event| {
+                let mut segments = Vec::new();
+                let mut current = event.parent;
+                while current.entry() != ROOT {
+                    let Some(&(name, parent)) = known.get(&current.raw()) else {
+                        return Resolution::Unknown;
+                    };
+                    segments.push(name);
+                    current = parent;
+                }
+                segments.reverse();
+                Resolution::Resolved(segments)
+            })
+            .collect()
     }
 
     /// The chosen name and the position of its parent, if that parent is the same, live record.
@@ -537,5 +566,56 @@ mod tests {
                 "entry {number} sequence {sequence}"
             );
         }
+    }
+
+    /// A USN record: `file` named `name` in `parent` (refs as `(entry, sequence)`).
+    fn usn(file: (u64, u16), parent: (u64, u16), name: &str) -> UsnEvent {
+        UsnEvent {
+            offset: 0,
+            usn: 0,
+            file: reference(file.0, file.1),
+            parent: reference(parent.0, parent.1),
+            time: Filetime::from_raw(0),
+            reason: 0,
+            attributes: 0,
+            name: NtfsName::from_units(&name.encode_utf16().collect::<Vec<_>>()),
+        }
+    }
+
+    fn states(resolutions: &[Resolution<'_>]) -> Vec<(String, Option<String>)> {
+        resolutions
+            .iter()
+            .map(|r| {
+                let state = match r {
+                    Resolution::Resolved(_) => "resolved",
+                    Resolution::Unknown => "unknown",
+                };
+                (state.to_string(), r.path_text())
+            })
+            .collect()
+    }
+
+    fn state(s: &str, path: &str) -> (String, Option<String>) {
+        (s.to_string(), Some(path.to_string()))
+    }
+
+    #[test]
+    fn rewind_matches_the_mft_when_the_journal_changes_nothing() {
+        let entries = [
+            dir(ROOT, 5, &[(".", ROOT, 5)]),
+            dir(30, 1, &[("Users", ROOT, 5)]),
+        ];
+        // A file created in \Users, then \Users itself touched without a rename.
+        let events = [
+            usn((40, 1), (30, 1), "a.txt"),
+            usn((30, 1), (ROOT, 5), "Users"),
+        ];
+
+        let resolver = Resolver::new(&entries);
+
+        assert_eq!(
+            states(&resolver.rewind(&events)),
+            [state("resolved", r"\Users"), state("resolved", r"\")]
+        );
     }
 }
