@@ -46,24 +46,28 @@ pub fn usn_events(
         return Vec::new();
     }
     let time = event.time.sysmon();
-    let mut events = Vec::new();
-    if event.reason & FILE_CREATE != 0 {
-        events.push(Event {
-            product: "windows",
-            category: "file_event",
-            service: None,
-            fields: vec![
-                ("TargetFilename", format!("C:{target}")),
-                ("CreationUtcTime", time.clone()),
-                ("UtcTime", time),
-            ],
-        });
-    }
-    events
+    [(FILE_CREATE, "file_event"), (FILE_DELETE, "file_delete")]
+        .into_iter()
+        .filter(|&(flag, _)| event.reason & flag != 0)
+        .map(|(_, category)| {
+            let mut fields = vec![("TargetFilename", format!("C:{target}"))];
+            if category == "file_event" {
+                fields.push(("CreationUtcTime", time.clone()));
+            }
+            fields.push(("UtcTime", time.clone()));
+            Event {
+                product: "windows",
+                category,
+                service: None,
+                fields,
+            }
+        })
+        .collect()
 }
 
 /// `USN_REASON_*` flags (winioctl.h).
 const FILE_CREATE: u32 = 0x0000_0100;
+const FILE_DELETE: u32 = 0x0000_0200;
 const CLOSE: u32 = 0x8000_0000;
 
 #[cfg(test)]
@@ -142,6 +146,23 @@ mod tests {
     fn records_before_the_close_are_not_events() {
         assert!(usn_events(&usn(0x100), r"\x.exe", None, None).is_empty());
         assert!(usn_events(&usn(0x100 | 0x2), r"\x.exe", None, None).is_empty());
+    }
+
+    #[test]
+    fn a_closed_usn_delete_is_a_file_delete() {
+        let events = usn_events(&usn(0x200 | CLOSE), r"\x.evtx", None, None);
+
+        assert_eq!(
+            shown(events),
+            [(
+                "file_delete",
+                None,
+                vec![
+                    ("TargetFilename", r"C:\x.evtx".to_string()),
+                    ("UtcTime", "2024-02-29 12:34:56.123".to_string()),
+                ]
+            )]
+        );
     }
 
     #[test]
