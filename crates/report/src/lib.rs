@@ -194,6 +194,7 @@ fn baseline_name(status: Option<Status>) -> Option<&'static str> {
 fn path_state(resolution: &Resolution<'_>) -> &'static str {
     match resolution {
         Resolution::Resolved(_) => "resolved",
+        Resolution::Inferred(_) => "inferred",
         Resolution::Unknown => "unknown",
     }
 }

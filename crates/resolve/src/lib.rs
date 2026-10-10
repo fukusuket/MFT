@@ -18,6 +18,9 @@ const MAX_PATH_UNITS: usize = 32_767;
 pub enum Resolution<'a> {
     /// Names from the root down; the root itself has none.
     Resolved(Vec<&'a NtfsName>),
+    /// Like `Resolved`, but at least one step came from the USN journal or a deleted record
+    /// rather than the current `$MFT` (Rewind).
+    Inferred(Vec<&'a NtfsName>),
     /// The chain of parents is broken (missing, deleted or reused); no path is invented.
     Unknown,
 }
@@ -26,7 +29,7 @@ impl Resolution<'_> {
     /// `\` plus the escaped names joined by `\` (a `\` inside a name shows as `\\`); the root
     /// is `\`. `None` if unknown. No drive letter: a `$MFT` doesn't record one.
     pub fn path_text(&self) -> Option<String> {
-        let Resolution::Resolved(segments) = self else {
+        let (Resolution::Resolved(segments) | Resolution::Inferred(segments)) = self else {
             return None;
         };
         if segments.is_empty() {
@@ -111,28 +114,35 @@ impl<'a> Resolver<'a> {
 
     /// For each USN record, the directory its parent reference pointed to when it was written.
     pub fn rewind<'b>(&'b self, events: &'b [UsnEvent]) -> Vec<Resolution<'b>> {
-        let mut known: HashMap<u64, (&'b NtfsName, FileRef)> = HashMap::new();
+        let mut known: HashMap<u64, Known<'b>> = HashMap::new();
         for entry in self.entries.iter().filter(|e| e.in_use) {
             if let Some(name) = chosen_name(&entry.names) {
-                known.insert(entry.file_ref.raw(), (&name.name, name.parent));
+                let known_entry = Known {
+                    name: &name.name,
+                    parent: name.parent,
+                    from_mft: true,
+                };
+                known.insert(entry.file_ref.raw(), known_entry);
             }
         }
-        events
-            .iter()
-            .map(|event| {
-                let mut segments = Vec::new();
-                let mut current = event.parent;
-                while current.entry() != ROOT {
-                    let Some(&(name, parent)) = known.get(&current.raw()) else {
-                        return Resolution::Unknown;
-                    };
-                    segments.push(name);
-                    current = parent;
-                }
-                segments.reverse();
-                Resolution::Resolved(segments)
-            })
-            .collect()
+        // Newest first: each record says where its file was at that moment, so after it is
+        // applied the map describes the volume just before the record was written.
+        let mut paths: Vec<Resolution<'b>> = events.iter().map(|_| Resolution::Unknown).collect();
+        for (event, path) in events.iter().zip(paths.iter_mut()).rev() {
+            *path = walk(&known, event.parent);
+            let unchanged = known.get(&event.file.raw()).is_some_and(|k| {
+                k.name.units() == event.name.units() && k.parent.raw() == event.parent.raw()
+            });
+            if !unchanged {
+                let learned = Known {
+                    name: &event.name,
+                    parent: event.parent,
+                    from_mft: false,
+                };
+                known.insert(event.file.raw(), learned);
+            }
+        }
+        paths
     }
 
     /// The chosen name and the position of its parent, if that parent is the same, live record.
@@ -179,6 +189,36 @@ impl<'a> Resolver<'a> {
             }
         }
         state.into_iter().map(|s| s == State::Done(true)).collect()
+    }
+}
+
+/// What Rewind knows about one `(entry, sequence)`: its name and parent at the current point
+/// of the walk, and whether that still matches the current `$MFT`.
+#[derive(Debug, Clone, Copy)]
+struct Known<'a> {
+    name: &'a NtfsName,
+    parent: FileRef,
+    from_mft: bool,
+}
+
+/// The directory `parent` names, from the root down, using what Rewind knows.
+fn walk<'a>(known: &HashMap<u64, Known<'a>>, parent: FileRef) -> Resolution<'a> {
+    let mut segments = Vec::new();
+    let mut from_mft = true;
+    let mut current = parent;
+    while current.entry() != ROOT {
+        let Some(step) = known.get(&current.raw()) else {
+            return Resolution::Unknown;
+        };
+        from_mft &= step.from_mft;
+        segments.push(step.name);
+        current = step.parent;
+    }
+    segments.reverse();
+    if from_mft {
+        Resolution::Resolved(segments)
+    } else {
+        Resolution::Inferred(segments)
     }
 }
 
@@ -256,7 +296,7 @@ mod tests {
             Resolution::Resolved(segments) => {
                 Some(segments.iter().map(|s| s.to_string()).collect())
             }
-            Resolution::Unknown => None,
+            Resolution::Inferred(_) | Resolution::Unknown => None, // MFT paths are never inferred
         }
     }
 
@@ -509,7 +549,7 @@ mod tests {
                 prop_assert!(parent.in_use && parent.file_ref.sequence() == name.parent.sequence());
                 let parent_segments = match resolver.path(parent) {
                     Resolution::Resolved(p) => Some(p.iter().map(|s| s.units().to_vec()).collect::<Vec<_>>()),
-                    Resolution::Unknown => None,
+                    Resolution::Inferred(_) | Resolution::Unknown => None,
                 };
                 let expected: Vec<Vec<u16>> =
                     segments[..segments.len() - 1].iter().map(|s| s.units().to_vec()).collect();
@@ -588,6 +628,7 @@ mod tests {
             .map(|r| {
                 let state = match r {
                     Resolution::Resolved(_) => "resolved",
+                    Resolution::Inferred(_) => "inferred",
                     Resolution::Unknown => "unknown",
                 };
                 (state.to_string(), r.path_text())
@@ -616,6 +657,32 @@ mod tests {
         assert_eq!(
             states(&resolver.rewind(&events)),
             [state("resolved", r"\Users"), state("resolved", r"\")]
+        );
+    }
+
+    #[test]
+    fn rewind_gives_earlier_events_the_old_name_of_a_renamed_parent() {
+        let entries = [
+            dir(ROOT, 5, &[(".", ROOT, 5)]),
+            dir(30, 1, &[("New", ROOT, 5)]),
+        ];
+        let events = [
+            usn((40, 1), (30, 1), "a.txt"), // while the directory was still "Old"
+            usn((30, 1), (ROOT, 5), "Old"), // RENAME_OLD_NAME
+            usn((30, 1), (ROOT, 5), "New"), // RENAME_NEW_NAME
+            usn((41, 1), (30, 1), "b.txt"),
+        ];
+
+        let resolver = Resolver::new(&entries);
+
+        assert_eq!(
+            states(&resolver.rewind(&events)),
+            [
+                state("inferred", r"\Old"),
+                state("resolved", r"\"),
+                state("resolved", r"\"),
+                state("resolved", r"\New"),
+            ]
         );
     }
 }

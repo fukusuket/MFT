@@ -76,7 +76,7 @@ impl HtmlReport {
             s.files += 1;
         }
         match row.resolution {
-            Resolution::Resolved(_) => s.resolved += 1,
+            Resolution::Resolved(_) | Resolution::Inferred(_) => s.resolved += 1, // MFT rows are never inferred
             Resolution::Unknown => s.unknown += 1,
         }
         for diagnostic in &row.entry.diagnostics {

@@ -107,7 +107,7 @@ mod tests {
             .map(|r| {
                 let depth = match &r.resolution {
                     Resolution::Resolved(segments) => Some(segments.len()),
-                    Resolution::Unknown => None,
+                    Resolution::Inferred(_) | Resolution::Unknown => None,
                 };
                 (r.entry.file_ref.entry(), depth)
             })
