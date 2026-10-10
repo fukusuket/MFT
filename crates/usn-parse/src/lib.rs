@@ -58,22 +58,109 @@ pub enum DiagCode {
 #[derive(Debug)]
 pub struct Records<R> {
     reader: R,
+    /// Bytes read but not yet consumed start at `buf[pos]`, which is stream offset `base + pos`.
+    buf: Vec<u8>,
+    pos: usize,
+    base: u64,
 }
 
 /// Starts reading a `$J`.
 pub fn records<R: Read>(reader: R) -> Records<R> {
-    Records { reader }
+    Records {
+        reader,
+        buf: Vec::new(),
+        pos: 0,
+        base: 0,
+    }
+}
+
+const READ_CHUNK: usize = 64 * 1024;
+
+impl<R: Read> Records<R> {
+    /// Makes at least `need` unconsumed bytes available, unless the input ends first.
+    fn fill(&mut self, need: usize) -> std::io::Result<&[u8]> {
+        if self.buf.len() - self.pos < need {
+            self.buf.drain(..self.pos);
+            self.base += widen(self.pos);
+            self.pos = 0;
+            while self.buf.len() < need {
+                let old = self.buf.len();
+                self.buf.resize(old + need.max(READ_CHUNK), 0);
+                match self.reader.read(&mut self.buf[old..]) {
+                    Ok(n) => {
+                        self.buf.truncate(old + n);
+                        if n == 0 {
+                            break;
+                        }
+                    }
+                    Err(e) => {
+                        self.buf.truncate(old);
+                        if e.kind() != std::io::ErrorKind::Interrupted {
+                            return Err(e);
+                        }
+                    }
+                }
+            }
+        }
+        Ok(&self.buf[self.pos..])
+    }
 }
 
 impl<R: Read> Iterator for Records<R> {
     type Item = Result<Record, Error>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let mut probe = [0u8; 8];
-        match self.reader.read(&mut probe) {
-            Ok(0) => None,
-            Ok(_) => None,
-            Err(e) => Some(Err(e.into())),
-        }
+        let offset = self.base + widen(self.pos);
+        let head = match self.fill(8) {
+            Ok(head) => head,
+            Err(e) => return Some(Err(e.into())),
+        };
+        let len = usize::try_from(u32_at(head, 0)?).ok()?;
+        let record = match self.fill(len) {
+            Ok(record) => record.get(..len)?,
+            Err(e) => return Some(Err(e.into())),
+        };
+        let event = parse_v2(record, offset)?;
+        self.pos += len;
+        Some(Ok(Record::Event(event)))
     }
+}
+
+fn parse_v2(r: &[u8], offset: u64) -> Option<UsnEvent> {
+    let name_len = usize::from(u16_at(r, 0x38)?);
+    let name_off = usize::from(u16_at(r, 0x3A)?);
+    let name_bytes = r.get(name_off..name_off.checked_add(name_len)?)?;
+    let units: Vec<u16> = name_bytes
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|&c| u16::from_le_bytes(c))
+        .collect();
+    Some(UsnEvent {
+        offset,
+        usn: u64::try_from(i64::from_le_bytes(r.get(0x18..0x20)?.try_into().ok()?)).ok()?,
+        file: FileRef::from_raw(u64_at(r, 0x08)?),
+        parent: FileRef::from_raw(u64_at(r, 0x10)?),
+        time: Filetime::from_raw(u64_at(r, 0x20)?),
+        reason: u32_at(r, 0x28)?,
+        attributes: u32_at(r, 0x34)?,
+        name: NtfsName::from_units(&units),
+    })
+}
+
+/// `usize` is at most 64 bits on every supported target.
+fn widen(n: usize) -> u64 {
+    u64::try_from(n).unwrap_or(u64::MAX)
+}
+
+fn u16_at(b: &[u8], at: usize) -> Option<u16> {
+    Some(u16::from_le_bytes(b.get(at..at.checked_add(2)?)?.try_into().ok()?))
+}
+
+fn u32_at(b: &[u8], at: usize) -> Option<u32> {
+    Some(u32::from_le_bytes(b.get(at..at.checked_add(4)?)?.try_into().ok()?))
+}
+
+fn u64_at(b: &[u8], at: usize) -> Option<u64> {
+    Some(u64::from_le_bytes(b.get(at..at.checked_add(8)?)?.try_into().ok()?))
 }
