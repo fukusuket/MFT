@@ -105,11 +105,11 @@ Decisions before the first slice (H2):
 
 Goal: add `$J` to the same end-to-end path: USN events with their paths at the time of each event, a few generic rules that need USN, facts next to findings, a time window, and a viewer. Rules start as a small set of our own generic rules (ADR 0016, ADR 0019). External rule sets (SigmaHQ, hayabusa-rules) are not shipped, but a user can load them with `--rules`. Each slice keeps `tool analyze` working end to end. Gate (H4): a non-expert decides the next step from a report; Rewind resolution ≥ usnjrnl_rewind.
 
-- [ ] **ADR: USN parsing and Rewind are our own code**
+- [x] **ADR: USN parsing and Rewind are our own code** ([ADR 0021](adr/0021-own-usn-parsing-and-rewind.md))
   - Proposal: write `usn-parse` and Rewind from Microsoft's `USN_RECORD_V2/V3/V4` documentation and the published Rewind algorithm (CyberCX, 2024). Use `ntfs-core` and usnjrnl_rewind only as test oracles, run outside the repo. No third-party code is copied, so `NOTICE` gains nothing. This supersedes "ported from `ntfs-core`" in `oss-reuse.md` and `architecture.md`.
   - Done when: ADR accepted; `oss-reuse.md` and `architecture.md` updated to match.
   - Out of scope: the code.
-- [ ] **P2-1 `usn-parse`** (new crate; `ntfs-types` only)
+- [x] **P2-1 `usn-parse`** (new crate; `ntfs-types` only)
   - Done when: `$J` bytes → `UsnEvent` (USN, `FileRef` of the file and parent, `Filetime`, reason flags, attributes, `NtfsName`) for V2 and V3. V4 range records and unknown versions become a `Diagnostic` and are skipped. The leading zero (sparse) region is skipped without diagnostics. A truncated or corrupt record becomes a `Diagnostic`, never a panic, and parsing resumes at the next 8-byte-aligned record. Synthetic records come from a test builder. There are proptest no-panic properties and a `cargo fuzz` target. On the 9 Yamato hosts and Simulated-Case-1, the record count equals the oracle's (counts in the hand-over).
   - Out of scope: carving from free space, `$LogFile`, paths, the CLI.
 - [ ] **P2-2 `--usn <$J>` in `tool analyze`** (`cli`, `analyze`, `report`)

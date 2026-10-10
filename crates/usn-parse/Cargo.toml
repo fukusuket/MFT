@@ -1,0 +1,18 @@
+[package]
+name = "usn-parse"
+description = "Raw $UsnJrnl:$J bytes to USN events and per-record diagnostics"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+ntfs-types = { path = "../ntfs-types" }
+thiserror = "=2.0.21" # ADR 0010
+
+[dev-dependencies]
+proptest = { version = "=1.11.0", default-features = false, features = ["std"] } # ADR 0008
+
+[lints]
+workspace = true
