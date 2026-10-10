@@ -340,3 +340,40 @@ fn read_error_is_an_error_and_stops() -> TestResult {
     assert!(it.next().is_none());
     Ok(())
 }
+
+/// Interrupts every other read, as a signal would.
+struct Interrupting(Cursor<Vec<u8>>, bool);
+
+impl std::io::Read for Interrupting {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        self.1 = !self.1;
+        if self.1 {
+            return Err(std::io::ErrorKind::Interrupted.into());
+        }
+        let n = buf.len().min(5);
+        self.0.read(&mut buf[..n])
+    }
+}
+
+#[test]
+fn interrupted_reads_are_retried() -> TestResult {
+    let f = Fields::default();
+    let mut j = v2(&f);
+    j.extend(v3(&f, 0, 0));
+    let whole = format!("{:?}", parse(j.clone())?);
+    let interrupted = format!(
+        "{:?}",
+        records(Interrupting(Cursor::new(j), false)).collect::<Result<Vec<_>, _>>()?
+    );
+    assert_eq!(interrupted, whole);
+    Ok(())
+}
+
+#[test]
+fn read_error_inside_a_record_is_an_error_and_stops() -> TestResult {
+    let j = v2(&Fields::default())[..20].to_vec(); // the header is there, the rest fails
+    let mut it = records(FailsAfter(Cursor::new(j)));
+    assert!(matches!(it.next(), Some(Err(usn_parse::Error::Io(_)))));
+    assert!(it.next().is_none());
+    Ok(())
+}
