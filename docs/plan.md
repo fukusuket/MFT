@@ -8,7 +8,7 @@ Current phase: **1**. Tick items as they land (same change). Every item states *
 |---|---|---|---|
 | 0 | Spikes S1–S4, `ntfs-types` | ✅ 2026-10-06. ADR 0003–0006 accepted; AGENTS.md, `deny.toml`, `NOTICE` updated | 1–1.5 wk |
 | **1 (v0.1)** | Walking skeleton: `$MFT` → baseline (VanillaWindowsReference Win11 24H2) → a few Sigma rules → minimal HTML + CSV | Outside-baseline files in the window < 10 % of all files on a real host; 1 GB `$MFT` in ≤ 1 min, ≤ 2 GB RAM | 2–3 wk |
-| 2 (v0.2) | USN + Rewind (ported from `ntfs-core`), facts, time window, ~120 SigmaHQ + own rules, Svelte viewer (Summary, Findings, Outside-baseline) | A non-expert decides the next step from a report; Rewind resolution ≥ usnjrnl_rewind | 4–6 wk |
+| 2 (v0.2) | USN + Rewind, facts, time window, own generic rules + loading external rule sets, viewer (Summary, Findings, Outside-baseline) | A non-expert decides the next step from a report; Rewind resolution ≥ usnjrnl_rewind | 4–6 wk |
 | 3 (v0.3, MVP) | `collect`, own baseline CI, Win10 22H2 / Win11 25H2, correlations, Timeline, File detail, en/ja, accuracy CI | MVP success criteria in [product.md §4](product.md#4-mvp) | 6–8 wk |
 
 ## Phase 0
@@ -100,6 +100,48 @@ Decisions before the first slice (H2):
 - [x] **P1-11 Remove product-specific rules and LOLRMM data** (`testdata/rules`, `xtask`, `NOTICE`; [ADR 0019](adr/0019-generic-rules-only.md); the maintainer found the product-named rules too narrow)
   - Done when: `testdata/rules/` holds only the 7 generic rules and no license file; the LOLRMM rules, `LICENSE-LOLRMM`, the `NOTICE` entry, `xtask lolrmm` and its `serde_json` dependency, the BloodHound and remote-access-tool rules and their tests are gone; `sigma` batch loading stays; no other test expectation changes; the full verify set passes.
   - Out of scope: rewriting git history, new generic rules, the `tool-rules` repo, ADR 0016.
+
+## Phase 2 (v0.2): USN, facts, viewer
+
+Goal: add `$J` to the same end-to-end path: USN events with their paths at the time of each event, a few generic rules that need USN, facts next to findings, a time window, and a viewer. Rules start as a small set of our own generic rules (ADR 0016, ADR 0019). External rule sets (SigmaHQ, hayabusa-rules) are not shipped, but a user can load them with `--rules`. Each slice keeps `tool analyze` working end to end. Gate (H4): a non-expert decides the next step from a report; Rewind resolution ≥ usnjrnl_rewind.
+
+- [ ] **ADR: USN parsing and Rewind are our own code**
+  - Proposal: write `usn-parse` and Rewind from Microsoft's `USN_RECORD_V2/V3/V4` documentation and the published Rewind algorithm (CyberCX, 2024). Use `ntfs-core` and usnjrnl_rewind only as test oracles, run outside the repo. No third-party code is copied, so `NOTICE` gains nothing. This supersedes "ported from `ntfs-core`" in `oss-reuse.md` and `architecture.md`.
+  - Done when: ADR accepted; `oss-reuse.md` and `architecture.md` updated to match.
+  - Out of scope: the code.
+- [ ] **P2-1 `usn-parse`** (new crate; `ntfs-types` only)
+  - Done when: `$J` bytes → `UsnEvent` (USN, `FileRef` of the file and parent, `Filetime`, reason flags, attributes, `NtfsName`) for V2 and V3. V4 range records and unknown versions become a `Diagnostic` and are skipped. The leading zero (sparse) region is skipped without diagnostics. A truncated or corrupt record becomes a `Diagnostic`, never a panic, and parsing resumes at the next 8-byte-aligned record. Synthetic records come from a test builder. There are proptest no-panic properties and a `cargo fuzz` target. On the 9 Yamato hosts and Simulated-Case-1, the record count equals the oracle's (counts in the hand-over).
+  - Out of scope: carving from free space, `$LogFile`, paths, the CLI.
+- [ ] **P2-2 `--usn <$J>` in `tool analyze`** (`cli`, `analyze`, `report`)
+  - Done when: `--usn` adds one row per USN event to CSV and JSONL (`source` = `mft`/`usn`, the USN, reason names, event time). Its path comes from the current `$MFT` with a sequence check, otherwise `unknown`. Rows are sorted by explicit keys, and output is byte-identical across runs. `--usn` without a readable `$J` fails with a message. Existing MFT rows are unchanged.
+  - Out of scope: Rewind, detection on USN, directory/zip input (Phase 3, M2), HTML changes.
+- [ ] **P2-3 Rewind** (`resolve`)
+  - Done when: each USN event gets the path it had at that moment, including renamed and deleted files and reused MFT entries. Its state is `resolved`, `inferred` (built partly from the journal) or `unknown`, and a path is never invented. Unit tests cover rename, delete, entry reuse and parent move on synthetic journals. On the 9 Yamato hosts and Simulated-Case-1, the share of events with a full path is ≥ usnjrnl_rewind's. Recorded in `docs/research/rewind.md`; this is the gate metric.
+  - Out of scope: carving, cross-volume moves, `$LogFile`.
+- [ ] **P2-4 Sigma on USN events** (`detect`, `analyze`)
+  - Done when: USN events are emitted as `file_event` (create), `file_delete`, `file_rename` (`SourceFilename`, `TargetFilename`) and `file_change`, with the USN time. Outside-baseline USN events also match `service: baseline_outside`. Findings carry the USN and the path state. An e2e test covers each category with a near-miss.
+  - Out of scope: correlations (Phase 3), new rules.
+- [ ] **P2-5 Own generic USN rules** (`testdata/rules`; ADR 0016, ADR 0019)
+  - Done when: 3–5 rules that use only generic facts (no product or tool names). The list and levels are approved at H1; candidates are `.evtx` deleted, a file renamed to an executable extension, and an executable deleted from Temp or Public. Each has one e2e test with a near-miss. A run on the 10 local hosts reports per-rule, per-level counts in the hand-over.
+  - Out of scope: external rules, the `tool-rules` repo, correlations.
+- [ ] **P2-6 Load external rule sets** (`sigma`, `cli`)
+  - Done when: `--rules` may be repeated. A rule the engine cannot use (correlation, unknown modifier or field, a logsource we never emit, a missing `id`) is skipped with a diagnostic naming the file and the reason. Skipped rules are counted in the HTML summary and listed in a CSV/JSONL side output, never silently dropped. A duplicate `id` across directories is still an error. Tests use small rules written for the test, in the shape of SigmaHQ rules; no third-party rule text is copied. Changes the expectation of `a_rule_without_id_fails_with_a_message_not_a_panic` (H5, approved with this item).
+  - Out of scope: shipping or fetching external rules, `tool rules update`, `explain` texts.
+- [ ] **P2-7 Facts** (`analyze`, `report`)
+  - Done when: each row carries facts, shown next to findings and never used to order them. The facts are: deleted, seen in MFT/USN/both, ADS names (incl. `Zone.Identifier`), and timestomp hints (`$SI` created < `$FN` created; zero sub-seconds). They appear as CSV and JSONL columns and in HTML finding rows, with an e2e test per fact.
+  - Out of scope: owner SID (`$SDS`, Phase 3), `Zone.Identifier` content, new rules on facts.
+- [ ] **P2-8 Time window** (`cli`, `analyze`, `report`)
+  - Done when: `--from`, `--to` and `--tz` select a window on either created time (ADR 0011) or the USN time. Detection still runs on everything; the HTML lists only in-window rows, and CSV/JSONL gain `in_window`. The report warns when the window starts before the first USN event. Bad dates fail with a message. Output is byte-identical across runs.
+  - Out of scope: per-screen filters in the viewer (P2-9).
+- [ ] **ADR: viewer build** (Svelte with a committed single-file build, plain JS on the current template, or another option)
+  - Done when: ADR accepted, including its dependency and supply-chain controls (H2).
+  - Out of scope: the viewer code.
+- [ ] **P2-9 Viewer: Summary, Findings, Outside-baseline** (`report`; per the viewer ADR)
+  - Done when: one self-contained HTML file with three screens. Summary shows the host, input, window, USN coverage, critical/high counts and the outside-baseline count in the window. Findings are ordered level → time and filterable by level and rule. Each row carries a `folder` category computed in Rust and written to CSV/JSONL too: the first match in a fixed list (Public, Downloads, Desktop, Documents, Temp, AppData, User profile, ProgramData, Program Files, Windows, Other, no path), with `\Users\Public\` checked before the per-user folders; unit tests cover each category and that order. The outside-baseline list is grouped by this category, and the viewer filters by it. The viewer also filters by a time range (from/to, UTC, `to` inclusive) on `$SI` created, `$FN` created or the USN time, inside the rows the HTML holds. Filter state is kept in the URL hash. All P1-5 attacker-name tests still pass, there is no `innerHTML`, and output is byte-identical across runs.
+  - Out of scope: Timeline and File detail screens, en/ja (Phase 3), the privilege grouping (product.md §6).
+- [ ] **P2-10 Gate material**
+  - Done when: the Rewind comparison (P2-3) is summarized, and a report from Simulated-Case-1 is ready for a non-expert session. The human runs the session and ticks the gate.
+  - Out of scope: optimization beyond the gate.
 
 ## Risks
 
