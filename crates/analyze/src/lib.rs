@@ -55,6 +55,8 @@ pub fn rows<'a>(
 pub struct UsnRow<'a> {
     pub record: &'a usn_parse::Record,
     pub directory: Resolution<'a>,
+    /// For events on files with a known path, when a baseline is given; `None` otherwise.
+    pub baseline: Option<Status>,
     /// Matched rules, most severe first (empty without rules).
     pub findings: Vec<Finding>,
 }
@@ -66,7 +68,6 @@ pub fn usn_rows<'a>(
     baseline: Option<&'a Baseline>,
     rules: Option<&'a Rules>,
 ) -> impl Iterator<Item = UsnRow<'a>> {
-    let _ = baseline;
     let directories = Resolver::new(entries).rewind(records);
     // A rename's old path by file (entry, sequence), until the handle closes.
     let mut old_paths: HashMap<(u64, u16), String> = HashMap::new();
@@ -74,30 +75,47 @@ pub fn usn_rows<'a>(
         .iter()
         .zip(directories)
         .map(move |(record, directory)| {
-            let mut findings = Vec::new();
-            if let usn_parse::Record::Event(event) = record {
-                let path = file_path(&directory, event);
-                let file = (event.file.entry(), event.file.sequence());
-                if event.reason & RENAME_OLD_NAME != 0 {
-                    match &path {
-                        Some(path) => old_paths.insert(file, path.clone()),
-                        None => old_paths.remove(&file),
-                    };
-                }
-                let source = if event.reason & CLOSE != 0 {
-                    old_paths.remove(&file)
-                } else {
-                    None
-                };
-                if let (Some(rules), Some(path)) = (rules, &path) {
-                    findings = usn_findings(rules, event, path, source.as_deref());
-                }
-            }
-            UsnRow {
+            let mut row = UsnRow {
                 record,
                 directory,
-                findings,
+                baseline: None,
+                findings: Vec::new(),
+            };
+            let usn_parse::Record::Event(event) = record else {
+                return row;
+            };
+            // The file's names from the root: its directory's, then its own.
+            let segments = match &row.directory {
+                Resolution::Resolved(segments) | Resolution::Inferred(segments) => {
+                    let mut segments = segments.clone();
+                    segments.push(&event.name);
+                    Some(segments)
+                }
+                Resolution::Unknown => None,
+            };
+            if let (Some(segments), Some(baseline)) = (&segments, baseline)
+                && event.attributes & FILE_ATTRIBUTE_DIRECTORY == 0
+            {
+                let units: Vec<&[u16]> = segments.iter().map(|s| s.units()).collect();
+                row.baseline = Some(baseline.status(&units));
             }
+            let path = segments.and_then(|s| Resolution::Resolved(s).path_text());
+            let file = (event.file.entry(), event.file.sequence());
+            if event.reason & RENAME_OLD_NAME != 0 {
+                match &path {
+                    Some(path) => old_paths.insert(file, path.clone()),
+                    None => old_paths.remove(&file),
+                };
+            }
+            let source = if event.reason & CLOSE != 0 {
+                old_paths.remove(&file)
+            } else {
+                None
+            };
+            if let (Some(rules), Some(path)) = (rules, &path) {
+                row.findings = usn_findings(rules, event, path, source.as_deref(), row.baseline);
+            }
+            row
         })
 }
 
@@ -107,8 +125,9 @@ fn usn_findings(
     event: &usn_parse::UsnEvent,
     path: &str,
     source: Option<&str>,
+    baseline: Option<Status>,
 ) -> Vec<Finding> {
-    let mut findings: Vec<Finding> = detect::usn_events(event, path, source, None)
+    let mut findings: Vec<Finding> = detect::usn_events(event, path, source, baseline)
         .iter()
         .flat_map(|e| rules.evaluate(e))
         .collect();
@@ -119,16 +138,8 @@ fn usn_findings(
 /// `USN_REASON_*` flags (winioctl.h).
 const RENAME_OLD_NAME: u32 = 0x0000_1000;
 const CLOSE: u32 = 0x8000_0000;
-
-/// The path of a USN event's file: its parent directory then its name; `None` if unknown.
-fn file_path(directory: &Resolution<'_>, event: &usn_parse::UsnEvent) -> Option<String> {
-    let (Resolution::Resolved(segments) | Resolution::Inferred(segments)) = directory else {
-        return None;
-    };
-    let mut segments = segments.clone();
-    segments.push(&event.name);
-    Resolution::Resolved(segments).path_text()
-}
+/// `FILE_ATTRIBUTE_DIRECTORY` (winnt.h).
+const FILE_ATTRIBUTE_DIRECTORY: u32 = 0x10;
 
 #[cfg(test)]
 mod tests {
@@ -412,6 +423,44 @@ mod tests {
             .collect();
 
         assert_eq!(hits, [false, false, false, true, false]);
+        Ok(())
+    }
+
+    #[test]
+    fn usn_rows_of_files_with_a_known_path_get_a_baseline_status()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let vwr = "\"DirectoryName\",\"Name\",\"FullName\"\n\"C:\\Users\",\"a.txt\",\"C:\\Users\\a.txt\"\n";
+        let mut file = Vec::new();
+        baseline::build(vwr.as_bytes(), &mut file)?;
+        let baseline = Baseline::load(file)?;
+        let rules = rules(
+            "usn-outside",
+            "file_event\n  service: baseline_outside",
+            "    TargetFilename|endswith: '.txt'\n",
+        )?;
+        let entries = usn_tree();
+        let records = [
+            with_reason(0x8000_0100, usn_event("a.txt", 6)),
+            with_reason(0x8000_0100, usn_event("b.txt", 6)),
+            usn_dir_rename(6, "Users"),
+            usn_event("c.txt", 77),
+        ];
+
+        let shown: Vec<(Option<Status>, usize)> =
+            usn_rows(&entries, &records, Some(&baseline), Some(&rules))
+                .map(|r| (r.baseline, r.findings.len()))
+                .collect();
+
+        use Status::*;
+        assert_eq!(
+            shown,
+            [
+                (Some(Standard), 0),
+                (Some(Outside), 1),
+                (None, 0),
+                (None, 0)
+            ]
+        );
         Ok(())
     }
 
