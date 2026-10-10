@@ -1326,3 +1326,28 @@ fn analyze_usn_adds_rows_after_the_mft_rows() -> TestResult {
     assert_no_temporary_outputs(&dir)?;
     Ok(())
 }
+
+#[test]
+fn missing_usn_input_fails_with_a_message_and_leaves_no_output() -> TestResult {
+    let dir = scratch("missing_usn_input_fails_with_a_message_and_leaves_no_output")?;
+    let (mft, csv) = (dir.join("MFT"), dir.join("out.csv"));
+    std::fs::write(&mft, usn_volume_mft())?;
+    let _ = std::fs::remove_file(&csv);
+
+    let out = tool()
+        .args(["analyze", "-i"])
+        .arg(&mft)
+        .arg("--usn")
+        .arg(dir.join("no-such-J"))
+        .arg("--csv")
+        .arg(&csv)
+        .output()?;
+
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(1), "{stderr}");
+    assert!(stderr.contains("opening") && stderr.contains("no-such-J"), "{stderr}");
+    assert!(!stderr.contains("panicked"), "{stderr}");
+    assert!(!csv.exists());
+    assert_no_temporary_outputs(&dir)?;
+    Ok(())
+}
