@@ -118,3 +118,20 @@ fn leading_zero_region_is_skipped_without_diagnostics() -> TestResult {
     assert_eq!(only_event(&items)?.offset, u64::try_from(zeros)?);
     Ok(())
 }
+
+#[test]
+fn zero_padding_between_records_is_skipped() -> TestResult {
+    let f = Fields::default();
+    let mut j = v2(&f);
+    j.resize(4096, 0); // the rest of the journal page
+    j.extend(v2(&f));
+    let offsets: Vec<u64> = parse(j)?
+        .iter()
+        .map(|r| match r {
+            Record::Event(e) => Ok(e.offset),
+            other => Err(format!("unexpected {other:?}")),
+        })
+        .collect::<Result<_, _>>()?;
+    assert_eq!(offsets, [0, 4096]);
+    Ok(())
+}
