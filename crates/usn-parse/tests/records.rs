@@ -6,7 +6,7 @@ use std::error::Error;
 use std::io::Cursor;
 
 use support::{Fields, u16s, v2, v3};
-use usn_parse::{Record, UsnEvent, records};
+use usn_parse::{DiagCode, Diagnostic, Record, UsnEvent, records};
 
 type TestResult = Result<(), Box<dyn Error>>;
 
@@ -60,5 +60,21 @@ fn v3_record_takes_the_file_refs_from_the_low_64_bits() -> TestResult {
     assert_eq!(e.reason, f.reason);
     assert_eq!(e.attributes, f.attributes);
     assert_eq!(e.name.units(), f.name.as_slice());
+    Ok(())
+}
+
+#[test]
+fn v3_with_nonzero_high_id_bits_is_malformed() -> TestResult {
+    let f = Fields::default();
+    let bad = v3(&f, 1, 0);
+    let next = u64::try_from(bad.len())?;
+    let mut j = bad;
+    j.extend(v2(&f));
+    let items = parse(j)?;
+    let [Record::Diagnostic(d), Record::Event(e)] = items.as_slice() else {
+        return Err(format!("expected a diagnostic then an event, got {items:?}").into());
+    };
+    assert_eq!(*d, Diagnostic { code: DiagCode::Malformed, offset: 0 });
+    assert_eq!(e.offset, next);
     Ok(())
 }

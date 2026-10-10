@@ -120,14 +120,19 @@ impl<R: Read> Iterator for Records<R> {
             Ok(record) => record.get(..len)?,
             Err(e) => return Some(Err(e.into())),
         };
-        let event = parse_event(record, offset)?;
+        let item = match parse_event(record, offset) {
+            Ok(event) => Record::Event(event),
+            Err(code) => Record::Diagnostic(Diagnostic { code, offset }),
+        };
         self.pos += len;
-        Some(Ok(Record::Event(event)))
+        Some(Ok(item))
     }
 }
 
 /// Field offsets of one record version.
 struct Layout {
+    /// Bytes of the file and parent ids; ids wider than 8 bytes must have zero upper bytes.
+    id_size: usize,
     file: usize,
     parent: usize,
     usn: usize,
@@ -139,6 +144,7 @@ struct Layout {
 
 /// `USN_RECORD_V2`: 64-bit file references.
 const V2: Layout = Layout {
+    id_size: 8,
     file: 0x08,
     parent: 0x10,
     usn: 0x18,
@@ -150,6 +156,7 @@ const V2: Layout = Layout {
 
 /// `USN_RECORD_V3`: 128-bit file ids; NTFS keeps the file reference in the low 64 bits.
 const V3: Layout = Layout {
+    id_size: 16,
     file: 0x08,
     parent: 0x18,
     usn: 0x28,
@@ -159,12 +166,21 @@ const V3: Layout = Layout {
     name_len: 0x48,
 };
 
-fn parse_event(r: &[u8], offset: u64) -> Option<UsnEvent> {
-    let l = match u16_at(r, 0x04)? {
-        2 => &V2,
-        3 => &V3,
-        _ => return None,
+fn parse_event(r: &[u8], offset: u64) -> Result<UsnEvent, DiagCode> {
+    let l = match u16_at(r, 0x04) {
+        Some(2) => &V2,
+        Some(3) => &V3,
+        _ => return Err(DiagCode::Malformed),
     };
+    event(r, l, offset).ok_or(DiagCode::Malformed)
+}
+
+fn event(r: &[u8], l: &Layout, offset: u64) -> Option<UsnEvent> {
+    for id in [l.file, l.parent] {
+        if r.get(id + 8..id + l.id_size)?.iter().any(|&b| b != 0) {
+            return None;
+        }
+    }
     let name_len = usize::from(u16_at(r, l.name_len)?);
     let name_off = usize::from(u16_at(r, l.name_len + 2)?);
     let name_bytes = r.get(name_off..name_off.checked_add(name_len)?)?;
