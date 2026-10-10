@@ -97,21 +97,6 @@ impl<'a> Resolver<'a> {
         Resolution::Resolved(segments)
     }
 
-    /// The path of the directory `parent` refers to (e.g. a USN record's parent).
-    pub fn directory(&self, parent: FileRef) -> Resolution<'a> {
-        let position = usize::try_from(parent.entry())
-            .ok()
-            .and_then(|number| self.by_number.get(number).copied().flatten());
-        match position.map(|position| &self.entries[position]) {
-            Some(dir)
-                if dir.in_use && dir.is_dir && dir.file_ref.sequence() == parent.sequence() =>
-            {
-                self.path(dir)
-            }
-            _ => Resolution::Unknown,
-        }
-    }
-
     /// For each USN record, the directory its parent reference pointed to when it was written;
     /// `Unknown` for diagnostics.
     pub fn rewind<'b>(&self, records: &'b [Record]) -> Vec<Resolution<'b>>
@@ -589,45 +574,6 @@ mod tests {
 
     fn reference(number: u64, sequence: u16) -> FileRef {
         FileRef::from_raw(number | (u64::from(sequence) << 48))
-    }
-
-    #[test]
-    fn directory_resolves_a_live_parent_with_matching_sequence() {
-        let entries = [
-            dir(ROOT, 5, &[(".", ROOT, 5)]),
-            dir(30, 1, &[("Windows", ROOT, 5)]),
-            dir(31, 4, &[("System32", 30, 1)]),
-        ];
-
-        let resolver = Resolver::new(&entries);
-
-        assert_eq!(shown(&resolver.directory(reference(ROOT, 5))), Some(vec![]));
-        assert_eq!(
-            shown(&resolver.directory(reference(31, 4))),
-            Some(vec!["Windows".to_string(), "System32".to_string()])
-        );
-    }
-
-    #[test]
-    fn directory_is_unknown_for_missing_reused_deleted_or_file_parents() {
-        let mut deleted = dir(32, 1, &[("Old", ROOT, 5)]);
-        deleted.in_use = false;
-        let entries = [
-            dir(ROOT, 5, &[(".", ROOT, 5)]),
-            dir(30, 2, &[("Windows", ROOT, 5)]),
-            deleted,
-            entry(33, 1, &[("a.txt", ROOT, 5)]),
-        ];
-
-        let resolver = Resolver::new(&entries);
-
-        for (number, sequence) in [(77, 1), (30, 1), (32, 1), (33, 1)] {
-            assert_eq!(
-                shown(&resolver.directory(reference(number, sequence))),
-                None,
-                "entry {number} sequence {sequence}"
-            );
-        }
     }
 
     /// A USN record: `file` named `name` in `parent` (refs as `(entry, sequence)`).
