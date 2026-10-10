@@ -1624,3 +1624,97 @@ fn an_outside_baseline_usn_event_matches_a_baseline_outside_rule() -> TestResult
     assert_eq!(hits, ["", HIT]);
     Ok(())
 }
+
+#[test]
+fn a_usn_finding_carries_its_usn_and_inferred_path_in_every_output() -> TestResult {
+    use usn_support::{Fields, v2};
+    let dir = scratch("a_usn_finding_carries_its_usn_and_inferred_path_in_every_output")?;
+    let (mft, j, rules) = (dir.join("MFT"), dir.join("J"), dir.join("rules"));
+    let (csv, jsonl, html) = (
+        dir.join("out.csv"),
+        dir.join("out.jsonl"),
+        dir.join("out.html"),
+    );
+    std::fs::write(&mft, usn_volume_mft())?;
+    let (users, root) = (6 | (1 << 48), 5 | (1 << 48));
+    let mut journal = v2(&Fields {
+        file: 40 | (1 << 48),
+        parent: users,
+        usn: 64,
+        reason: 0x8000_0100, // FILE_CREATE | CLOSE, while \Users was \Profiles
+        name: u16s("x.exe"),
+        ..Fields::default()
+    });
+    for (usn, reason, name) in [(136, 0x1000, "Profiles"), (208, 0x2000, "Users")] {
+        journal.extend(v2(&Fields {
+            file: users,
+            parent: root,
+            usn,
+            reason,
+            attributes: 0x10, // FILE_ATTRIBUTE_DIRECTORY
+            name: u16s(name),
+            ..Fields::default()
+        }));
+    }
+    std::fs::write(&j, journal)?;
+    std::fs::create_dir_all(&rules)?;
+    std::fs::write(
+        rules.join("rule.yml"),
+        "title: USN rule\nid: usn-rule\nlevel: high\nlogsource:\n  product: windows\n  category: file_event\ndetection:\n  sel:\n    TargetFilename|endswith: '.exe'\n  condition: sel\n",
+    )?;
+
+    let status = tool()
+        .args(["analyze", "-i"])
+        .arg(&mft)
+        .arg("--usn")
+        .arg(&j)
+        .args(["--rules".as_ref(), rules.as_os_str()])
+        .args(["--csv".as_ref(), csv.as_os_str()])
+        .args(["--jsonl".as_ref(), jsonl.as_os_str()])
+        .args(["-o".as_ref(), html.as_os_str()])
+        .status()?;
+
+    assert!(status.success());
+    let rows: Vec<String> = csv_rows(&std::fs::read_to_string(&csv)?)
+        .into_iter()
+        .filter(|r| !r[7].is_empty())
+        .map(|r| [4, 5, 7, 12].map(|i| r[i].as_str()).join("|"))
+        .collect();
+    assert_eq!(rows, [r"\Profiles\x.exe|inferred|high:usn-rule|64"]);
+    let jsonl = std::fs::read_to_string(&jsonl)?;
+    let found: Vec<String> = jsonl
+        .lines()
+        .map(serde_json::from_str::<serde_json::Value>)
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .filter(|v| v["findings"].as_array().is_some_and(|f| !f.is_empty()))
+        .map(|v| {
+            format!(
+                "{}|{}|{}|{}",
+                v["path"], v["path_state"], v["findings"], v["usn"]
+            )
+        })
+        .collect();
+    assert_eq!(
+        found,
+        [r#""\\Profiles\\x.exe"|"inferred"|[{"id":"usn-rule","level":"high"}]|64"#]
+    );
+    let data = report_data(&std::fs::read_to_string(&html)?)?;
+    let finding = &data["findings"][0];
+    assert_eq!(
+        [
+            &finding["path"],
+            &finding["path_state"],
+            &finding["usn"],
+            &finding["id"]
+        ],
+        [
+            &serde_json::json!(r"\Profiles\x.exe"),
+            &serde_json::json!("inferred"),
+            &serde_json::json!(64),
+            &serde_json::json!("usn-rule")
+        ]
+    );
+    assert_eq!(data["summary"]["findings"]["high"], 1);
+    Ok(())
+}
