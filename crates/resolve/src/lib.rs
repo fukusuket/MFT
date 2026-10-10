@@ -772,4 +772,16 @@ mod tests {
             [state("inferred", r"\Old"), ("unknown".to_string(), None)]
         );
     }
+
+    #[test]
+    fn rewind_never_invents_a_path_for_an_unseen_parent() {
+        let entries = [dir(ROOT, 5, &[(".", ROOT, 5)])];
+        // 30-1 appears only as a parent; 31-1 is known, but its own parent 77-1 is not.
+        let events = [usn((40, 1), (30, 1), "a.txt"), usn((41, 1), (31, 1), "b.txt"), usn((31, 1), (77, 1), "Sub")];
+
+        let resolver = Resolver::new(&entries);
+
+        let got = states(&resolver.rewind(&events));
+        assert_eq!(got[..2], [("unknown".to_string(), None), ("unknown".to_string(), None)]);
+    }
 }
