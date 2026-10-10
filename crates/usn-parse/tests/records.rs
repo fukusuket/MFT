@@ -78,3 +78,33 @@ fn v3_with_nonzero_high_id_bits_is_malformed() -> TestResult {
     assert_eq!(e.offset, next);
     Ok(())
 }
+
+#[test]
+fn consecutive_records_come_out_in_order() -> TestResult {
+    let names = ["one", "second.txt", "3"];
+    let mut j = Vec::new();
+    let mut offsets = Vec::new();
+    for (i, name) in names.iter().enumerate() {
+        offsets.push(u64::try_from(j.len())?);
+        let f = Fields {
+            usn: i64::try_from(j.len())?,
+            name: u16s(name),
+            ..Fields::default()
+        };
+        j.extend(if i == 1 { v3(&f, 0, 0) } else { v2(&f) });
+    }
+    let got: Vec<(u64, u64, String)> = parse(j)?
+        .iter()
+        .map(|r| match r {
+            Record::Event(e) => Ok((e.offset, e.usn, e.name.to_string())),
+            other => Err(format!("unexpected {other:?}")),
+        })
+        .collect::<Result<_, _>>()?;
+    let want: Vec<(u64, u64, String)> = offsets
+        .iter()
+        .zip(names)
+        .map(|(&o, n)| (o, o, n.to_string()))
+        .collect();
+    assert_eq!(got, want);
+    Ok(())
+}
