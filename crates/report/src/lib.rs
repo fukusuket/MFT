@@ -27,7 +27,7 @@ pub enum Error {
     Json(#[from] serde_json::Error),
 }
 
-const HEADER: [&str; 11] = [
+const HEADER: [&str; 15] = [
     "entry",
     "sequence",
     "in_use",
@@ -39,6 +39,10 @@ const HEADER: [&str; 11] = [
     "si_created",
     "fn_created",
     "diagnostics",
+    "source",
+    "usn",
+    "reasons",
+    "event_time",
 ];
 
 /// CSV with one row per `$MFT` record; columns as in `HEADER`.
@@ -71,6 +75,10 @@ impl<W: Write> CsvWriter<W> {
             entry.si_created.map(Filetime::iso8601).unwrap_or_default(),
             name.map(|n| n.created.iso8601()).unwrap_or_default(),
             diagnostics.join(";"),
+            "mft".to_string(),
+            String::new(),
+            String::new(),
+            String::new(),
         ])?;
         Ok(())
     }
@@ -249,10 +257,10 @@ mod tests {
 
         assert_eq!(
             csv_of(&[root, full, empty])?,
-            "entry,sequence,in_use,name,path,path_state,baseline,findings,si_created,fn_created,diagnostics\n\
-             5,0,true,.,\\,resolved,,,,1601-01-01T00:00:00.0000000Z,\n\
-             42,3,true,a\\\\b.txt,\\a\\\\b.txt,resolved,,,2023-11-14T17:12:46.6777888Z,2024-02-29T12:34:56.1234567Z,fixup_mismatch\n\
-             43,0,false,,,unknown,,,,,bad_signature;malformed\n"
+            "entry,sequence,in_use,name,path,path_state,baseline,findings,si_created,fn_created,diagnostics,source,usn,reasons,event_time\n\
+             5,0,true,.,\\,resolved,,,,1601-01-01T00:00:00.0000000Z,,mft,,,\n\
+             42,3,true,a\\\\b.txt,\\a\\\\b.txt,resolved,,,2023-11-14T17:12:46.6777888Z,2024-02-29T12:34:56.1234567Z,fixup_mismatch,mft,,,\n\
+             43,0,false,,,unknown,,,,,bad_signature;malformed,mft,,,\n"
         );
         Ok(())
     }
@@ -306,7 +314,7 @@ mod tests {
             let row = csv.lines().nth(1).unwrap_or_default();
             assert_eq!(
                 row,
-                format!("0,0,true,{cell},,unknown,,,,1601-01-01T00:00:00.0000000Z,"),
+                format!("0,0,true,{cell},,unknown,,,,1601-01-01T00:00:00.0000000Z,,mft,,,"),
                 "name {name:?}"
             );
         }
@@ -364,7 +372,7 @@ mod tests {
         assert!(
             csv.lines()
                 .nth(1)
-                .is_some_and(|row| row.ends_with(",orphan_extension")),
+                .is_some_and(|row| row.ends_with(",orphan_extension,mft,,,")),
             "{csv}"
         );
         Ok(())

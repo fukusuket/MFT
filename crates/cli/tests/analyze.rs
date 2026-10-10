@@ -76,13 +76,13 @@ fn analyze_writes_one_csv_row_per_record_with_paths() -> TestResult {
     assert!(status.success());
     assert_eq!(
         std::fs::read_to_string(&csv).unwrap_or_default(),
-        "entry,sequence,in_use,name,path,path_state,baseline,findings,si_created,fn_created,diagnostics\n\
-         0,1,true,$MFT,\\$MFT,resolved,,,2019-04-17T18:40:00.0000000Z,1601-01-01T00:00:00.0000000Z,\n\
-         5,1,true,.,\\,resolved,,,2019-04-17T18:40:00.0000000Z,1601-01-01T00:00:00.0000000Z,\n\
-         6,1,true,Users,\\Users,resolved,,,2019-04-17T18:40:00.0000000Z,1601-01-01T00:00:00.0000000Z,\n\
-         7,1,true,a.txt,\\Users\\a.txt,resolved,,,2019-04-17T18:40:00.0000000Z,1601-01-01T00:00:00.0000000Z,\n\
-         8,1,true,old.txt,,unknown,,,2019-04-17T18:40:00.0000000Z,1601-01-01T00:00:00.0000000Z,\n\
-         9,0,false,,,unknown,,,,,bad_signature\n"
+        "entry,sequence,in_use,name,path,path_state,baseline,findings,si_created,fn_created,diagnostics,source,usn,reasons,event_time\n\
+         0,1,true,$MFT,\\$MFT,resolved,,,2019-04-17T18:40:00.0000000Z,1601-01-01T00:00:00.0000000Z,,mft,,,\n\
+         5,1,true,.,\\,resolved,,,2019-04-17T18:40:00.0000000Z,1601-01-01T00:00:00.0000000Z,,mft,,,\n\
+         6,1,true,Users,\\Users,resolved,,,2019-04-17T18:40:00.0000000Z,1601-01-01T00:00:00.0000000Z,,mft,,,\n\
+         7,1,true,a.txt,\\Users\\a.txt,resolved,,,2019-04-17T18:40:00.0000000Z,1601-01-01T00:00:00.0000000Z,,mft,,,\n\
+         8,1,true,old.txt,,unknown,,,2019-04-17T18:40:00.0000000Z,1601-01-01T00:00:00.0000000Z,,mft,,,\n\
+         9,0,false,,,unknown,,,,,bad_signature,mft,,,\n"
     );
     assert_no_temporary_outputs(&dir)?;
     Ok(())
@@ -448,7 +448,7 @@ fn extension_records_merge_into_one_row() -> TestResult {
             (
                 f[0].to_string(),
                 f[4].to_string(),
-                f[f.len() - 1].to_string(),
+                f[10].to_string(), // diagnostics
             )
         })
         .collect();
