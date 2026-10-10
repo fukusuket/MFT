@@ -286,3 +286,24 @@ fn records_split_across_reads_parse_the_same() -> TestResult {
     assert_eq!(split, whole);
     Ok(())
 }
+
+/// Returns `good`, then fails on every later read.
+struct FailsAfter(Cursor<Vec<u8>>);
+
+impl std::io::Read for FailsAfter {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        match self.0.read(buf)? {
+            0 => Err(std::io::Error::other("device gone")),
+            n => Ok(n),
+        }
+    }
+}
+
+#[test]
+fn read_error_is_an_error_and_stops() -> TestResult {
+    let mut it = records(FailsAfter(Cursor::new(v2(&Fields::default()))));
+    assert!(matches!(it.next(), Some(Ok(Record::Event(_)))));
+    assert!(matches!(it.next(), Some(Err(usn_parse::Error::Io(_)))));
+    assert!(it.next().is_none());
+    Ok(())
+}

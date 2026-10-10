@@ -64,6 +64,8 @@ pub struct Records<R> {
     base: u64,
     /// After a malformed record: scanning 8 bytes at a time for the next V2/V3 record.
     resyncing: bool,
+    /// A read failed; nothing more is returned.
+    failed: bool,
 }
 
 /// Starts reading a `$J`.
@@ -74,6 +76,7 @@ pub fn records<R: Read>(reader: R) -> Records<R> {
         pos: 0,
         base: 0,
         resyncing: false,
+        failed: false,
     }
 }
 
@@ -111,15 +114,25 @@ impl<R: Read> Records<R> {
     }
 }
 
+impl<R> Records<R> {
+    fn fail(&mut self, e: std::io::Error) -> Option<Result<Record, Error>> {
+        self.failed = true;
+        Some(Err(e.into()))
+    }
+}
+
 impl<R: Read> Iterator for Records<R> {
     type Item = Result<Record, Error>;
 
     fn next(&mut self) -> Option<Self::Item> {
+        if self.failed {
+            return None;
+        }
         loop {
             let offset = self.base + widen(self.pos);
             let head = match self.fill(8) {
                 Ok(head) => head,
-                Err(e) => return Some(Err(e.into())),
+                Err(e) => return self.fail(e),
             };
             if head.len() < 8 {
                 let zeros = head.iter().all(|&b| b == 0);
@@ -146,7 +159,7 @@ impl<R: Read> Iterator for Records<R> {
             }
             let record = match self.fill(len) {
                 Ok(record) => record,
-                Err(e) => return Some(Err(e.into())),
+                Err(e) => return self.fail(e),
             };
             let Some(record) = record.get(..len) else {
                 self.pos = self.buf.len();
