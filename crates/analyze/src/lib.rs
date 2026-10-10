@@ -53,18 +53,47 @@ pub fn rows<'a>(
 pub struct UsnRow<'a> {
     pub record: &'a usn_parse::Record,
     pub directory: Resolution<'a>,
+    /// Matched rules, most severe first (empty without rules).
+    pub findings: Vec<Finding>,
 }
 
 /// One row per `$J` item, in `$J` order.
 pub fn usn_rows<'a>(
     entries: &'a [Entry],
     records: &'a [usn_parse::Record],
+    baseline: Option<&'a Baseline>,
+    rules: Option<&'a Rules>,
 ) -> impl Iterator<Item = UsnRow<'a>> {
+    let _ = baseline;
     let directories = Resolver::new(entries).rewind(records);
     records
         .iter()
         .zip(directories)
-        .map(|(record, directory)| UsnRow { record, directory })
+        .map(move |(record, directory)| {
+            let mut findings = Vec::new();
+            if let (usn_parse::Record::Event(event), Some(rules)) = (record, rules)
+                && let Some(path) = file_path(&directory, event)
+            {
+                for event in detect::usn_events(event, &path, None, None) {
+                    findings.extend(rules.evaluate(&event));
+                }
+            }
+            UsnRow {
+                record,
+                directory,
+                findings,
+            }
+        })
+}
+
+/// The path of a USN event's file: its parent directory then its name; `None` if unknown.
+fn file_path(directory: &Resolution<'_>, event: &usn_parse::UsnEvent) -> Option<String> {
+    let (Resolution::Resolved(segments) | Resolution::Inferred(segments)) = directory else {
+        return None;
+    };
+    let mut segments = segments.clone();
+    segments.push(&event.name);
+    Resolution::Resolved(segments).path_text()
 }
 
 #[cfg(test)]
@@ -191,7 +220,7 @@ mod tests {
         });
         let records = [usn_event("a.txt", 6), usn_event("b.txt", 77), diagnostic];
 
-        let shown: Vec<Option<String>> = usn_rows(&entries, &records)
+        let shown: Vec<Option<String>> = usn_rows(&entries, &records, None, None)
             .map(|r| r.directory.path_text())
             .collect();
 
@@ -212,7 +241,7 @@ mod tests {
             usn_event("b.txt", 6),
         ];
 
-        let shown: Vec<(Option<String>, bool)> = usn_rows(&entries, &records)
+        let shown: Vec<(Option<String>, bool)> = usn_rows(&entries, &records, None, None)
             .map(|r| {
                 (
                     r.directory.path_text(),
@@ -230,6 +259,65 @@ mod tests {
                 (Some("\\New".to_string()), false),
             ]
         );
+    }
+
+    fn rules(
+        test: &str,
+        category: &str,
+        detection: &str,
+    ) -> Result<Rules, Box<dyn std::error::Error>> {
+        let dir = std::env::temp_dir().join(format!("analyze-{test}-{}", std::process::id()));
+        std::fs::create_dir_all(&dir)?;
+        std::fs::write(
+            dir.join("rule.yml"),
+            format!(
+                "title: T\nid: rule-{test}\nlevel: high\nlogsource:\n  product: windows\n  category: {category}\ndetection:\n  sel:\n{detection}  condition: sel\n"
+            ),
+        )?;
+        Ok(Rules::load(&dir)?)
+    }
+
+    fn with_reason(reason: u32, record: usn_parse::Record) -> usn_parse::Record {
+        match record {
+            usn_parse::Record::Event(mut event) => {
+                event.reason = reason;
+                usn_parse::Record::Event(event)
+            }
+            diagnostic => diagnostic,
+        }
+    }
+
+    fn usn_tree() -> [Entry; 2] {
+        let mut root = entry(5, 5, ".");
+        root.is_dir = true;
+        let mut users = entry(6, 5, "Users");
+        users.is_dir = true;
+        [root, users]
+    }
+
+    #[test]
+    fn usn_rows_carry_findings_when_rules_are_given() -> Result<(), Box<dyn std::error::Error>> {
+        let rules = rules(
+            "usn-findings",
+            "file_delete",
+            "    TargetFilename|endswith: '\\a.evtx'\n",
+        )?;
+        let entries = usn_tree();
+        let records = [
+            with_reason(0x200, usn_event("a.evtx", 6)),
+            with_reason(0x8000_0200, usn_event("a.evtx", 6)),
+            with_reason(0x8000_0200, usn_event("b.evtx", 6)),
+        ];
+
+        let with: Vec<Vec<String>> = usn_rows(&entries, &records, None, Some(&rules))
+            .map(|r| r.findings.into_iter().map(|f| f.id).collect())
+            .collect();
+
+        assert_eq!(
+            with,
+            [vec![], vec!["rule-usn-findings".to_string()], vec![]]
+        );
+        Ok(())
     }
 
     fn usn_dir_rename(dir: u64, name: &str) -> usn_parse::Record {

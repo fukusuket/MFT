@@ -171,7 +171,7 @@ fn analyze(
         let records = usn_parse::records(BufReader::new(journal))
             .collect::<Result<Vec<_>, _>>()
             .context("reading the USN journal")?;
-        for row in analyze::usn_rows(&entries, &records) {
+        for row in analyze::usn_rows(&entries, &records, baseline.as_ref(), rules.as_ref()) {
             if let Some((_, writer)) = &mut csv_writer {
                 writer.write_usn(&row)?;
             }
