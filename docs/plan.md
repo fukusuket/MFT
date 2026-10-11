@@ -121,7 +121,7 @@ Goal: add `$J` to the same end-to-end path: USN events with their paths at the t
 - [x] **P2-4 Sigma on USN events** (`detect`, `analyze`)
   - Done when: USN events are emitted as `file_event` (create), `file_delete`, `file_rename` (`SourceFilename`, `TargetFilename`) and `file_change`, with the USN time. Outside-baseline USN events also match `service: baseline_outside`. Findings carry the USN and the path state. An e2e test covers each category with a near-miss.
   - Out of scope: correlations (Phase 3), new rules.
-- [ ] **P2-5 Own generic USN rules** (`testdata/rules`; ADR 0016, ADR 0019)
+- [x] **P2-5 Own generic USN rules** (`testdata/rules`; ADR 0016, ADR 0019)
   - Done when: 3–5 rules that use only generic facts (no product or tool names). The list and levels are approved at H1; candidates are `.evtx` deleted, a file renamed to an executable extension, and an executable deleted from Temp or Public. Each has one e2e test with a near-miss. A run on the 10 local hosts reports per-rule, per-level counts in the hand-over.
   - Out of scope: external rules, the `tool-rules` repo, correlations.
 - [ ] **P2-6 Load external rule sets** (`sigma`, `cli`)
