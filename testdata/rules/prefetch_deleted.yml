@@ -1,0 +1,16 @@
+# Sample rule for tests. Detection Rule License (DRL) 1.1.
+title: Prefetch file deleted
+id: 86061388-f5df-4d42-8dc0-a826d2a38705
+status: test
+description: A .pf file deleted from the Prefetch folder. Prefetch shows which programs ran; deleting it hides that. Windows also trims old entries.
+author: tool
+date: 2026-10-11
+logsource:
+  product: windows
+  category: file_delete
+detection:
+  selection:
+    TargetFilename|startswith: 'C:\Windows\Prefetch\'
+    TargetFilename|endswith: '.pf'
+  condition: selection
+level: medium

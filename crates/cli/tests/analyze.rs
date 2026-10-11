@@ -1809,3 +1809,25 @@ fn sample_rules_flag_a_deleted_event_log_but_not_a_deleted_evtx_copy() -> TestRe
     assert_eq!(flagged, [true, false], "{hits:?}");
     Ok(())
 }
+
+const PREFETCH_DELETED: &str = "medium:86061388-f5df-4d42-8dc0-a826d2a38705";
+
+#[test]
+fn sample_rules_flag_a_deleted_prefetch_file_but_not_a_created_one() -> TestResult {
+    let events = [
+        (40, 12, 0x8000_0100, "X.EXE-1234ABCD.pf"), // created in \Windows\Prefetch
+        (40, 12, 0x8000_0200, "X.EXE-1234ABCD.pf"), // deleted
+    ];
+
+    let hits = sample_usn_hits(
+        "sample_rules_flag_a_deleted_prefetch_file_but_not_a_created_one",
+        &events,
+    )?;
+
+    let flagged: Vec<bool> = hits
+        .iter()
+        .map(|c| has_finding(c, PREFETCH_DELETED))
+        .collect();
+    assert_eq!(flagged, [false, true], "{hits:?}");
+    Ok(())
+}
