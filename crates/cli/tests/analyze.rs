@@ -1795,6 +1795,7 @@ fn sample_rules_flag_a_deleted_event_log_but_not_a_deleted_evtx_copy() -> TestRe
     let events = [
         (40, 11, 0x8000_0200, "Security.evtx"), // \Windows\System32\winevt\Logs
         (41, 13, 0x8000_0200, "Security.evtx"), // \Windows\SystemTemp: a diagnostic copy
+        (42, 11, 0x8000_0200, "Security.txt"),  // not a log file
     ];
 
     let hits = sample_usn_hits(
@@ -1806,7 +1807,7 @@ fn sample_rules_flag_a_deleted_event_log_but_not_a_deleted_evtx_copy() -> TestRe
         .iter()
         .map(|c| has_finding(c, EVENT_LOG_DELETED))
         .collect();
-    assert_eq!(flagged, [true, false], "{hits:?}");
+    assert_eq!(flagged, [true, false, false], "{hits:?}");
     Ok(())
 }
 
@@ -1817,6 +1818,7 @@ fn sample_rules_flag_a_deleted_prefetch_file_but_not_a_created_one() -> TestResu
     let events = [
         (40, 12, 0x8000_0100, "X.EXE-1234ABCD.pf"), // created in \Windows\Prefetch
         (40, 12, 0x8000_0200, "X.EXE-1234ABCD.pf"), // deleted
+        (41, 13, 0x8000_0200, "X.EXE-1234ABCD.pf"), // deleted outside \Windows\Prefetch
     ];
 
     let hits = sample_usn_hits(
@@ -1828,7 +1830,7 @@ fn sample_rules_flag_a_deleted_prefetch_file_but_not_a_created_one() -> TestResu
         .iter()
         .map(|c| has_finding(c, PREFETCH_DELETED))
         .collect();
-    assert_eq!(flagged, [false, true], "{hits:?}");
+    assert_eq!(flagged, [false, true, false], "{hits:?}");
     Ok(())
 }
 
