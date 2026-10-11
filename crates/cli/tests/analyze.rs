@@ -1831,3 +1831,34 @@ fn sample_rules_flag_a_deleted_prefetch_file_but_not_a_created_one() -> TestResu
     assert_eq!(flagged, [false, true], "{hits:?}");
     Ok(())
 }
+
+const RENAMED_TO_EXECUTABLE: &str = "low:c1dc8c69-e965-4e27-aa2c-1859fe078f59";
+
+#[test]
+fn sample_rules_flag_a_rename_to_an_executable_but_not_between_executables() -> TestResult {
+    let events = [
+        (40, 6, 0x0000_1000, "a.txt"), // RENAME_OLD_NAME in \Users
+        (40, 6, 0x0000_2000, "a.exe"), // RENAME_NEW_NAME
+        (40, 6, 0x8000_2000, "a.exe"), // ... | CLOSE
+        (41, 6, 0x0000_1000, "b.exe"),
+        (41, 6, 0x0000_2000, "c.exe"),
+        (41, 6, 0x8000_2000, "c.exe"), // already an executable
+        (42, 6, 0x8000_2000, "d.exe"), // old name not in the journal
+    ];
+
+    let hits = sample_usn_hits(
+        "sample_rules_flag_a_rename_to_an_executable_but_not_between_executables",
+        &events,
+    )?;
+
+    let flagged: Vec<bool> = hits
+        .iter()
+        .map(|c| has_finding(c, RENAMED_TO_EXECUTABLE))
+        .collect();
+    assert_eq!(
+        flagged,
+        [false, false, true, false, false, false, true],
+        "{hits:?}"
+    );
+    Ok(())
+}
