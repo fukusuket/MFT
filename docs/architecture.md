@@ -46,6 +46,7 @@ USN events come from the record with `CLOSE`, which carries every reason of its 
 | `FILE_DELETE` | `file_delete` | `TargetFilename`, `UtcTime` |
 
 Data writes (`DATA_*`) are not events. An operation still open at the end of `$J` has no closing record and gives no event.
+A rule without `category` matches each event of a record, so it can list the same finding twice. USN baseline status uses the path whenever it is known, `inferred` included: those names come from the journal, not guesses.
 
 Facts shown next to findings, never used to rank them: baseline status, timestomp hints (`$SI < $FN`, zero sub-seconds), Zone.Identifier, ADS, deleted, path-resolution state (`resolved`/`inferred`/`unknown`), seen in MFT/USN/both, owner SID.
 

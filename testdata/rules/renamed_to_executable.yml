@@ -1,0 +1,37 @@
+# Sample rule for tests. Detection Rule License (DRL) 1.1.
+title: File renamed to an executable or script
+id: c1dc8c69-e965-4e27-aa2c-1859fe078f59
+status: test
+description: A file renamed so that it ends in an executable or script extension, from a name that did not (or from an unknown name). Installers and updaters do this often; so does malware that arrives under a harmless name.
+author: tool
+date: 2026-10-11
+logsource:
+  product: windows
+  category: file_rename
+detection:
+  target:
+    TargetFilename|endswith:
+      - '.exe'
+      - '.dll'
+      - '.msi'
+      - '.ps1'
+      - '.bat'
+      - '.cmd'
+      - '.vbs'
+      - '.js'
+      - '.hta'
+      - '.scr'
+  source:
+    SourceFilename|endswith:
+      - '.exe'
+      - '.dll'
+      - '.msi'
+      - '.ps1'
+      - '.bat'
+      - '.cmd'
+      - '.vbs'
+      - '.js'
+      - '.hta'
+      - '.scr'
+  condition: target and not source
+level: low
