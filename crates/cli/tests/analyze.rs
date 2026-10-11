@@ -1862,3 +1862,25 @@ fn sample_rules_flag_a_rename_to_an_executable_but_not_between_executables() -> 
     );
     Ok(())
 }
+
+const EXECUTABLE_DELETED: &str = "low:ec51197e-7a30-4b9b-8998-9b790d8212d2";
+
+#[test]
+fn sample_rules_flag_an_executable_deleted_from_public_but_not_a_document() -> TestResult {
+    let events = [
+        (40, 7, 0x8000_0200, "x.exe"), // \Users\Public
+        (41, 7, 0x8000_0200, "x.txt"),
+    ];
+
+    let hits = sample_usn_hits(
+        "sample_rules_flag_an_executable_deleted_from_public_but_not_a_document",
+        &events,
+    )?;
+
+    let flagged: Vec<bool> = hits
+        .iter()
+        .map(|c| has_finding(c, EXECUTABLE_DELETED))
+        .collect();
+    assert_eq!(flagged, [true, false], "{hits:?}");
+    Ok(())
+}

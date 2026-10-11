@@ -1,0 +1,31 @@
+# Sample rule for tests. Detection Rule License (DRL) 1.1.
+title: Executable or script deleted from a Temp or Public folder
+id: ec51197e-7a30-4b9b-8998-9b790d8212d2
+status: test
+description: An executable, script or installer deleted from a user's or the system Temp folder, or from the Public user profile. Installers clean up this way all the time; so do attackers removing their tools.
+author: tool
+date: 2026-10-11
+logsource:
+  product: windows
+  category: file_delete
+detection:
+  user_temp:
+    TargetFilename|contains: '\AppData\Local\Temp\'
+  system_temp:
+    TargetFilename|startswith: 'C:\Windows\Temp\'
+  public:
+    TargetFilename|startswith: 'C:\Users\Public\'
+  executable:
+    TargetFilename|endswith:
+      - '.exe'
+      - '.dll'
+      - '.msi'
+      - '.ps1'
+      - '.bat'
+      - '.cmd'
+      - '.vbs'
+      - '.js'
+      - '.hta'
+      - '.scr'
+  condition: (user_temp or system_temp or public) and executable
+level: low
