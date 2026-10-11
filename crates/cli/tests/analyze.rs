@@ -1463,42 +1463,14 @@ fn usn_rule_hits(
     events: &[(u64, u32, &str)],
     baseline: Option<&str>,
 ) -> Result<Vec<String>, Box<dyn Error>> {
-    use usn_support::{Fields, v2};
     let dir = scratch(test)?;
-    let (mft, j, csv, rules) = (
-        dir.join("MFT"),
-        dir.join("J"),
-        dir.join("out.csv"),
-        dir.join("rules"),
-    );
-    std::fs::write(&mft, usn_volume_mft())?;
-    let mut journal = Vec::new();
-    for &(file, reason, name) in events {
-        journal.extend(v2(&Fields {
-            file: file | (1 << 48),
-            parent: 6 | (1 << 48),
-            reason,
-            attributes: 0x20,
-            name: u16s(name),
-            ..Fields::default()
-        }));
-    }
-    std::fs::write(&j, journal)?;
+    let rules = dir.join("rules");
     std::fs::create_dir_all(&rules)?;
     std::fs::write(
         rules.join("rule.yml"),
         format!("title: USN rule\nid: usn-rule\nlevel: high\n{rule}"),
     )?;
-    let mut command = tool();
-    command
-        .args(["analyze", "-i"])
-        .arg(&mft)
-        .arg("--usn")
-        .arg(&j)
-        .arg("--csv")
-        .arg(&csv)
-        .arg("--rules")
-        .arg(&rules);
+    let mut baseline_args = Vec::new();
     if let Some(full_name) = baseline {
         let (vwr, index) = (dir.join("vwr.csv"), dir.join("b.fst"));
         std::fs::write(&vwr, format!("\"FullName\"\n\"{full_name}\"\n"))?;
@@ -1511,10 +1483,53 @@ fn usn_rule_hits(
         if !built.success() {
             return Err("baseline build failed".into());
         }
-        command.arg("--baseline").arg(&index);
+        baseline_args = vec!["--baseline".into(), index.into_os_string()];
     }
+    let events: Vec<(u64, u64, u32, &str)> = events
+        .iter()
+        .map(|&(file, reason, name)| (file, 6, reason, name))
+        .collect();
+    usn_hits(&dir, usn_volume_mft(), &events, &rules, &baseline_args)
+}
 
-    if !command.status()?.success() {
+/// The `findings` cell of each USN row after `tool analyze` on `mft` and a `$J` of `events`
+/// (file entry, parent entry, reason, name), with `rules` and `extra` arguments.
+fn usn_hits(
+    dir: &std::path::Path,
+    mft: Vec<u8>,
+    events: &[(u64, u64, u32, &str)],
+    rules: &std::path::Path,
+    extra: &[std::ffi::OsString],
+) -> Result<Vec<String>, Box<dyn Error>> {
+    use usn_support::{Fields, v2};
+    let (mft_path, j, csv) = (dir.join("MFT"), dir.join("J"), dir.join("out.csv"));
+    std::fs::write(&mft_path, mft)?;
+    let mut journal = Vec::new();
+    for &(file, parent, reason, name) in events {
+        journal.extend(v2(&Fields {
+            file: file | (1 << 48),
+            parent: parent | (1 << 48),
+            reason,
+            attributes: 0x20,
+            name: u16s(name),
+            ..Fields::default()
+        }));
+    }
+    std::fs::write(&j, journal)?;
+
+    let status = tool()
+        .args(["analyze", "-i"])
+        .arg(&mft_path)
+        .arg("--usn")
+        .arg(&j)
+        .arg("--csv")
+        .arg(&csv)
+        .arg("--rules")
+        .arg(rules)
+        .args(extra)
+        .status()?;
+
+    if !status.success() {
         return Err("analyze failed".into());
     }
     Ok(csv_rows(&std::fs::read_to_string(&csv)?)
