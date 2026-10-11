@@ -1733,3 +1733,79 @@ fn a_usn_finding_carries_its_usn_and_inferred_path_in_every_output() -> TestResu
     assert_eq!(data["summary"]["findings"]["high"], 1);
     Ok(())
 }
+
+/// Directories the sample USN rules look at: `\Users\Public` (7), `\Windows\System32\winevt\Logs`
+/// (11), `\Windows\Prefetch` (12) and `\Windows\SystemTemp` (13).
+fn sample_usn_volume_mft() -> Vec<u8> {
+    let dirs: [(u64, &str); 9] = [
+        (5, "."),
+        (5, "Users"),
+        (6, "Public"),
+        (5, "Windows"),
+        (8, "System32"),
+        (9, "winevt"),
+        (10, "Logs"),
+        (8, "Prefetch"),
+        (8, "SystemTemp"),
+    ];
+    let mut mft = record(
+        1024,
+        true,
+        0,
+        &[
+            standard_information(),
+            file_name_with(5 | (1 << 48), &u16s("$MFT"), 1, 0),
+        ],
+    );
+    mft.extend(vec![0u8; 4 * 1024]);
+    for (entry, &(parent, name)) in (5..).zip(&dirs) {
+        mft.extend(record_with_flags(
+            1024,
+            3, // in use, directory
+            entry,
+            &[
+                standard_information(),
+                file_name_with(parent | (1 << 48), &u16s(name), 1, 0),
+            ],
+        ));
+    }
+    mft
+}
+
+/// The `findings` cell of each USN row after running the sample rules on `events` (file
+/// entry, parent entry, reason, name) in [`sample_usn_volume_mft`].
+fn sample_usn_hits(
+    test: &str,
+    events: &[(u64, u64, u32, &str)],
+) -> Result<Vec<String>, Box<dyn Error>> {
+    let dir = scratch(test)?;
+    usn_hits(
+        &dir,
+        sample_usn_volume_mft(),
+        events,
+        SAMPLE_RULES.as_ref(),
+        &[],
+    )
+}
+
+const EVENT_LOG_DELETED: &str = "high:c399fb61-fc2f-4198-bb2e-ae57a6176abe";
+
+#[test]
+fn sample_rules_flag_a_deleted_event_log_but_not_a_deleted_evtx_copy() -> TestResult {
+    let events = [
+        (40, 11, 0x8000_0200, "Security.evtx"), // \Windows\System32\winevt\Logs
+        (41, 13, 0x8000_0200, "Security.evtx"), // \Windows\SystemTemp: a diagnostic copy
+    ];
+
+    let hits = sample_usn_hits(
+        "sample_rules_flag_a_deleted_event_log_but_not_a_deleted_evtx_copy",
+        &events,
+    )?;
+
+    let flagged: Vec<bool> = hits
+        .iter()
+        .map(|c| has_finding(c, EVENT_LOG_DELETED))
+        .collect();
+    assert_eq!(flagged, [true, false], "{hits:?}");
+    Ok(())
+}

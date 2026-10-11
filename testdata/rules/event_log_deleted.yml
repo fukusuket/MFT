@@ -1,0 +1,16 @@
+# Sample rule for tests. Detection Rule License (DRL) 1.1.
+title: Windows event log file deleted
+id: c399fb61-fc2f-4198-bb2e-ae57a6176abe
+status: test
+description: An .evtx file deleted from the Windows event log folder. Clearing a log empties the file; deleting it removes the log itself.
+author: tool
+date: 2026-10-11
+logsource:
+  product: windows
+  category: file_delete
+detection:
+  selection:
+    TargetFilename|startswith: 'C:\Windows\System32\winevt\Logs\'
+    TargetFilename|endswith: '.evtx'
+  condition: selection
+level: high
