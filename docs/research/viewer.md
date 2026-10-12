@@ -42,6 +42,25 @@ Node 22 (V8, as in Chrome) on the maintainer's Mac. 1 M rows = Simulated-Case-1'
 - The current template's `Uint8Array.from(atob(..), fn)` ran out of memory at ≈ 280 MB. `Uint8Array.fromBase64` (Baseline 2025: Chrome 140, Firefox 133, Safari 18.2) or a plain loop avoids it.
 - A sample viewer (plain JS, capped virtual scroll, presets, search, sort, URL hash) logic-tested against a DOM stub: 127 k real rows load in 0.17 s; at 1 M rows sort is 0.3 s, a search including the first lowercase pass 0.18 s, a filter 3 ms.
 
+## P2-9 viewer at a million rows
+
+Measured 2026-10-12 on the maintainer's Mac with Node 22 and the test DOM stand-in, using [crates/report/tests/js/bench.mjs](../../crates/report/tests/js/bench.mjs). Rows are copies of `desktop6`'s report rows. Filter and search figures are medians of 5 runs; load, opening a tab, the heap and "first" searches are single runs. Two runs of the first shape differed by at most 2 ms.
+
+| Operation | 1 M outside + 50 k findings | 100 k outside + 250 k findings |
+|---|---|---|
+| Load: decode, parse, search texts, first draw | 6.2 s | 6.9 s |
+| Findings: level / folder / rule / time filter | 1–6 ms | 3–40 ms |
+| Findings: search | 7 ms (first 8 ms) | 35 ms (first 36 ms) |
+| Outside: open tab, folder chip | 49 ms, 25 ms | 7 ms, 3 ms |
+| Outside: search | 84 ms (first 102 ms) | 8 ms (first 11 ms) |
+| Heap after load | 1,045 MiB | 963 MiB |
+
+- Every filter and search stays under the 200 ms target. Measured once on the previous commit, before the search texts were built at load, a search over 1 M rows took 354 ms (779 ms the first time).
+- Node has no `Uint8Array.fromBase64`, so load uses the plain-loop decoder; browsers that have it may load faster (not measured).
+- The maintainer opened the 1 M-row page (420 MiB) in Chrome and Firefox and reported OK for: it opens, the last row of the 1 M-row list is reachable, the search responds at once. Load time in the browsers was not reported.
+
+**Limit: one embedded string.** The real pipeline's 1 M-row report (synthetic 1 GiB `$MFT`: 984,603 outside-baseline files, findings on 341,140 entries) is 918 MB. Its Base64 payload (917,646,776 characters) is longer than V8's maximum string length (536,870,888): Node fails with `ERR_STRING_TOO_LONG` (observed), and Chrome, also V8, cannot hold it either (derived, not opened). Firefox's limit is about 2^30 characters (not tested). One payload holds about 1.57 M outside-baseline rows (256 bytes of JSON each) or about 282 k findings (1,427 bytes each, 789 of them the "why it matched" trace). Real clients stay far below this once the time window applies (`desktop6`, two days: 4,265 + 204 rows, 1.8 MB), but a report without a window on a large volume can cross it. The next step is ADR 0020's escalation step 2 (split the payload into chunks, or move the traces out of the rows), decided by its own ADR.
+
 ## Rendering
 
 | Option | Many rows | Simplicity | Caveat | Verdict |
@@ -85,7 +104,7 @@ Element height cap: Firefox ignores heights above 17,895,697 px; Chrome and Safa
 
 ## Open
 
-- Paint and scroll smoothness in real browsers (Chrome, Firefox, Safari), including the capped spacer.
+- Paint and scroll smoothness in Safari; load times in browsers.
 - Blob workers and WASM instantiation under `file://`.
 
 ## Sources

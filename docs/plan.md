@@ -169,7 +169,7 @@ Goal: add `$J` to the same end-to-end path: USN events with their paths at the t
 
     The payload is decoded with `Uint8Array.fromBase64` and a plain-loop fallback. Tables use the DOM virtual scroll of ADR 0020 (fixed row height, capped spacer). JS tests cover each filter, the inclusive `to`, URL hash round trip and the scroll row mapping. All P1-5 attacker-name tests still pass, there is no `innerHTML`, and output is byte-identical across runs.
   - Out of scope: sorting by other columns, filters on facts, grouped tables, a time zone switch, Timeline and File detail screens, en/ja (Phase 3), the privilege grouping (product.md §6).
-- [ ] **P2-9c Viewer performance** (`report`)
+- [x] **P2-9c Viewer performance** (`report`)
   - Done when: with 1 M synthetic rows, a filter or search finishes in ≤ 200 ms (measured by the agent under Node), and scrolling to the last row shows it in Chrome and Firefox (checked by the human). Results recorded in [research/viewer.md](research/viewer.md).
   - Out of scope: gzip and the other escalation steps of ADR 0020 unless the measurement requires them (each by its own ADR).
 - [ ] **P2-10 Gate material**
