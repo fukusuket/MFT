@@ -102,7 +102,9 @@ const viewer = (function () {
       ? Math.round((scrollTop / Math.max(1, cap - viewport)) * maxFirst)
       : Math.floor(scrollTop / rowHeight);
     const first = Math.min(Math.max(wanted, 0), maxFirst);
-    return { first, last: Math.min(total, first + fit + 1), top: capped ? scrollTop : first * rowHeight };
+    // One row more than fits, so a row cut at the top still leaves the bottom covered.
+    const drawn = Math.ceil(viewport / rowHeight) + 1;
+    return { first, last: Math.min(total, first + drawn), top: capped ? scrollTop : first * rowHeight };
   }
 
   const LEVELS = ["critical", "high", "medium", "low", "informational", "none"];

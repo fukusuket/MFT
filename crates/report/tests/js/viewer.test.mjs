@@ -266,3 +266,11 @@ test("Outside-baseline: per-folder counts filter the list, with time and path fi
   assert.equal(count(), "1 of 2");
   assert.equal(window.location.hash, "#tab=outside&to=2026-10-01");
 });
+
+test("rowRange covers the whole viewport when it is not a multiple of the row height", () => {
+  const { rowRange } = load();
+  for (const scrollTop of [0, 1, 43, 44, 300]) {
+    const r = rowRange(scrollTop, 500, 44, 100, 8_000_000);
+    assert.ok(r.top + (r.last - r.first) * 44 >= scrollTop + 500, `${scrollTop}: ${JSON.stringify(r)}`);
+  }
+});
