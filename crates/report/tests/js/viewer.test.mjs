@@ -212,14 +212,14 @@ test("Findings: filters change the hash, the N of M count and the rows; a row op
 
   assert.equal(count(), "1 of 2");
   assert.equal(rows().length, 1);
-  assert.equal(control("level").value, "high");
+  const high = screen.findAll("chip").find((c) => c.getAttribute("data-value") === "high");
+  assert.ok(high.className.includes("selected"));
   const row = rows()[0].textContent;
   for (const text of ["high", "2026-10-02T12:00:00.5000000Z", "\\Users\\Bob\\Downloads\\Tool.EXE", "downloads", "Tool in Downloads", "ADS: Zone.Identifier", "seen: mft"]) {
     assert.ok(row.includes(text), `${text} in ${row}`);
   }
 
-  control("level").value = "";
-  control("level").dispatch("change");
+  high.dispatch("click"); // a selected chip clears its filter
   assert.equal(count(), "2 of 2");
   assert.equal(window.location.hash, "#tab=findings");
 
@@ -253,11 +253,11 @@ test("Outside-baseline: per-folder counts filter the list, with time and path fi
   const screen = app.findAll("screen").find((s) => s.getAttribute("data-screen") === "outside");
   const count = () => screen.find("count").textContent;
   const rows = () => screen.findAll("row");
-  const links = screen.findAll("folder-link");
+  const links = screen.findAll("chip");
 
   assert.equal(count(), "2 of 2");
   assert.deepEqual(links.map((l) => l.textContent), ["downloads 1", "temp 1"]);
-  assert.equal(screen.find("filter-level"), null); // levels and rules are for findings
+  assert.equal(screen.find("filter-rule"), null); // levels and rules are for findings
   links[1].dispatch("click");
   assert.equal(window.location.hash, "#tab=outside&folder=temp");
   assert.equal(count(), "1 of 2");
@@ -265,8 +265,7 @@ test("Outside-baseline: per-folder counts filter the list, with time and path fi
     assert.ok(rows()[0].textContent.includes(text), text);
   }
 
-  screen.find("filter-folder").value = "";
-  screen.find("filter-folder").dispatch("change");
+  links[1].dispatch("click");
   screen.find("filter-to").value = "2026-10-01";
   screen.find("filter-to").dispatch("input");
   assert.equal(count(), "1 of 2");
@@ -355,4 +354,35 @@ test("the search matches any column a row shows, ignoring case", () => {
     assert.equal(matchOutside(o, { ...none, q }), true, q);
   }
   assert.equal(matchOutside(o, { ...none, q: "downloads" }), false);
+});
+
+test("Findings: level and folder chips with counts toggle their filter; rules list their counts", () => {
+  const { window, app } = open("#tab=findings");
+  const screen = app.findAll("screen").find((s) => s.getAttribute("data-screen") === "findings");
+  const chips = (key) => screen.findAll("chip").filter((c) => c.getAttribute("data-key") === key);
+
+  assert.deepEqual(chips("level").map((c) => c.textContent), ["high 1", "low 1"]);
+  assert.deepEqual(chips("folder").map((c) => c.textContent), ["downloads 1", "temp 1"]);
+  assert.deepEqual(
+    screen.find("filter-rule").children.map((o) => o.textContent),
+    ["all rules", "Tool in Downloads (1)", "DLL in Temp (1)"],
+  );
+  chips("level")[1].dispatch("click");
+  assert.equal(window.location.hash, "#tab=findings&level=low");
+  assert.equal(screen.find("count").textContent, "1 of 2");
+  chips("level")[1].dispatch("click");
+  assert.equal(window.location.hash, "#tab=findings");
+});
+
+test("the active filters are listed with a remove button each, and Clear removes them all", () => {
+  const { window, app } = open("#tab=findings&level=high&from=2026-10-01&q=tool");
+  const screen = app.findAll("screen").find((s) => s.getAttribute("data-screen") === "findings");
+  const active = () => screen.findAll("active-filter").map((a) => a.textContent);
+
+  assert.deepEqual(active(), ["level: high ✕", "from: 2026-10-01 ✕", "search: tool ✕"]);
+  screen.findAll("active-filter")[2].dispatch("click");
+  assert.equal(window.location.hash, "#tab=findings&level=high&from=2026-10-01");
+  screen.find("clear").dispatch("click");
+  assert.equal(window.location.hash, "#tab=findings");
+  assert.deepEqual(active(), []);
 });

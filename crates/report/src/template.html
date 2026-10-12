@@ -26,7 +26,11 @@ button { font: inherit; color: inherit; background: none; border: 1px solid var(
 .filters { display: flex; flex-wrap: wrap; gap: 8px 16px; margin-bottom: 8px; }
 .filters input, .filters select { font: inherit; color: inherit; background: var(--bg); border: 1px solid var(--line); border-radius: 4px; padding: 2px 4px; }
 .filters input.invalid { border-color: #b00020; }
-.count { margin: 4px 0; } .folders { display: flex; flex-wrap: wrap; gap: 6px; }
+.count { margin: 4px 0; font-weight: 600; }
+.chips, .active { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 6px 0; }
+.chip.selected { background: var(--head); border-color: var(--fg); font-weight: 600; }
+.active-filter { background: var(--head); }
+.filters input.filter-q { width: 24em; }
 [data-screen="findings"] { --cols: 7em 17em minmax(12em, 1fr) 8em minmax(10em, 18em); }
 [data-screen="outside"] { --cols: 17em minmax(12em, 1fr) 6em; }
 .list-head, .line { display: grid; grid-template-columns: var(--cols); gap: 8px; }

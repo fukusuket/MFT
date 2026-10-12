@@ -187,37 +187,74 @@ const viewer = (function () {
       screens[shown].redraws.forEach((redraw) => redraw());
     }
 
-    // A filter bar; each control writes its key of the state and reads it back on every draw.
-    function filters(screen, specs) {
+    // A list screen's filters, most used first: search and time range, the level and folder
+    // chips with their counts in `rows`, the rule, then what is active, each removable. Each
+    // control writes its key of the state and reads it back on every draw.
+    const LABELS = { level: "level", rule: "rule", folder: "folder", from: "from", to: "to", q: "search" };
+    function filters(screen, rows, keys) {
       const bar = screen.node.appendChild(el("div", undefined, "filters"));
-      const controls = specs.map(([key, label, options]) => {
-        const field = bar.appendChild(el("label", label + " "));
-        let control;
-        if (options) {
-          control = field.appendChild(el("select", undefined, "filter-" + key));
-          for (const [value, text] of options) {
-            const option = control.appendChild(el("option", text));
-            option.value = value;
-          }
-        } else {
-          control = field.appendChild(el("input", undefined, "filter-" + key));
-          control.setAttribute("placeholder", key === "q" ? "path contains" : "YYYY-MM-DD[THH:MM:SS]");
-        }
-        control.addEventListener(options ? "change" : "input", () => go({ ...state, [key]: control.value }));
-        return [key, control];
+      const inputs = [
+        ["q", "Search", "any column contains"],
+        ["from", "From", "YYYY-MM-DD[THH:MM:SS]"],
+        ["to", "To", "YYYY-MM-DD[THH:MM:SS]"],
+      ].map(([key, label, hint]) => {
+        const input = bar.appendChild(el("label", label + " ")).appendChild(el("input", undefined, "filter-" + key));
+        input.setAttribute("placeholder", hint);
+        input.addEventListener("input", () => go({ ...state, [key]: input.value }));
+        return [key, input];
       });
-      screen.redraws.push(() => {
-        for (const [key, control] of controls) {
-          // A value from a shared link that this report lacks is offered, so the filter shows.
-          if (control.tagName === "SELECT" && !Array.from(control.children).some((o) => o.value === state[key])) {
-            const option = control.appendChild(el("option", state[key] + " (not in this report)"));
-            option.value = state[key];
-          }
-          if (control.value !== state[key]) control.value = state[key];
-          if (key === "from" || key === "to") {
-            control.className = "filter-" + key + (validTime(state[key]) ? "" : " invalid");
-          }
+      bar.appendChild(el("button", "Clear", "clear")).addEventListener("click", () =>
+        go({ ...parseHash(""), tab: state.tab }),
+      );
+
+      const chips = [];
+      for (const [key, values, title] of [["level", LEVELS, "Level"], ["folder", FOLDERS, "Folder"]]) {
+        if (!keys.includes(key)) continue;
+        const counts = new Map();
+        rows.forEach((r) => counts.set(r[key], (counts.get(r[key]) || 0) + 1));
+        const line = screen.node.appendChild(el("div", title + ": ", "chips"));
+        for (const value of values.filter((v) => counts.has(v))) {
+          const chip = line.appendChild(el("button", value + " " + counts.get(value), "chip"));
+          chip.setAttribute("data-key", key);
+          chip.setAttribute("data-value", value);
+          chip.addEventListener("click", () => go({ ...state, [key]: state[key] === value ? "" : value }));
+          chips.push([key, value, chip]);
         }
+      }
+
+      let rule = null;
+      if (keys.includes("rule")) {
+        const counts = new Map();
+        rows.forEach((r) => counts.set(r.id, [r.title, ((counts.get(r.id) || [])[1] || 0) + 1]));
+        rule = screen.node.appendChild(el("label", "Rule ")).appendChild(el("select", undefined, "filter-rule"));
+        const options = [["", "all rules"], ...[...counts].sort((a, b) => (a[0] < b[0] ? -1 : 1)).map(([id, [t, n]]) => [id, t + " (" + n + ")"])];
+        for (const [value, label] of options) rule.appendChild(el("option", label)).value = value;
+        rule.addEventListener("change", () => go({ ...state, rule: rule.value }));
+      }
+
+      const active = screen.node.appendChild(el("div", undefined, "active"));
+      screen.redraws.push(() => {
+        for (const [key, input] of inputs) {
+          if (input.value !== state[key]) input.value = state[key];
+          if (key !== "q") input.className = "filter-" + key + (validTime(state[key]) ? "" : " invalid");
+        }
+        for (const [key, value, chip] of chips) chip.className = state[key] === value ? "chip selected" : "chip";
+        if (rule !== null) {
+          // A rule from a shared link that this report lacks is offered, so the filter shows.
+          if (!Array.from(rule.children).some((o) => o.value === state.rule)) {
+            rule.appendChild(el("option", state.rule + " (not in this report)")).value = state.rule;
+          }
+          if (rule.value !== state.rule) rule.value = state.rule;
+        }
+        active.replaceChildren(
+          ...keys
+            .filter((key) => state[key] !== "")
+            .map((key) => {
+              const remove = el("button", LABELS[key] + ": " + state[key] + " ✕", "active-filter");
+              remove.addEventListener("click", () => go({ ...state, [key]: "" }));
+              return remove;
+            }),
+        );
       });
     }
 
@@ -273,19 +310,7 @@ const viewer = (function () {
 
     function outside(screen) {
       const node = screen.node;
-      const per = new Map();
-      data.outside.forEach((o) => per.set(o.folder, (per.get(o.folder) || 0) + 1));
-      const folders = node.appendChild(el("p", undefined, "folders"));
-      FOLDERS.filter((f) => per.has(f)).forEach((folder) => {
-        const link = folders.appendChild(el("button", folder + " " + per.get(folder), "folder-link"));
-        link.addEventListener("click", () => go({ ...state, folder }));
-      });
-      filters(screen, [
-        ["folder", "Folder", [["", "all"], ...FOLDERS.map((f) => [f, f])]],
-        ["from", "From"],
-        ["to", "To"],
-        ["q", "Search"],
-      ]);
+      filters(screen, data.outside, ["folder", "from", "to", "q"]);
       const count = node.appendChild(el("p", undefined, "count"));
       const show = list(node, ["Created ($SI, UTC)", "Path", "MFT entry"], (row, o) => {
         row.appendChild(line([[o.created, "mono"], [o.path, "path"], [o.entry, "mono"]]));
@@ -307,15 +332,7 @@ const viewer = (function () {
 
     function findings(screen) {
       const node = screen.node;
-      const rules = new Map(data.findings.map((f) => [f.id, f.title]));
-      filters(screen, [
-        ["level", "Level", [["", "all"], ...LEVELS.map((l) => [l, l])]],
-        ["rule", "Rule", [["", "all"], ...[...rules].sort((a, b) => (a[0] < b[0] ? -1 : 1)).map(([id, t]) => [id, t])]],
-        ["folder", "Folder", [["", "all"], ...FOLDERS.map((f) => [f, f])]],
-        ["from", "From"],
-        ["to", "To"],
-        ["q", "Search"],
-      ]);
+      filters(screen, data.findings, ["level", "rule", "folder", "from", "to", "q"]);
       const count = node.appendChild(el("p", undefined, "count"));
       const show = list(node, ["Level", "Time (UTC)", "Path", "Folder", "Rule"], (row, f) => {
         row.appendChild(
