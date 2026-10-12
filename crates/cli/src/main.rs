@@ -217,6 +217,10 @@ fn analyze(
             skipped.push(pending);
         }
     }
+    // The lists first: a report is never left without the list of rules it did not run.
+    for pending in skipped {
+        pending.commit()?;
+    }
     if let Some((pending, writer)) = jsonl_writer {
         writer.finish()?.flush()?;
         pending.commit()?;
@@ -227,9 +231,6 @@ fn analyze(
     }
     if let Some((pending, file, report)) = html {
         report.finish(BufWriter::new(file))?.flush()?;
-        pending.commit()?;
-    }
-    for pending in skipped {
         pending.commit()?;
     }
     Ok(())
