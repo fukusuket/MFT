@@ -4,6 +4,7 @@ use std::collections::{HashMap, HashSet};
 
 use baseline::{Baseline, Status};
 use mft_parse::Entry;
+use ntfs_types::Filetime;
 use resolve::{Resolution, Resolver};
 use sigma::{Finding, Rules};
 
@@ -37,6 +38,19 @@ pub enum Hint {
     SiBeforeFn,
     /// `$SI` created has no sub-second part.
     SiZeroSubseconds,
+}
+
+/// A time window `[start, end)` in UTC; an unset bound is open.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Window {
+    pub start: Option<Filetime>,
+    pub end: Option<Filetime>,
+}
+
+impl Window {
+    pub fn contains(&self, time: Filetime) -> bool {
+        self.start.is_none_or(|start| start <= time) && self.end.is_none_or(|end| time < end)
+    }
 }
 
 /// One row per entry, in entry order. Lazy, so only one path is held at a time.
@@ -237,6 +251,29 @@ mod tests {
             streams: Vec::new(),
             diagnostics: vec![],
         }
+    }
+
+    #[test]
+    fn a_window_holds_its_start_but_not_its_end_and_either_may_be_open() {
+        let t = Filetime::from_raw;
+        let both = Window {
+            start: Some(t(10)),
+            end: Some(t(20)),
+        };
+        let from = Window {
+            start: Some(t(10)),
+            end: None,
+        };
+        let to = Window {
+            start: None,
+            end: Some(t(20)),
+        };
+
+        let held = |w: &Window| [9, 10, 19, 20].map(|raw| w.contains(t(raw)));
+
+        assert_eq!(held(&both), [false, true, true, false]);
+        assert_eq!(held(&from), [false, true, true, true]);
+        assert_eq!(held(&to), [true, true, true, false]);
     }
 
     #[test]
