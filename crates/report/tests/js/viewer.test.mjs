@@ -285,3 +285,11 @@ test("a filter value from the hash that the report lacks stays visible in its se
   assert.deepEqual(options.at(-1), ["old-id", "old-id (not in this report)"]);
   assert.equal(select.value, "old-id");
 });
+
+test("each finding row shows its rule's author, as the Detection Rule License requires", () => {
+  const { app } = open("#tab=findings");
+  const rows = app.findAll("screen").find((s) => s.getAttribute("data-screen") === "findings").findAll("row");
+
+  assert.ok(rows[0].textContent.includes("Tool in Downloads (author unknown)"), rows[0].textContent);
+  assert.ok(rows[1].textContent.includes("DLL in Temp (by a)"), rows[1].textContent);
+});

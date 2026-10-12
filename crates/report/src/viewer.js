@@ -280,7 +280,7 @@ const viewer = (function () {
             [f.created !== null ? f.created : f.event_time, "mono"],
             [f.path_state === "resolved" ? f.path : f.path + " (" + f.path_state + ")", "path"],
             [f.folder],
-            [f.title],
+            [f.title + (f.author === null ? " (author unknown)" : " (by " + f.author + ")")], // DRL 1.1
           ]),
         );
         const facts = [
