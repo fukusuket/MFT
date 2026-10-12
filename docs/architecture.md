@@ -100,7 +100,7 @@ The report warns when the window starts before the earliest USN event (or has no
 
 ## Crates
 
-So far: `ntfs-types`, `mft-parse`, `usn-parse`, `resolve` (MFT paths and USN Rewind, [research](research/rewind.md)), `baseline` (no zstd yet), `sigma`, `detect`, `analyze`, `report` (CSV, JSONL timeline and a static HTML template; viewer per ADR 0020 not built yet), `cli`, `xtask` (synthetic `$MFT` for the gate). `fuzz/` is a separate workspace (ADR 0013).
+So far: `ntfs-types`, `mft-parse`, `usn-parse`, `resolve` (MFT paths and USN Rewind, [research](research/rewind.md)), `baseline` (no zstd yet), `sigma`, `detect`, `analyze`, `report` (CSV, JSONL timeline and an HTML viewer: tabs, filters, virtual scroll in `viewer.js`, tested under Node per ADR 0022), `cli`, `xtask` (synthetic `$MFT` for the gate). `fuzz/` is a separate workspace (ADR 0013).
 
 | Crate | Role | Depends on | Built on |
 |---|---|---|---|
