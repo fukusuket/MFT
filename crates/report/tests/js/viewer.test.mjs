@@ -17,3 +17,27 @@ test("decode reads Base64 JSON with or without Uint8Array.fromBase64", () => {
     assert.deepEqual(JSON.parse(JSON.stringify(native)), expected);
   }
 });
+
+test("the URL hash round-trips the tab and filters, and ignores what it does not know", () => {
+  const { parseHash, formatHash } = load();
+  const state = {
+    tab: "findings",
+    level: "high",
+    rule: "rule-1",
+    folder: "downloads",
+    from: "2026-10-01",
+    to: "2026-10-02T12:00:00",
+    q: "a#b&c=d %e\\f",
+  };
+
+  const hash = formatHash(state);
+
+  assert.ok(hash.startsWith("#"));
+  assert.deepEqual({ ...parseHash(hash) }, state);
+  assert.deepEqual(
+    { ...parseHash("#tab=outside&bogus=1&q=%E0%A4%A&folder=temp") },
+    { tab: "outside", level: "", rule: "", folder: "temp", from: "", to: "", q: "" },
+  );
+  assert.deepEqual({ ...parseHash("") }, { tab: "summary", level: "", rule: "", folder: "", from: "", to: "", q: "" });
+  assert.equal(formatHash({ ...parseHash(""), tab: "findings" }), "#tab=findings");
+});

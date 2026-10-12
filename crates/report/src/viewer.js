@@ -28,6 +28,30 @@ const viewer = (function () {
     return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
   }
 
+  // The tab and filters, kept in the URL hash so a reload or a shared link shows the same view.
+  const KEYS = ["tab", "level", "rule", "folder", "from", "to", "q"];
+
+  function parseHash(hash) {
+    const state = { tab: "summary", level: "", rule: "", folder: "", from: "", to: "", q: "" };
+    for (const part of hash.replace(/^#/, "").split("&")) {
+      const at = part.indexOf("=");
+      const key = part.slice(0, at);
+      if (at < 0 || !KEYS.includes(key)) continue;
+      try {
+        state[key] = decodeURIComponent(part.slice(at + 1));
+      } catch (e) {
+        // a malformed value is ignored like an unknown key
+      }
+    }
+    return state;
+  }
+
+  function formatHash(state) {
+    const parts = KEYS.filter((key) => state[key] !== "" && !(key === "tab" && state[key] === "summary"))
+      .map((key) => key + "=" + encodeURIComponent(state[key]));
+    return "#" + parts.join("&");
+  }
+
   function render(document) {
     const data = decode(document.getElementById("data").textContent);
 
@@ -142,7 +166,7 @@ const viewer = (function () {
     document.getElementById("source").textContent = f.source_url;
   }
 
-  return { decode, render };
+  return { decode, parseHash, formatHash, render };
 })();
 
 if (typeof document !== "undefined") viewer.render(document);
