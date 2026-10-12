@@ -121,6 +121,7 @@ mod tests {
                 namespace: Namespace::Win32,
                 created: Filetime::from_raw(fn_created),
             }],
+            streams: Vec::new(),
             diagnostics: vec![],
         }
     }

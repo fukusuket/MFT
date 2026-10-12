@@ -8,8 +8,8 @@ use serde::Serialize;
 use sigma::Finding;
 
 use crate::{
-    Error, baseline_name, code, display_text, level_name, path_state, reason_names, usn_code,
-    usn_path,
+    Error, baseline_name, code, display_text, hint_names, level_name, path_state, reason_names,
+    seen_name, stream_names, usn_code, usn_deleted, usn_path, usn_seen,
 };
 
 /// JSON Lines with one object per `$MFT` record.
@@ -42,6 +42,10 @@ impl<W: Write> JsonlWriter<W> {
             usn: None,
             reasons: Vec::new(),
             event_time: None,
+            deleted: Some(!entry.in_use),
+            seen: Some(seen_name(row.seen)),
+            streams: stream_names(&entry.streams),
+            hints: hint_names(&row.hints),
         };
         self.line(&record)
     }
@@ -67,6 +71,10 @@ impl<W: Write> JsonlWriter<W> {
                     usn: None,
                     reasons: Vec::new(),
                     event_time: None,
+                    deleted: None,
+                    seen: None,
+                    streams: Vec::new(),
+                    hints: Vec::new(),
                 });
             }
         };
@@ -86,6 +94,10 @@ impl<W: Write> JsonlWriter<W> {
             usn: Some(event.usn),
             reasons: reason_names(event.reason),
             event_time: Some(event.time.iso8601()),
+            deleted: Some(usn_deleted(row)),
+            seen: Some(seen_name(usn_seen(row))),
+            streams: Vec::new(),
+            hints: Vec::new(),
         };
         self.line(&record)
     }
@@ -120,6 +132,10 @@ struct Record {
     usn: Option<u64>,
     reasons: Vec<String>,
     event_time: Option<String>,
+    deleted: Option<bool>,
+    seen: Option<&'static str>,
+    streams: Vec<String>,
+    hints: Vec<&'static str>,
 }
 
 /// One matched rule, most severe first (the order `sigma` returns).
@@ -157,7 +173,7 @@ mod tests {
         rules: Option<&sigma::Rules>,
     ) -> Result<String> {
         let mut w = JsonlWriter::new(Vec::new());
-        for row in analyze::rows(entries, baseline, rules) {
+        for row in analyze::rows(entries, &[], baseline, rules) {
             w.write(&row)?;
         }
         Ok(String::from_utf8(w.finish()?)?)
@@ -176,6 +192,7 @@ mod tests {
                 namespace: Namespace::Win32,
                 created: Filetime::from_raw(0),
             }],
+            streams: Vec::new(),
             diagnostics: vec![],
         }
     }
@@ -196,6 +213,7 @@ mod tests {
             base: None,
             si_created: None,
             names: vec![],
+            streams: Vec::new(),
             diagnostics: vec![
                 Diagnostic {
                     code: DiagCode::BadSignature,
@@ -211,11 +229,11 @@ mod tests {
         assert_eq!(
             jsonl_with(&[named(5, "."), full, empty], None, None)?,
             concat!(
-                r#"{"entry":5,"sequence":0,"in_use":true,"name":".","path":"\\","path_state":"resolved","baseline":null,"findings":[],"si_created":null,"fn_created":"1601-01-01T00:00:00.0000000Z","diagnostics":[],"source":"mft","usn":null,"reasons":[],"event_time":null}"#,
+                r#"{"entry":5,"sequence":0,"in_use":true,"name":".","path":"\\","path_state":"resolved","baseline":null,"findings":[],"si_created":null,"fn_created":"1601-01-01T00:00:00.0000000Z","diagnostics":[],"source":"mft","usn":null,"reasons":[],"event_time":null,"deleted":false,"seen":"mft","streams":[],"hints":[]}"#,
                 "\n",
-                r#"{"entry":42,"sequence":3,"in_use":true,"name":"a\\\\b.txt","path":"\\a\\\\b.txt","path_state":"resolved","baseline":null,"findings":[],"si_created":"2023-11-14T17:12:46.6777888Z","fn_created":"2024-02-29T12:34:56.1234567Z","diagnostics":["fixup_mismatch"],"source":"mft","usn":null,"reasons":[],"event_time":null}"#,
+                r#"{"entry":42,"sequence":3,"in_use":true,"name":"a\\\\b.txt","path":"\\a\\\\b.txt","path_state":"resolved","baseline":null,"findings":[],"si_created":"2023-11-14T17:12:46.6777888Z","fn_created":"2024-02-29T12:34:56.1234567Z","diagnostics":["fixup_mismatch"],"source":"mft","usn":null,"reasons":[],"event_time":null,"deleted":false,"seen":"mft","streams":[],"hints":["si_before_fn"]}"#,
                 "\n",
-                r#"{"entry":43,"sequence":0,"in_use":false,"name":null,"path":null,"path_state":"unknown","baseline":null,"findings":[],"si_created":null,"fn_created":null,"diagnostics":["bad_signature","malformed"],"source":"mft","usn":null,"reasons":[],"event_time":null}"#,
+                r#"{"entry":43,"sequence":0,"in_use":false,"name":null,"path":null,"path_state":"unknown","baseline":null,"findings":[],"si_created":null,"fn_created":null,"diagnostics":["bad_signature","malformed"],"source":"mft","usn":null,"reasons":[],"event_time":null,"deleted":true,"seen":"mft","streams":[],"hints":[]}"#,
                 "\n",
             )
         );
@@ -227,6 +245,79 @@ mod tests {
             .lines()
             .map(|line| Ok(serde_json::from_str::<serde_json::Value>(line)?[name].take()))
             .collect()
+    }
+
+    #[test]
+    fn jsonl_writes_deleted_seen_streams_and_hints() -> Result<()> {
+        let mut file = named(60 | (1 << 48), "a.txt");
+        file.si_created = Some(Filetime::from_raw(100_000_000));
+        file.names[0].created = Filetime::from_raw(200_000_000);
+        file.streams = vec![
+            NtfsName::from_units(&units("Zone.Identifier")),
+            NtfsName::from_units(&units("=x;\u{7}")),
+        ];
+        let mut deleted = named(61 | (1 << 48), "b.txt");
+        deleted.in_use = false;
+        let entries = [named(5, "."), file, deleted];
+        let event = |file: u64| {
+            usn_parse::Record::Event(usn_parse::UsnEvent {
+                offset: 0,
+                usn: 0,
+                file: FileRef::from_raw(file),
+                parent: FileRef::from_raw(5),
+                time: Filetime::from_raw(0),
+                reason: 0,
+                attributes: 0,
+                name: NtfsName::from_units(&units("x")),
+            })
+        };
+        let records = [
+            event(60 | (1 << 48)),
+            event(62 | (1 << 48)),
+            usn_parse::Record::Diagnostic(usn_parse::Diagnostic {
+                code: usn_parse::DiagCode::Malformed,
+                offset: 8,
+            }),
+        ];
+
+        let mut w = JsonlWriter::new(Vec::new());
+        for row in analyze::rows(&entries, &records, None, None) {
+            w.write(&row)?;
+        }
+        for row in analyze::usn_rows(&entries, &records, None, None) {
+            w.write_usn(&row)?;
+        }
+        let jsonl = String::from_utf8(w.finish()?)?;
+
+        let facts: Vec<serde_json::Value> = jsonl
+            .lines()
+            .map(|line| {
+                let v: serde_json::Value = serde_json::from_str(line)?;
+                Ok(serde_json::json!([
+                    v["deleted"],
+                    v["seen"],
+                    v["streams"],
+                    v["hints"]
+                ]))
+            })
+            .collect::<Result<_>>()?;
+        assert_eq!(
+            facts,
+            [
+                serde_json::json!([false, "mft", [], []]),
+                serde_json::json!([
+                    false,
+                    "both",
+                    ["Zone.Identifier", "=x;\\u{07}"],
+                    ["si_before_fn", "si_zero_subseconds"]
+                ]),
+                serde_json::json!([true, "mft", [], []]),
+                serde_json::json!([false, "both", [], []]),
+                serde_json::json!([true, "usn", [], []]),
+                serde_json::json!([null, null, [], []]),
+            ]
+        );
+        Ok(())
     }
 
     #[test]
@@ -340,7 +431,7 @@ mod tests {
         assert_eq!(
             String::from_utf8(w.finish()?)?,
             concat!(
-                r#"{"entry":60,"sequence":2,"in_use":null,"name":"a.txt","path":"\\a.txt","path_state":"resolved","baseline":null,"findings":[],"si_created":null,"fn_created":null,"diagnostics":[],"source":"usn","usn":4096,"reasons":[],"event_time":"2023-11-14T17:12:46.6777888Z"}"#,
+                r#"{"entry":60,"sequence":2,"in_use":null,"name":"a.txt","path":"\\a.txt","path_state":"resolved","baseline":null,"findings":[],"si_created":null,"fn_created":null,"diagnostics":[],"source":"usn","usn":4096,"reasons":[],"event_time":"2023-11-14T17:12:46.6777888Z","deleted":true,"seen":"usn","streams":[],"hints":[]}"#,
                 "\n"
             )
         );

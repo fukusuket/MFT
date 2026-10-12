@@ -100,8 +100,22 @@ footer { margin-top: 3em; border-top: 1px solid var(--line); padding-top: 8px; }
     summary.appendChild(tr);
   });
 
+  // Shown next to a finding, never used to order it. One line per fact and per stream, since a
+  // stream name may contain any separator.
+  function facts(f) {
+    const cell = el("td", undefined, "path");
+    const lines = [
+      ...(f.deleted ? ["deleted"] : []),
+      "seen: " + f.seen,
+      ...f.streams.map((s) => "ADS: " + s),
+      ...f.hints,
+    ];
+    lines.forEach((line) => cell.appendChild(el("div", line)));
+    return cell;
+  }
+
   document.getElementById("findings").appendChild(table(
-    ["Level", "Time ($SI created / USN)", "USN", "Path", "Rule", "Author", "Rule id"],
+    ["Level", "Time ($SI created / USN)", "USN", "Path", "Facts", "Rule", "Author", "Rule id"],
     data.findings.map((f) => {
       const rule = el("td");
       rule.appendChild(el("div", f.title));
@@ -114,6 +128,7 @@ footer { margin-top: 3em; border-top: 1px solid var(--line); padding-top: 8px; }
         el("td", f.created !== null ? f.created : f.event_time, "mono"),
         el("td", f.usn, "mono"),
         el("td", f.path_state === "resolved" ? f.path : f.path + " (" + f.path_state + ")", "path"),
+        facts(f),
         rule,
         el("td", f.author === null ? "unknown" : f.author),
         el("td", f.id, "mono"),

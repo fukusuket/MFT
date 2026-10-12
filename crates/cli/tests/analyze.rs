@@ -9,7 +9,10 @@ use std::error::Error;
 use std::path::PathBuf;
 use std::process::Command;
 
-use support::{extension, file_name_with, record, record_with_flags, standard_information, u16s};
+use support::{
+    data, extension, file_name_with, record, record_with_flags, standard_information,
+    standard_information_created, u16s,
+};
 
 type TestResult = Result<(), Box<dyn Error>>;
 
@@ -78,13 +81,13 @@ fn analyze_writes_one_csv_row_per_record_with_paths() -> TestResult {
     assert!(status.success());
     assert_eq!(
         std::fs::read_to_string(&csv).unwrap_or_default(),
-        "entry,sequence,in_use,name,path,path_state,baseline,findings,si_created,fn_created,diagnostics,source,usn,reasons,event_time\n\
-         0,1,true,$MFT,\\$MFT,resolved,,,2019-04-17T18:40:00.0000000Z,1601-01-01T00:00:00.0000000Z,,mft,,,\n\
-         5,1,true,.,\\,resolved,,,2019-04-17T18:40:00.0000000Z,1601-01-01T00:00:00.0000000Z,,mft,,,\n\
-         6,1,true,Users,\\Users,resolved,,,2019-04-17T18:40:00.0000000Z,1601-01-01T00:00:00.0000000Z,,mft,,,\n\
-         7,1,true,a.txt,\\Users\\a.txt,resolved,,,2019-04-17T18:40:00.0000000Z,1601-01-01T00:00:00.0000000Z,,mft,,,\n\
-         8,1,true,old.txt,,unknown,,,2019-04-17T18:40:00.0000000Z,1601-01-01T00:00:00.0000000Z,,mft,,,\n\
-         9,0,false,,,unknown,,,,,bad_signature,mft,,,\n"
+        "entry,sequence,in_use,name,path,path_state,baseline,findings,si_created,fn_created,diagnostics,source,usn,reasons,event_time,deleted,seen,streams,hints\n\
+         0,1,true,$MFT,\\$MFT,resolved,,,2019-04-17T18:40:00.0000000Z,1601-01-01T00:00:00.0000000Z,,mft,,,,false,mft,,si_zero_subseconds\n\
+         5,1,true,.,\\,resolved,,,2019-04-17T18:40:00.0000000Z,1601-01-01T00:00:00.0000000Z,,mft,,,,false,mft,,si_zero_subseconds\n\
+         6,1,true,Users,\\Users,resolved,,,2019-04-17T18:40:00.0000000Z,1601-01-01T00:00:00.0000000Z,,mft,,,,false,mft,,si_zero_subseconds\n\
+         7,1,true,a.txt,\\Users\\a.txt,resolved,,,2019-04-17T18:40:00.0000000Z,1601-01-01T00:00:00.0000000Z,,mft,,,,false,mft,,si_zero_subseconds\n\
+         8,1,true,old.txt,,unknown,,,2019-04-17T18:40:00.0000000Z,1601-01-01T00:00:00.0000000Z,,mft,,,,false,mft,,si_zero_subseconds\n\
+         9,0,false,,,unknown,,,,,bad_signature,mft,,,,true,mft,,\n"
     );
     assert_no_temporary_outputs(&dir)?;
     Ok(())
@@ -1412,7 +1415,7 @@ fn same_input_with_usn_gives_byte_identical_outputs() -> TestResult {
 
     let first = run(1)?;
     assert_eq!(run(2)?, first);
-    assert!(first.0.ends_with(b"unsupported_version,usn,,,\n")); // the V4 row comes last
+    assert!(first.0.ends_with(b"unsupported_version,usn,,,,,,,\n")); // the V4 row comes last
     Ok(())
 }
 
@@ -2057,5 +2060,189 @@ fn analyze_refuses_a_skipped_rules_list_that_is_its_input_or_another_output() ->
         );
         assert_eq!(std::fs::read(&evidence)?, small_volume_mft());
     }
+    Ok(())
+}
+
+/// `\Users` with: `kept.txt` (also in `$J`), `ads.txt` (a `Zone.Identifier` stream),
+/// `old.txt` (deleted, in `$J` under its sequence before the delete) and `stomped.txt` (`$SI` created a whole second before
+/// `$FN` created).
+fn facts_volume_mft() -> Vec<u8> {
+    let users = 6 | (1 << 48);
+    let fn_created = 133_000_000_000_000_000;
+    let file = |entry: u32, in_use: bool, name: &str, si_created: u64, extra: Vec<Vec<u8>>| {
+        let mut attrs = vec![
+            standard_information_created(si_created),
+            file_name_with(users, &u16s(name), 1, fn_created),
+        ];
+        attrs.extend(extra);
+        record(1024, in_use, entry, &attrs)
+    };
+    let later = fn_created + 1;
+    let mut mft = usn_volume_mft();
+    mft.extend(vec![0u8; 33 * 1024]); // entries 7..=39 never used
+    mft.extend(file(40, true, "kept.txt", later, vec![]));
+    mft.extend(file(
+        41,
+        true,
+        "ads.txt",
+        later,
+        vec![data(&u16s("Zone.Identifier"), b"[ZoneTransfer]", 2)],
+    ));
+    let mut old = file(42, false, "old.txt", later, vec![]);
+    old[0x10] = 2; // freeing the record bumped its sequence number
+    mft.extend(old);
+    mft.extend(file(
+        43,
+        true,
+        "stomped.txt",
+        fn_created - 10_000_000,
+        vec![],
+    ));
+    mft
+}
+
+/// Closed creates of `kept.txt` and `old.txt` (in the `$MFT`) and `gone.txt` (entry 44, not).
+fn facts_journal() -> Vec<u8> {
+    use usn_support::{Fields, v2};
+    [
+        (40, "kept.txt", 64),
+        (42, "old.txt", 136),
+        (44, "gone.txt", 208),
+    ]
+    .iter()
+    .flat_map(|&(entry, name, usn)| {
+        v2(&Fields {
+            file: entry | (1 << 48),
+            parent: 6 | (1 << 48),
+            usn,
+            reason: 0x8000_0100,
+            name: u16s(name),
+            ..Fields::default()
+        })
+    })
+    .collect()
+}
+
+/// `name|column` per CSV row of a run on the facts volume, for one of the fact columns.
+fn facts_column(test: &str, column: usize) -> Result<Vec<String>, Box<dyn Error>> {
+    let dir = scratch(test)?;
+    let (mft, j, csv) = (dir.join("MFT"), dir.join("J"), dir.join("out.csv"));
+    std::fs::write(&mft, facts_volume_mft())?;
+    std::fs::write(&j, facts_journal())?;
+
+    let status = tool()
+        .args(["analyze", "-i"])
+        .arg(&mft)
+        .arg("--usn")
+        .arg(&j)
+        .arg("--csv")
+        .arg(&csv)
+        .status()?;
+
+    assert!(status.success());
+    Ok(csv_rows(&std::fs::read_to_string(&csv)?)
+        .iter()
+        .map(|r| format!("{}|{}", r[3], r[column]))
+        .collect())
+}
+
+#[test]
+fn a_file_is_seen_in_the_mft_the_journal_or_both() -> TestResult {
+    let seen = facts_column("a_file_is_seen_in_the_mft_the_journal_or_both", 16)?;
+
+    assert_eq!(
+        seen,
+        [
+            "$MFT|mft",
+            ".|mft",
+            "Users|mft",
+            "kept.txt|both",
+            "ads.txt|mft",
+            "old.txt|both",
+            "stomped.txt|mft",
+            "kept.txt|both",
+            "old.txt|both",
+            "gone.txt|usn",
+        ]
+    );
+    Ok(())
+}
+
+#[test]
+fn a_file_no_longer_in_use_in_the_mft_is_deleted() -> TestResult {
+    let deleted = facts_column("a_file_no_longer_in_use_in_the_mft_is_deleted", 15)?;
+
+    assert_eq!(
+        deleted,
+        [
+            "$MFT|false",
+            ".|false",
+            "Users|false",
+            "kept.txt|false",
+            "ads.txt|false",
+            "old.txt|true",
+            "stomped.txt|false",
+            "kept.txt|false",
+            "old.txt|true",
+            "gone.txt|true",
+        ]
+    );
+    Ok(())
+}
+
+#[test]
+fn named_data_streams_are_listed() -> TestResult {
+    let streams = facts_column("named_data_streams_are_listed", 17)?;
+
+    assert_eq!(
+        streams
+            .iter()
+            .filter(|s| !s.ends_with('|'))
+            .collect::<Vec<_>>(),
+        ["ads.txt|Zone.Identifier"]
+    );
+    Ok(())
+}
+
+#[test]
+fn timestomp_hints_are_listed_in_csv_and_html_findings() -> TestResult {
+    let hints = facts_column("timestomp_hints_are_listed_in_csv_and_html_findings", 18)?;
+
+    assert_eq!(
+        hints
+            .iter()
+            .filter(|s| !s.ends_with('|'))
+            .collect::<Vec<_>>(),
+        [
+            "$MFT|si_zero_subseconds", // the volume's own records: 2019-04-17T18:40:00
+            ".|si_zero_subseconds",
+            "Users|si_zero_subseconds",
+            "stomped.txt|si_before_fn;si_zero_subseconds",
+        ]
+    );
+    let dir = scratch("timestomp_hints_html")?;
+    let (mft, html) = (dir.join("MFT"), dir.join("report.html"));
+    std::fs::write(&mft, facts_volume_mft())?;
+    let rules = rules_dir(
+        &dir,
+        "rules",
+        "title: Stomped\nid: stomped\nlevel: low\nlogsource:\n  product: windows\n  category: file_event\ndetection:\n  sel:\n    TargetFilename|endswith: 'stomped.txt'\n  condition: sel\n",
+    )?;
+
+    let status = tool()
+        .args(["analyze", "-i"])
+        .arg(&mft)
+        .arg("--rules")
+        .arg(&rules)
+        .arg("-o")
+        .arg(&html)
+        .status()?;
+
+    assert!(status.success());
+    let data = report_data(&std::fs::read_to_string(&html)?)?;
+    assert_eq!(
+        data["findings"][0]["hints"],
+        serde_json::json!(["si_before_fn", "si_zero_subseconds"])
+    );
     Ok(())
 }

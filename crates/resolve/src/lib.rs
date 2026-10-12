@@ -304,6 +304,7 @@ mod tests {
                     ..name(n, Namespace::Win32)
                 })
                 .collect(),
+            streams: Vec::new(),
             diagnostics: vec![],
         }
     }

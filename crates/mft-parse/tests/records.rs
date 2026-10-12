@@ -8,7 +8,7 @@ use std::io::Cursor;
 use mft_parse::{DiagCode, Diagnostic, Entry, Namespace, records};
 use ntfs_types::Filetime;
 use support::{
-    extension, file_name_with, record, record_with_flags, resident, standard_information,
+    data, extension, file_name_with, record, record_with_flags, resident, standard_information,
     standard_information_created, u16s,
 };
 
@@ -590,5 +590,53 @@ fn a_deleted_files_extension_merges_into_its_deleted_base() -> TestResult {
     assert_eq!(merged.len(), 2);
     assert_eq!(names(&merged[1]), ["DELETE~1.EXE", "deleted tool.exe"]);
     assert!(merged[1].diagnostics.is_empty());
+    Ok(())
+}
+
+#[test]
+fn named_data_attributes_are_streams_and_other_attributes_are_not() -> TestResult {
+    let mft = record(
+        1024,
+        true,
+        0,
+        &[
+            standard_information(),
+            data(&[], b"main", 1),
+            data(&u16s("Zone.Identifier"), b"[ZoneTransfer]", 2),
+            resident(0x100, &u16s("$TXF_DATA"), &[0; 8], 3),
+            data(&u16s("x"), b"", 4),
+        ],
+    );
+
+    let entries = parse(mft)?;
+
+    let streams: Vec<String> = entries[0].streams.iter().map(ToString::to_string).collect();
+    assert_eq!(streams, ["Zone.Identifier", "x"]);
+    Ok(())
+}
+
+#[test]
+fn extension_streams_move_to_the_base_once() -> TestResult {
+    let mut mft = record(
+        1024,
+        true,
+        0,
+        &[standard_information(), data(&u16s("a"), b"", 1)],
+    );
+    mft.extend(extension(
+        1024,
+        true,
+        1,
+        1 << 48,
+        &[data(&u16s("a"), b"", 1), data(&u16s("b"), b"", 2)],
+    ));
+
+    let merged = mft_parse::merge_extensions(parse(mft)?, 1024);
+
+    let streams: Vec<Vec<String>> = merged
+        .iter()
+        .map(|e| e.streams.iter().map(ToString::to_string).collect())
+        .collect();
+    assert_eq!(streams, [vec!["a".to_string(), "b".to_string()]]);
     Ok(())
 }

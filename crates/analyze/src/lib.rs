@@ -1,6 +1,6 @@
 //! Pipeline from parsed `$MFT` entries to report rows.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use baseline::{Baseline, Status};
 use mft_parse::Entry;
@@ -16,15 +16,44 @@ pub struct Row<'a> {
     pub baseline: Option<Status>,
     /// Matched rules, most severe first (empty without rules).
     pub findings: Vec<Finding>,
+    /// Whether the file shows up in the `$MFT`, the USN journal or both.
+    pub seen: Seen,
+    /// Timestamp-manipulation hints, in [`Hint`] order.
+    pub hints: Vec<Hint>,
+}
+
+/// Where a file shows up: by (entry, sequence), in the `$MFT`, the USN journal or both.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Seen {
+    Mft,
+    Usn,
+    Both,
+}
+
+/// A fact about `$SI` created that timestomping often leaves; shown, never scored.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Hint {
+    /// `$SI` created is before the shown name's `$FN` created.
+    SiBeforeFn,
+    /// `$SI` created has no sub-second part.
+    SiZeroSubseconds,
 }
 
 /// One row per entry, in entry order. Lazy, so only one path is held at a time.
 pub fn rows<'a>(
     entries: &'a [Entry],
+    records: &'a [usn_parse::Record],
     baseline: Option<&'a Baseline>,
     rules: Option<&'a Rules>,
 ) -> impl Iterator<Item = Row<'a>> {
     let resolver = Resolver::new(entries);
+    let in_journal: HashSet<(u64, u16)> = records
+        .iter()
+        .filter_map(|record| match record {
+            usn_parse::Record::Event(event) => Some((event.file.entry(), event.file.sequence())),
+            usn_parse::Record::Diagnostic(_) => None,
+        })
+        .collect();
     entries.iter().map(move |entry| {
         let resolution = resolver.path(entry);
         let status = match (&resolution, baseline) {
@@ -45,9 +74,46 @@ pub fn rows<'a>(
             resolution,
             baseline: status,
             findings,
+            seen: if file_of(entry).is_some_and(|file| in_journal.contains(&file)) {
+                Seen::Both
+            } else {
+                Seen::Mft
+            },
+            hints: hints(entry),
         }
     })
 }
+
+/// The [`Hint`]s for `entry`'s `$SI` created, compared with its shown name's `$FN` created.
+fn hints(entry: &Entry) -> Vec<Hint> {
+    let Some(si) = entry.si_created else {
+        return Vec::new();
+    };
+    let mut hints = Vec::new();
+    if resolve::chosen_name(&entry.names).is_some_and(|name| si < name.created) {
+        hints.push(Hint::SiBeforeFn);
+    }
+    if si.raw() % TICKS_PER_SECOND == 0 {
+        hints.push(Hint::SiZeroSubseconds);
+    }
+    hints
+}
+
+/// The (entry, sequence) of the file the entry describes, as `$J` names it. NTFS bumps the
+/// sequence number when it frees a record, so a deleted record describes the previous one
+/// (as in Rewind); a free record with sequence 0 describes none.
+fn file_of(entry: &Entry) -> Option<(u64, u16)> {
+    let sequence = entry.file_ref.sequence();
+    let sequence = if entry.in_use {
+        sequence
+    } else {
+        sequence.checked_sub(1)?
+    };
+    Some((entry.file_ref.entry(), sequence))
+}
+
+/// FILETIME counts 100 ns ticks.
+const TICKS_PER_SECOND: u64 = 10_000_000;
 
 /// One USN row: a record from `$J` and the directory its parent reference pointed to when the
 /// record was written (Rewind).
@@ -59,6 +125,8 @@ pub struct UsnRow<'a> {
     pub baseline: Option<Status>,
     /// Matched rules, most severe first (empty without rules).
     pub findings: Vec<Finding>,
+    /// The `$MFT` entry with the event's entry and sequence, if the `$MFT` still has it.
+    pub entry: Option<&'a Entry>,
 }
 
 /// One row per `$J` item, in `$J` order.
@@ -69,6 +137,10 @@ pub fn usn_rows<'a>(
     rules: Option<&'a Rules>,
 ) -> impl Iterator<Item = UsnRow<'a>> {
     let directories = Resolver::new(entries).rewind(records);
+    let by_file: HashMap<(u64, u16), &Entry> = entries
+        .iter()
+        .filter_map(|entry| Some((file_of(entry)?, entry)))
+        .collect();
     // A rename's old path by file (entry, sequence), until the handle closes.
     let mut old_paths: HashMap<(u64, u16), String> = HashMap::new();
     records
@@ -80,10 +152,13 @@ pub fn usn_rows<'a>(
                 directory,
                 baseline: None,
                 findings: Vec::new(),
+                entry: None,
             };
             let usn_parse::Record::Event(event) = record else {
                 return row;
             };
+            let file = (event.file.entry(), event.file.sequence());
+            row.entry = by_file.get(&file).copied();
             // The file's names from the root: its directory's, then its own.
             let segments = match &row.directory {
                 Resolution::Resolved(segments) | Resolution::Inferred(segments) => {
@@ -100,7 +175,6 @@ pub fn usn_rows<'a>(
                 row.baseline = Some(baseline.status(&units));
             }
             let path = segments.and_then(|s| Resolution::Resolved(s).path_text());
-            let file = (event.file.entry(), event.file.sequence());
             if event.reason & RENAME_OLD_NAME != 0 {
                 match &path {
                     Some(path) => old_paths.insert(file, path.clone()),
@@ -160,6 +234,7 @@ mod tests {
                 namespace: Namespace::Win32,
                 created: Filetime::from_raw(0),
             }],
+            streams: Vec::new(),
             diagnostics: vec![],
         }
     }
@@ -172,7 +247,7 @@ mod tests {
             entry(41, 77, "orphan"),
         ];
 
-        let shown: Vec<(u64, Option<usize>)> = rows(&entries, None, None)
+        let shown: Vec<(u64, Option<usize>)> = rows(&entries, &[], None, None)
             .map(|r| {
                 let depth = match &r.resolution {
                     Resolution::Resolved(segments) => Some(segments.len()),
@@ -201,10 +276,12 @@ mod tests {
             entry(43, 77, "a.txt"),
         ];
 
-        let with: Vec<Option<Status>> = rows(&entries, Some(&baseline), None)
+        let with: Vec<Option<Status>> = rows(&entries, &[], Some(&baseline), None)
             .map(|r| r.baseline)
             .collect();
-        let without: Vec<Option<Status>> = rows(&entries, None, None).map(|r| r.baseline).collect();
+        let without: Vec<Option<Status>> = rows(&entries, &[], None, None)
+            .map(|r| r.baseline)
+            .collect();
 
         use Status::*;
         assert_eq!(with, [None, Some(Standard), None, Some(Outside), None]);
@@ -227,10 +304,10 @@ mod tests {
             entry(41, 5, "b.txt"),
         ];
 
-        let with: Vec<Vec<String>> = rows(&entries, None, Some(&rules))
+        let with: Vec<Vec<String>> = rows(&entries, &[], None, Some(&rules))
             .map(|r| r.findings.into_iter().map(|f| f.id).collect())
             .collect();
-        let without = rows(&entries, None, None)
+        let without = rows(&entries, &[], None, None)
             .filter(|r| !r.findings.is_empty())
             .count();
 
@@ -250,6 +327,112 @@ mod tests {
             attributes: 0,
             name: NtfsName::from_units(&name.encode_utf16().collect::<Vec<_>>()),
         })
+    }
+
+    #[test]
+    fn an_entry_with_a_usn_event_of_the_same_entry_and_sequence_is_seen_in_both() {
+        let entries = [
+            entry(5, 5, "."),
+            entry(60, 5, "a.txt"),
+            entry(61, 5, "b.txt"),
+        ];
+        let mut reused = usn_event("b.txt", 5);
+        if let usn_parse::Record::Event(e) = &mut reused {
+            e.file = FileRef::from_raw(61 | (2 << 48)); // entry 61, an older sequence
+        }
+        let records = [usn_event("a.txt", 5), reused];
+
+        let seen: Vec<Seen> = rows(&entries, &records, None, None)
+            .map(|r| r.seen)
+            .collect();
+
+        assert_eq!(seen, [Seen::Mft, Seen::Both, Seen::Mft]);
+    }
+
+    #[test]
+    fn a_deleted_entry_is_matched_under_the_sequence_before_its_delete() {
+        let mut deleted = entry(61, 5, "b.txt");
+        deleted.in_use = false;
+        deleted.file_ref = FileRef::from_raw(61 | (2 << 48));
+        let mut never = entry(62, 5, "c.txt");
+        never.in_use = false;
+        never.file_ref = FileRef::from_raw(62); // free with sequence 0: no previous file
+        let entries = [entry(5, 5, "."), deleted, never];
+        let event = |file: u64| {
+            let mut record = usn_event("x", 5);
+            if let usn_parse::Record::Event(e) = &mut record {
+                e.file = FileRef::from_raw(file);
+            }
+            record
+        };
+        let records = [event(61 | (1 << 48)), event(62), event(62 | (0xFFFF << 48))];
+
+        let seen: Vec<Seen> = rows(&entries, &records, None, None)
+            .map(|r| r.seen)
+            .collect();
+        let found: Vec<Option<u64>> = usn_rows(&entries, &records, None, None)
+            .map(|r| r.entry.map(|e| e.file_ref.entry()))
+            .collect();
+
+        assert_eq!(seen, [Seen::Mft, Seen::Both, Seen::Mft]);
+        assert_eq!(found, [Some(61), None, None]);
+    }
+
+    #[test]
+    fn si_created_before_fn_created_or_without_sub_seconds_are_hints() {
+        let times = |si: Option<u64>, fn_created: u64| {
+            let mut e = entry(40, 5, "a.txt");
+            e.si_created = si.map(Filetime::from_raw);
+            e.names[0].created = Filetime::from_raw(fn_created);
+            e
+        };
+        let entries = [
+            times(Some(100_000_000), 200_000_000), // 10 s exactly, before $FN
+            times(Some(123_456_789), 123_456_789), // same time
+            times(Some(123_456_789), 123_456_790), // 100 ns before $FN
+            times(Some(123_456_789), 0),
+            times(None, 200_000_000),
+        ];
+
+        let hints: Vec<Vec<Hint>> = rows(&entries, &[], None, None).map(|r| r.hints).collect();
+
+        assert_eq!(
+            hints,
+            [
+                vec![Hint::SiBeforeFn, Hint::SiZeroSubseconds],
+                vec![],
+                vec![Hint::SiBeforeFn],
+                vec![],
+                vec![],
+            ]
+        );
+    }
+
+    #[test]
+    fn a_usn_row_carries_the_mft_entry_with_its_entry_and_sequence() {
+        let mut deleted = entry(61, 5, "b.txt");
+        deleted.in_use = false;
+        deleted.file_ref = FileRef::from_raw(61 | (2 << 48)); // freeing bumped the sequence
+        let entries = [entry(5, 5, "."), entry(60, 5, "a.txt"), deleted];
+        let event = |file: u64| {
+            let mut record = usn_event("x", 5);
+            if let usn_parse::Record::Event(e) = &mut record {
+                e.file = FileRef::from_raw(file);
+            }
+            record
+        };
+        let records = [
+            event(60 | (1 << 48)),
+            event(61 | (1 << 48)),
+            event(60 | (2 << 48)), // entry 60 reused since
+            event(62 | (1 << 48)),
+        ];
+
+        let found: Vec<Option<(u64, bool)>> = usn_rows(&entries, &records, None, None)
+            .map(|r| r.entry.map(|e| (e.file_ref.entry(), e.in_use)))
+            .collect();
+
+        assert_eq!(found, [Some((60, true)), Some((61, false)), None, None]);
     }
 
     #[test]

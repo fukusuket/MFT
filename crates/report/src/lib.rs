@@ -3,10 +3,10 @@
 use std::fmt::Write as _;
 use std::io::Write;
 
-use analyze::{Row, UsnRow};
+use analyze::{Hint, Row, Seen, UsnRow};
 use baseline::Status;
 use mft_parse::DiagCode;
-use ntfs_types::Filetime;
+use ntfs_types::{Filetime, NtfsName};
 use resolve::Resolution;
 use sigma::{Finding, Level};
 
@@ -27,7 +27,7 @@ pub enum Error {
     Json(#[from] serde_json::Error),
 }
 
-const HEADER: [&str; 15] = [
+const HEADER: [&str; 19] = [
     "entry",
     "sequence",
     "in_use",
@@ -43,6 +43,10 @@ const HEADER: [&str; 15] = [
     "usn",
     "reasons",
     "event_time",
+    "deleted",
+    "seen",
+    "streams",
+    "hints",
 ];
 
 /// CSV with one row per `$MFT` record; columns as in `HEADER`.
@@ -79,6 +83,10 @@ impl<W: Write> CsvWriter<W> {
             String::new(),
             String::new(),
             String::new(),
+            (!entry.in_use).to_string(),
+            seen_name(row.seen).to_string(),
+            streams_cell(&entry.streams),
+            hint_names(&row.hints).join(";"),
         ])?;
         Ok(())
     }
@@ -114,6 +122,10 @@ impl<W: Write> CsvWriter<W> {
             event.usn.to_string(),
             reason_names(event.reason).join(";"),
             event.time.iso8601(),
+            usn_deleted(row).to_string(),
+            seen_name(usn_seen(row)).to_string(),
+            String::new(),
+            String::new(),
         ])?;
         Ok(())
     }
@@ -164,6 +176,56 @@ pub fn write_skipped_jsonl<W: Write>(mut out: W, skipped: &[sigma::Skipped]) -> 
         out.write_all(b"\n").map_err(serde_json::Error::io)?;
     }
     Ok(out)
+}
+
+/// Stream names joined by `;`, escaped like evidence; a `;` inside a name shows as `\;` (a `\`
+/// already shows as `\\`).
+fn streams_cell(streams: &[NtfsName]) -> String {
+    let names: Vec<String> = streams
+        .iter()
+        .map(|s| s.to_string().replace(';', "\\;"))
+        .collect();
+    cell_text(&names.join(";"))
+}
+
+/// Stream names as display text, one each.
+fn stream_names(streams: &[NtfsName]) -> Vec<String> {
+    streams
+        .iter()
+        .map(|s| display_text(&s.to_string()))
+        .collect()
+}
+
+/// A USN event's file is deleted unless the `$MFT` still has it in use.
+fn usn_deleted(row: &UsnRow<'_>) -> bool {
+    row.entry.is_none_or(|entry| !entry.in_use)
+}
+
+/// A USN event's file is seen in both when the `$MFT` still has its entry and sequence.
+fn usn_seen(row: &UsnRow<'_>) -> Seen {
+    if row.entry.is_some() {
+        Seen::Both
+    } else {
+        Seen::Usn
+    }
+}
+
+fn seen_name(seen: Seen) -> &'static str {
+    match seen {
+        Seen::Mft => "mft",
+        Seen::Usn => "usn",
+        Seen::Both => "both",
+    }
+}
+
+fn hint_names(hints: &[Hint]) -> Vec<&'static str> {
+    hints
+        .iter()
+        .map(|hint| match hint {
+            Hint::SiBeforeFn => "si_before_fn",
+            Hint::SiZeroSubseconds => "si_zero_subseconds",
+        })
+        .collect()
 }
 
 /// `\` plus the escaped names joined by `\` (a `\` inside a name shows as `\\`); empty if unknown.
@@ -323,7 +385,7 @@ mod tests {
         rules: Option<&sigma::Rules>,
     ) -> Result<String, Box<dyn std::error::Error>> {
         let mut w = CsvWriter::new(Vec::new())?;
-        for row in analyze::rows(entries, baseline, rules) {
+        for row in analyze::rows(entries, &[], baseline, rules) {
             w.write(&row)?;
         }
         Ok(String::from_utf8(w.finish()?)?)
@@ -351,6 +413,7 @@ mod tests {
                     created: Filetime::from_raw(133_536_836_961_234_567),
                 },
             ],
+            streams: Vec::new(),
             diagnostics: vec![Diagnostic {
                 code: DiagCode::FixupMismatch,
                 offset: 43_008,
@@ -368,6 +431,7 @@ mod tests {
                 namespace: Namespace::Win32AndDos,
                 created: Filetime::from_raw(0),
             }],
+            streams: Vec::new(),
             diagnostics: vec![],
         };
         let empty = Entry {
@@ -377,6 +441,7 @@ mod tests {
             base: None,
             si_created: None,
             names: vec![],
+            streams: Vec::new(),
             diagnostics: vec![
                 Diagnostic {
                     code: DiagCode::BadSignature,
@@ -391,10 +456,10 @@ mod tests {
 
         assert_eq!(
             csv_of(&[root, full, empty])?,
-            "entry,sequence,in_use,name,path,path_state,baseline,findings,si_created,fn_created,diagnostics,source,usn,reasons,event_time\n\
-             5,0,true,.,\\,resolved,,,,1601-01-01T00:00:00.0000000Z,,mft,,,\n\
-             42,3,true,a\\\\b.txt,\\a\\\\b.txt,resolved,,,2023-11-14T17:12:46.6777888Z,2024-02-29T12:34:56.1234567Z,fixup_mismatch,mft,,,\n\
-             43,0,false,,,unknown,,,,,bad_signature;malformed,mft,,,\n"
+            "entry,sequence,in_use,name,path,path_state,baseline,findings,si_created,fn_created,diagnostics,source,usn,reasons,event_time,deleted,seen,streams,hints\n\
+             5,0,true,.,\\,resolved,,,,1601-01-01T00:00:00.0000000Z,,mft,,,,false,mft,,\n\
+             42,3,true,a\\\\b.txt,\\a\\\\b.txt,resolved,,,2023-11-14T17:12:46.6777888Z,2024-02-29T12:34:56.1234567Z,fixup_mismatch,mft,,,,false,mft,,si_before_fn\n\
+             43,0,false,,,unknown,,,,,bad_signature;malformed,mft,,,,true,mft,,\n"
         );
         Ok(())
     }
@@ -412,6 +477,7 @@ mod tests {
                 namespace: Namespace::Win32,
                 created: Filetime::from_raw(0),
             }],
+            streams: Vec::new(),
             diagnostics: vec![],
         }
     }
@@ -448,7 +514,9 @@ mod tests {
             let row = csv.lines().nth(1).unwrap_or_default();
             assert_eq!(
                 row,
-                format!("0,0,true,{cell},,unknown,,,,1601-01-01T00:00:00.0000000Z,,mft,,,"),
+                format!(
+                    "0,0,true,{cell},,unknown,,,,1601-01-01T00:00:00.0000000Z,,mft,,,,false,mft,,"
+                ),
                 "name {name:?}"
             );
         }
@@ -506,7 +574,7 @@ mod tests {
         assert!(
             csv.lines()
                 .nth(1)
-                .is_some_and(|row| row.ends_with(",orphan_extension,mft,,,")),
+                .is_some_and(|row| row.ends_with(",orphan_extension,mft,,,,false,mft,,")),
             "{csv}"
         );
         Ok(())
@@ -604,6 +672,80 @@ mod tests {
     }
 
     #[test]
+    fn csv_writes_deleted_seen_streams_and_hints_after_the_other_columns()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut file = dir(60, 6, "a.txt");
+        file.is_dir = false;
+        file.si_created = Some(Filetime::from_raw(100_000_000));
+        file.names[0].created = Filetime::from_raw(200_000_000);
+        file.streams = vec![
+            NtfsName::from_units(&units("Zone.Identifier")),
+            NtfsName::from_units(&units("=x\u{7}")),
+        ];
+        let mut deleted = dir(61, 6, "b.txt");
+        deleted.in_use = false;
+        deleted.file_ref = FileRef::from_raw(61 | (2 << 48)); // freeing bumped the sequence
+        let mut entries = usn_tree();
+        entries.extend([file, deleted]);
+        let records = vec![
+            usn_event(60 | (1 << 48), 6 | (1 << 48), 4096, 0, "a.txt"),
+            usn_event(61 | (1 << 48), 6 | (1 << 48), 4160, 0, "b.txt"),
+            usn_event(62 | (1 << 48), 6 | (1 << 48), 4224, 0, "c.txt"),
+            usn_parse::Record::Diagnostic(usn_parse::Diagnostic {
+                code: usn_parse::DiagCode::Malformed,
+                offset: 8,
+            }),
+        ];
+
+        let mut w = CsvWriter::new(Vec::new())?;
+        for row in analyze::rows(&entries, &records, None, None) {
+            w.write(&row)?;
+        }
+        for row in analyze::usn_rows(&entries, &records, None, None) {
+            w.write_usn(&row)?;
+        }
+        let csv = String::from_utf8(w.finish()?)?;
+
+        let facts: Vec<String> = csv
+            .lines()
+            .map(|line| line.rsplitn(5, ',').take(4).collect::<Vec<_>>().join(" | "))
+            .collect();
+        assert_eq!(
+            facts,
+            [
+                "hints | streams | seen | deleted",
+                " |  | mft | false",
+                " |  | mft | false",
+                "si_before_fn;si_zero_subseconds | Zone.Identifier;=x\\u{07} | both | false",
+                " |  | both | true",
+                " |  | both | false",
+                " |  | both | true",
+                " |  | usn | true",
+                " |  |  | ",
+            ]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_semicolon_or_backslash_in_a_stream_name_is_escaped_in_csv()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut file = named("a.txt");
+        file.streams = vec![
+            NtfsName::from_units(&units("x;Zone.Identifier")),
+            NtfsName::from_units(&units("a\\b")),
+        ];
+
+        let csv = csv_of(&[file])?;
+
+        assert_eq!(
+            csv.lines().nth(1).and_then(|row| row.split(',').nth(17)),
+            Some(r"x\;Zone.Identifier;a\\b")
+        );
+        Ok(())
+    }
+
+    #[test]
     fn csv_writes_a_usn_event_row() -> Result<(), Box<dyn std::error::Error>> {
         let records = vec![
             usn_event(60 | (1 << 48), 6 | (1 << 48), 4096, 0, "a.txt"),
@@ -613,9 +755,9 @@ mod tests {
 
         assert_eq!(
             usn_csv(&usn_tree(), records)?,
-            "60,1,,a.txt,\\Users\\a.txt,resolved,,,,,,usn,4096,,2023-11-14T17:12:46.6777888Z\n\
-             61,2,,b.txt,,unknown,,,,,,usn,4160,,2023-11-14T17:12:46.6777888Z\n\
-             62,1,,c.txt,\\c.txt,resolved,,,,,,usn,4224,,2023-11-14T17:12:46.6777888Z\n"
+            "60,1,,a.txt,\\Users\\a.txt,resolved,,,,,,usn,4096,,2023-11-14T17:12:46.6777888Z,true,usn,,\n\
+             61,2,,b.txt,,unknown,,,,,,usn,4160,,2023-11-14T17:12:46.6777888Z,true,usn,,\n\
+             62,1,,c.txt,\\c.txt,resolved,,,,,,usn,4224,,2023-11-14T17:12:46.6777888Z,true,usn,,\n"
         );
         Ok(())
     }
@@ -732,14 +874,14 @@ mod tests {
 
         assert_eq!(
             csv,
-            ",,,,,unknown,,,,,malformed,usn,,,\n\
-             ,,,,,unknown,,,,,truncated,usn,,,\n\
-             ,,,,,unknown,,,,,unsupported_version,usn,,,\n"
+            ",,,,,unknown,,,,,malformed,usn,,,,,,,\n\
+             ,,,,,unknown,,,,,truncated,usn,,,,,,,\n\
+             ,,,,,unknown,,,,,unsupported_version,usn,,,,,,,\n"
         );
         assert_eq!(
             String::from_utf8(jsonl.finish()?)?.lines().next(),
             Some(
-                r#"{"entry":null,"sequence":null,"in_use":null,"name":null,"path":null,"path_state":"unknown","baseline":null,"findings":[],"si_created":null,"fn_created":null,"diagnostics":["malformed"],"source":"usn","usn":null,"reasons":[],"event_time":null}"#
+                r#"{"entry":null,"sequence":null,"in_use":null,"name":null,"path":null,"path_state":"unknown","baseline":null,"findings":[],"si_created":null,"fn_created":null,"diagnostics":["malformed"],"source":"usn","usn":null,"reasons":[],"event_time":null,"deleted":null,"seen":null,"streams":[],"hints":[]}"#
             )
         );
         Ok(())
