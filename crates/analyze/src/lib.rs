@@ -112,6 +112,8 @@ pub struct UsnRow<'a> {
     pub baseline: Option<Status>,
     /// Matched rules, most severe first (empty without rules).
     pub findings: Vec<Finding>,
+    /// The `$MFT` entry with the event's entry and sequence, if the `$MFT` still has it.
+    pub entry: Option<&'a Entry>,
 }
 
 /// One row per `$J` item, in `$J` order.
@@ -122,6 +124,10 @@ pub fn usn_rows<'a>(
     rules: Option<&'a Rules>,
 ) -> impl Iterator<Item = UsnRow<'a>> {
     let directories = Resolver::new(entries).rewind(records);
+    let by_file: HashMap<(u64, u16), &Entry> = entries
+        .iter()
+        .map(|entry| ((entry.file_ref.entry(), entry.file_ref.sequence()), entry))
+        .collect();
     // A rename's old path by file (entry, sequence), until the handle closes.
     let mut old_paths: HashMap<(u64, u16), String> = HashMap::new();
     records
@@ -133,10 +139,13 @@ pub fn usn_rows<'a>(
                 directory,
                 baseline: None,
                 findings: Vec::new(),
+                entry: None,
             };
             let usn_parse::Record::Event(event) = record else {
                 return row;
             };
+            let file = (event.file.entry(), event.file.sequence());
+            row.entry = by_file.get(&file).copied();
             // The file's names from the root: its directory's, then its own.
             let segments = match &row.directory {
                 Resolution::Resolved(segments) | Resolution::Inferred(segments) => {
@@ -153,7 +162,6 @@ pub fn usn_rows<'a>(
                 row.baseline = Some(baseline.status(&units));
             }
             let path = segments.and_then(|s| Resolution::Resolved(s).path_text());
-            let file = (event.file.entry(), event.file.sequence());
             if event.reason & RENAME_OLD_NAME != 0 {
                 match &path {
                     Some(path) => old_paths.insert(file, path.clone()),
@@ -356,6 +364,32 @@ mod tests {
                 vec![],
             ]
         );
+    }
+
+    #[test]
+    fn a_usn_row_carries_the_mft_entry_with_its_entry_and_sequence() {
+        let mut deleted = entry(61, 5, "b.txt");
+        deleted.in_use = false;
+        let entries = [entry(5, 5, "."), entry(60, 5, "a.txt"), deleted];
+        let event = |file: u64| {
+            let mut record = usn_event("x", 5);
+            if let usn_parse::Record::Event(e) = &mut record {
+                e.file = FileRef::from_raw(file);
+            }
+            record
+        };
+        let records = [
+            event(60 | (1 << 48)),
+            event(61 | (1 << 48)),
+            event(60 | (2 << 48)), // entry 60 reused since
+            event(62 | (1 << 48)),
+        ];
+
+        let found: Vec<Option<(u64, bool)>> = usn_rows(&entries, &records, None, None)
+            .map(|r| r.entry.map(|e| (e.file_ref.entry(), e.in_use)))
+            .collect();
+
+        assert_eq!(found, [Some((60, true)), Some((61, false)), None, None]);
     }
 
     #[test]
