@@ -69,11 +69,16 @@ impl std::fmt::Debug for Rules {
 }
 
 impl Rules {
-    /// Loads every `.yml`/`.yaml` file under `dir`, in path order.
-    pub fn load(dir: &Path) -> Result<Self, Error> {
+    /// Loads every `.yml`/`.yaml` file under each of `dirs`: the directories in the given order,
+    /// the files under each in path order.
+    pub fn load(dirs: &[&Path]) -> Result<Self, Error> {
         let mut files = Vec::new();
-        rule_files(dir, &mut files)?;
-        files.sort();
+        for dir in dirs {
+            let mut under = Vec::new();
+            rule_files(dir, &mut under)?;
+            under.sort();
+            files.extend(under);
+        }
 
         let mut ids = Vec::new();
         let mut authors = HashMap::new();
@@ -268,7 +273,7 @@ mod tests {
             ],
         );
 
-        let rules = Rules::load(&dir)?;
+        let rules = Rules::load(&[dir.as_path()])?;
 
         assert_eq!(rules.ids, ["rule-a", "rule-b"]);
         Ok(())
@@ -285,9 +290,26 @@ mod tests {
             ],
         );
 
-        let rules = Rules::load(&dir)?;
+        let rules = Rules::load(&[dir.as_path()])?;
 
         assert_eq!(rules.ids, ["rule-c", "rule-z", "rule-b"]);
+        Ok(())
+    }
+
+    #[test]
+    fn loads_several_directories_in_order_and_refuses_an_id_used_in_two() -> Result<(), Error> {
+        let first = rule_dir("dirs-1", &[("z.yml", &rule("rule-z", "Z", ""))]);
+        let second = rule_dir("dirs-2", &[("a.yml", &rule("rule-a", "A", ""))]);
+        let again = rule_dir("dirs-3", &[("b.yml", &rule("rule-z", "Z again", ""))]);
+
+        let rules = Rules::load(&[first.as_path(), second.as_path()])?;
+        let result = Rules::load(&[first.as_path(), again.as_path()]);
+
+        assert_eq!(rules.ids, ["rule-z", "rule-a"]);
+        assert!(
+            matches!(&result, Err(Error::Rule(file, why)) if file.ends_with("b.yml") && why.contains("rule-z")),
+            "{result:?}"
+        );
         Ok(())
     }
 
@@ -301,7 +323,7 @@ mod tests {
             ],
         );
 
-        assert_eq!(Rules::load(&dir)?.count(), 2);
+        assert_eq!(Rules::load(&[dir.as_path()])?.count(), 2);
         Ok(())
     }
 
@@ -313,7 +335,7 @@ mod tests {
             &[("a.yml", &rule("rule-a", "A", "")), ("b.yml", &no_id)],
         );
 
-        let result = Rules::load(&dir);
+        let result = Rules::load(&[dir.as_path()]);
 
         assert!(
             matches!(&result, Err(Error::Rule(file, why)) if file.ends_with("b.yml") && why.contains("no id")),
@@ -333,7 +355,7 @@ mod tests {
         for (name, text) in cases {
             let dir = rule_dir(name, &[(name, text)]);
 
-            let result = Rules::load(&dir);
+            let result = Rules::load(&[dir.as_path()]);
 
             assert!(
                 matches!(&result, Err(Error::Rule(file, _)) if file.ends_with(name)),
@@ -354,7 +376,7 @@ mod tests {
     #[test]
     fn a_matching_rule_gives_a_finding_with_id_title_level_and_author() -> Result<(), Error> {
         let dir = rule_dir("finding", &[("a.yml", &rule("rule-a", "Executable", ""))]);
-        let rules = Rules::load(&dir)?;
+        let rules = Rules::load(&[dir.as_path()])?;
 
         let hit = rules.evaluate(&event(r"C:\x.exe", None));
         let miss = rules.evaluate(&event(r"C:\x.txt", None));
@@ -388,7 +410,7 @@ mod tests {
             "service",
             &[("a.yml", &rule("rule-any", "Any", "")), ("b.yml", &outside)],
         );
-        let rules = Rules::load(&dir)?;
+        let rules = Rules::load(&[dir.as_path()])?;
 
         let ids = |service| -> Vec<String> {
             let mut ids: Vec<String> = rules
@@ -408,7 +430,7 @@ mod tests {
     #[test]
     fn explain_names_the_matched_field_and_value() -> Result<(), Box<dyn std::error::Error>> {
         let dir = rule_dir("explain", &[("a.yml", &rule("rule-a", "Executable", ""))]);
-        let rules = Rules::load(&dir)?;
+        let rules = Rules::load(&[dir.as_path()])?;
 
         let findings = rules.evaluate(&event(r"C:\Windows\x.exe", None));
 
@@ -441,7 +463,7 @@ mod tests {
                 ("c.yml", &at("rule-a", "high")),
             ],
         );
-        let rules = Rules::load(&dir)?;
+        let rules = Rules::load(&[dir.as_path()])?;
 
         let ids: Vec<String> = rules
             .evaluate(&event(r"C:\x.exe", None))
@@ -463,7 +485,7 @@ mod tests {
             ],
         );
 
-        let result = Rules::load(&dir);
+        let result = Rules::load(&[dir.as_path()]);
 
         assert!(
             matches!(&result, Err(Error::Rule(file, why)) if file.ends_with("b.yml") && why.contains("same")),
@@ -479,7 +501,7 @@ mod tests {
             let doc = format!("{}---\n{text}", rule("rule-a", "A", ""));
             let dir = rule_dir(name, &[(name, &doc)]);
 
-            let result = Rules::load(&dir);
+            let result = Rules::load(&[dir.as_path()]);
 
             assert!(
                 matches!(&result, Err(Error::Rule(file, _)) if file.ends_with(name)),

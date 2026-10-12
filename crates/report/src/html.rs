@@ -428,7 +428,7 @@ mod tests {
                 ),
             )?;
         }
-        Ok(sigma::Rules::load(&dir)?)
+        Ok(sigma::Rules::load(&[dir.as_path()])?)
     }
 
     fn created(mut entry: Entry, raw: u64) -> Entry {

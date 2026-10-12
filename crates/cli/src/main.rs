@@ -114,7 +114,7 @@ fn analyze(
     }
     let rules = rules
         .map(|dir| {
-            Rules::load(dir).with_context(|| format!("loading rules from {}", dir.display()))
+            Rules::load(&[dir]).with_context(|| format!("loading rules from {}", dir.display()))
         })
         .transpose()?;
     let baseline_name = baseline.map(file_name);

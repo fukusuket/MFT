@@ -220,7 +220,7 @@ mod tests {
             dir.join("exe.yml"),
             "title: Exe\nid: rule-exe\nlevel: low\nlogsource:\n  product: windows\n  category: file_event\ndetection:\n  sel:\n    TargetFilename|endswith: '.exe'\n  condition: sel\n",
         )?;
-        let rules = Rules::load(&dir)?;
+        let rules = Rules::load(&[dir.as_path()])?;
         let entries = [
             entry(5, 5, "."),
             entry(40, 5, "a.exe"),
@@ -319,7 +319,7 @@ mod tests {
                 "title: T\nid: rule-{test}\nlevel: high\nlogsource:\n  product: windows\n  category: {category}\ndetection:\n  sel:\n{detection}  condition: sel\n"
             ),
         )?;
-        Ok(Rules::load(&dir)?)
+        Ok(Rules::load(&[dir.as_path()])?)
     }
 
     fn with_reason(reason: u32, record: usn_parse::Record) -> usn_parse::Record {
@@ -381,7 +381,7 @@ mod tests {
                 ),
             )?;
         }
-        let rules = Rules::load(&dir)?;
+        let rules = Rules::load(&[dir.as_path()])?;
         let entries = usn_tree();
         let records = [with_reason(0x8000_0300, usn_event("a.evtx", 6))];
 

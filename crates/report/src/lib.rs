@@ -483,7 +483,7 @@ mod tests {
         };
         std::fs::write(dir.join("a.yml"), rule("rule-low", "low"))?;
         std::fs::write(dir.join("b.yml"), rule("rule-high", "high"))?;
-        let rules = sigma::Rules::load(&dir)?;
+        let rules = sigma::Rules::load(&[dir.as_path()])?;
         let mut root = named(".");
         root.file_ref = FileRef::from_raw(5);
         root.is_dir = true;
@@ -508,7 +508,7 @@ mod tests {
             dir.join("a.yml"),
             "title: T\nid: \"evil\\e[2J\"\nlevel: high\nlogsource:\n  product: windows\n  category: file_event\ndetection:\n  sel:\n    TargetFilename|endswith: '.exe'\n  condition: sel\n",
         )?;
-        let rules = sigma::Rules::load(&dir)?;
+        let rules = sigma::Rules::load(&[dir.as_path()])?;
         let mut root = named(".");
         root.file_ref = FileRef::from_raw(5);
         root.is_dir = true;
@@ -718,7 +718,7 @@ mod tests {
             dir.join("a.yml"),
             "title: T\nid: rule-usn\nlevel: high\nlogsource:\n  product: windows\n  category: file_event\ndetection:\n  sel:\n    TargetFilename|endswith: 'b.txt'\n  condition: sel\n",
         )?;
-        let rules = sigma::Rules::load(&dir)?;
+        let rules = sigma::Rules::load(&[dir.as_path()])?;
         let entries = usn_tree();
         let records = vec![
             usn_event(60 | (1 << 48), 6 | (1 << 48), 0, 0x8000_0100, "a.txt"),
