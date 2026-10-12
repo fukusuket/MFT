@@ -1983,3 +1983,30 @@ fn an_id_used_in_two_rules_directories_fails_and_writes_nothing() -> TestResult 
     assert_no_temporary_outputs(&dir)?;
     Ok(())
 }
+
+#[test]
+fn with_only_an_html_report_the_skipped_rules_are_listed_beside_it() -> TestResult {
+    let dir = scratch("with_only_an_html_report_the_skipped_rules_are_listed_beside_it")?;
+    let rules = rules_dir(
+        &dir,
+        "rules",
+        "title: No id\nlogsource:\n  category: file_event\ndetection:\n  sel:\n    TargetFilename: x\n  condition: sel\n",
+    )?;
+    std::fs::write(dir.join("MFT"), small_volume_mft())?;
+
+    let status = tool()
+        .args(["analyze", "-i"])
+        .arg(dir.join("MFT"))
+        .arg("-o")
+        .arg(dir.join("report.html"))
+        .arg("--rules")
+        .arg(&rules)
+        .status()?;
+
+    assert!(status.success());
+    assert_eq!(
+        std::fs::read_to_string(dir.join("report.skipped-rules.csv"))?,
+        "file,id,title,reason\nrules/rule.yml,,No id,no id\n"
+    );
+    Ok(())
+}

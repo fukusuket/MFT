@@ -113,6 +113,14 @@ fn analyze(
             refuse_same_file(path, later, name, later_name)?;
         }
     }
+    // Skipped rules are listed beside the CSV and JSONL outputs, or beside the HTML report when
+    // it is the only output.
+    let listed = |path: Option<&Path>, extension| {
+        path.filter(|_| !rules.is_empty())
+            .map(|path| skipped_path(path, extension))
+    };
+    let skipped_csv = listed(csv.or(output.filter(|_| jsonl.is_none())), "csv");
+    let skipped_jsonl = listed(jsonl, "jsonl");
     let rules = if rules.is_empty() {
         None
     } else {
@@ -186,16 +194,15 @@ fn analyze(
             }
         }
     }
-    // Skipped rules go next to the CSV and JSONL outputs, written before anything is committed.
     let mut skipped = Vec::new();
     if let Some(rules) = &rules {
-        if let Some(path) = csv {
-            let (pending, file) = AtomicOutput::create(&skipped_path(path, "csv"))?;
+        if let Some(path) = &skipped_csv {
+            let (pending, file) = AtomicOutput::create(path)?;
             report::write_skipped_csv(BufWriter::new(file), rules.skipped())?.flush()?;
             skipped.push(pending);
         }
-        if let Some(path) = jsonl {
-            let (pending, file) = AtomicOutput::create(&skipped_path(path, "jsonl"))?;
+        if let Some(path) = &skipped_jsonl {
+            let (pending, file) = AtomicOutput::create(path)?;
             report::write_skipped_jsonl(BufWriter::new(file), rules.skipped())?.flush()?;
             skipped.push(pending);
         }
