@@ -1,9 +1,10 @@
 //! Self-contained HTML report: a static template plus the report data as Base64 JSON.
 
+use std::collections::BTreeMap;
 use std::io::{BufWriter, Write};
 
 use analyze::{Row, UsnRow};
-use baseline::Status;
+use baseline::{Baseline, Status};
 use mft_parse::DiagCode;
 use ntfs_types::Filetime;
 use resolve::Resolution;
@@ -70,6 +71,8 @@ pub struct HtmlReport {
     summary: Summary,
     findings: Vec<FindingItem>,
     outside: Vec<OutsideItem>,
+    /// SKU folder names as shown, and their paths (`analyze::sku_folder`).
+    skus: BTreeMap<String, Vec<Vec<u16>>>,
 }
 
 impl HtmlReport {
@@ -92,13 +95,32 @@ impl HtmlReport {
             usn_first: None,
             usn_last: None,
             findings: Levels::default(),
+            edition: None,
+            baseline_warning: None,
         };
         Self {
             provenance,
             summary,
             findings: Vec::new(),
             outside: Vec::new(),
+            skus: BTreeMap::new(),
         }
+    }
+
+    /// Warns when none of the host's SKU folders is in `baseline`: another edition's baseline.
+    pub fn check_edition(&mut self, baseline: &Baseline) {
+        let in_baseline = |path: &Vec<Vec<u16>>| {
+            let segments: Vec<&[u16]> = path.iter().map(Vec::as_slice).collect();
+            baseline.has_folder(&segments)
+        };
+        if self.skus.is_empty() || self.skus.values().any(in_baseline) {
+            return;
+        }
+        self.summary.baseline_warning = Some(format!(
+            "This host's edition ({}) is not in the baseline {}, so its Windows files show as outside-baseline. Use a baseline built from the same edition.",
+            edition(&self.skus),
+            self.summary.baseline.as_deref().unwrap_or("given")
+        ));
     }
 
     /// Adds a USN row's findings; USN rows are not listed otherwise yet.
@@ -142,6 +164,12 @@ impl HtmlReport {
     }
 
     pub fn add(&mut self, row: &Row<'_>) {
+        if let Some((name, path)) =
+            analyze::sku_folder(row).and_then(|path| Some((path.last()?, path)))
+        {
+            let units = path.iter().map(|s| s.units().to_vec()).collect();
+            self.skus.insert(display_text(&name.to_string()), units);
+        }
         let s = &mut self.summary;
         s.entries += 1;
         if row.entry.in_use && !row.entry.is_dir {
@@ -209,6 +237,9 @@ impl HtmlReport {
                 first.iso8601()
             ));
         }
+        if !self.skus.is_empty() {
+            self.summary.edition = Some(edition(&self.skus));
+        }
         // Level, then newest first (no time last), then a total order for byte-identical output.
         self.findings.sort_by(|a, b| {
             (b.level, b.created.or(b.event_time))
@@ -264,6 +295,14 @@ fn iso8601<S: Serializer>(time: &Option<Filetime>, s: S) -> Result<S::Ok, S::Err
 
 fn level<S: Serializer>(level: &Option<Level>, s: S) -> Result<S::Ok, S::Error> {
     level_name(*level).serialize(s)
+}
+
+/// SKU folder names as shown, sorted, comma-separated.
+fn edition(skus: &BTreeMap<String, Vec<Vec<u16>>>) -> String {
+    skus.keys()
+        .map(String::as_str)
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 /// The resolved path as display text; empty if unknown.
@@ -342,6 +381,12 @@ struct Summary {
     #[serde(serialize_with = "iso8601")]
     usn_last: Option<Filetime>,
     findings: Levels,
+    /// SKU folder names, sorted; left out when the `$MFT` has none.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    edition: Option<String>,
+    /// Set by [`HtmlReport::check_edition`]; left out otherwise.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    baseline_warning: Option<String>,
 }
 
 /// Count per diagnostic code.
@@ -812,6 +857,68 @@ mod tests {
             coverage(&[])?,
             (serde_json::Value::Null, serde_json::Value::Null)
         );
+        Ok(())
+    }
+
+    /// Directories down to `\Windows\System32\spp\tokens\skus`, with one directory per SKU name.
+    fn sku_volume(skus: &[&str]) -> Vec<Entry> {
+        let dir = |number: u64, parent: u64, name: &str| Entry {
+            is_dir: true,
+            ..file(number, parent, name)
+        };
+        let mut entries = vec![
+            root(),
+            dir(6, 5, "Windows"),
+            dir(7, 6, "System32"),
+            dir(8, 7, "spp"),
+            dir(9, 8, "tokens"),
+            dir(10, 9, "skus"),
+        ];
+        entries.extend((11..).zip(skus).map(|(number, name)| dir(number, 10, name)));
+        entries
+    }
+
+    #[test]
+    fn the_summary_names_the_editions_of_the_sku_folders() -> Result<()> {
+        let edition = |skus: &[&str]| {
+            let data = decode(payload(&html_of(&sku_volume(skus), input())?)?)?;
+            Ok::<_, Box<dyn std::error::Error>>(data["summary"].get("edition").cloned())
+        };
+
+        assert_eq!(
+            edition(&["ServerStandardEval", "Professional"])?,
+            Some(serde_json::json!("Professional, ServerStandardEval"))
+        );
+        assert_eq!(edition(&[])?, None);
+        Ok(())
+    }
+
+    #[test]
+    fn an_edition_missing_from_the_baseline_is_warned_about() -> Result<()> {
+        let vwr = "\"FullName\"\n\"C:\\Windows\\System32\\spp\\tokens\\skus\\ServerStandardEval\\x.xrm-ms\"\n";
+        let mut file_bytes = Vec::new();
+        baseline::build(vwr.as_bytes(), &mut file_bytes)?;
+        let baseline = Baseline::load(file_bytes)?;
+        let warning = |skus: &[&str]| {
+            let mut input = input();
+            input.baseline = Some("srv.fst".to_string());
+            let mut report = HtmlReport::new(PROVENANCE, input);
+            for row in analyze::rows(&sku_volume(skus), &[], Some(&baseline), None, None) {
+                report.add(&row);
+            }
+            report.check_edition(&baseline);
+            let data = decode(payload(&String::from_utf8(report.finish(Vec::new())?)?)?)?;
+            Ok::<_, Box<dyn std::error::Error>>(data["summary"].get("baseline_warning").cloned())
+        };
+
+        assert_eq!(
+            warning(&["Professional", "Core"])?,
+            Some(serde_json::json!(
+                "This host's edition (Core, Professional) is not in the baseline srv.fst, so its Windows files show as outside-baseline. Use a baseline built from the same edition."
+            ))
+        );
+        assert_eq!(warning(&["Professional", "ServerStandardEval"])?, None);
+        assert_eq!(warning(&[])?, None);
         Ok(())
     }
 

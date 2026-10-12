@@ -223,6 +223,9 @@ fn analyze(
             report.add(&row);
         }
     }
+    if let (Some((_, _, report)), Some(baseline)) = (&mut html, &baseline) {
+        report.check_edition(baseline);
+    }
     if let Some(journal) = &journal {
         // After the $MFT rows, in $J order; the HTML report shows only their findings.
         for row in analyze::usn_rows(

@@ -6,6 +6,8 @@ mod vwr;
 
 use std::io::{Read, Write};
 
+use fst::{IntoStreamer, Streamer};
+
 use normalize::NORMALIZATION_VERSION;
 
 /// Fatal problems building or loading a baseline.
@@ -88,6 +90,20 @@ impl Baseline {
             _ => Status::Outside,
         }
     }
+
+    /// Whether the baseline has a file anywhere under the folder given as segments from the root.
+    /// The folder is normalized like a file path, so a profile folder itself (`Users\<name>`)
+    /// is not generalized (ADR 0015).
+    pub fn has_folder(&self, segments: &[&[u16]]) -> bool {
+        let Some(mut key) = normalize::key(segments) else {
+            return false;
+        };
+        key.push(u16::from(b'\\'));
+        let prefix = big_endian(&key);
+        // Keys sort after their prefix, so the first key from it on tells.
+        let mut from = self.keys.range().ge(&prefix).into_stream();
+        from.next().is_some_and(|first| first.starts_with(&prefix))
+    }
 }
 
 #[cfg(test)]
@@ -129,6 +145,34 @@ mod tests {
             status(&baseline, &["Windows\\notepad.exe"]),
             Status::Outside
         );
+        Ok(())
+    }
+
+    #[test]
+    fn a_folder_is_in_the_baseline_when_a_file_is_under_it() -> Result<(), Error> {
+        let vwr = r#""FullName"
+"C:\Windows\System32\spp\tokens\skus\ServerStandardEval\x.xrm-ms"
+"#;
+        let mut file = Vec::new();
+        build(vwr.as_bytes(), &mut file)?;
+        let baseline = Baseline::load(file)?;
+        let has = |path: &[&str]| {
+            let segments: Vec<Vec<u16>> = path.iter().map(|s| units(s)).collect();
+            let refs: Vec<&[u16]> = segments.iter().map(Vec::as_slice).collect();
+            baseline.has_folder(&refs)
+        };
+        let skus = ["WINDOWS", "system32", "SPP", "tokens", "skus"];
+        let under_skus = |name: &'static str| [&skus[..], &[name]].concat();
+
+        assert!(has(&under_skus("serverstandardeval")));
+        assert!(has(&skus));
+        assert!(!has(&under_skus("ServerStandard")));
+        assert!(!has(&under_skus("Professional")));
+        assert!(!has(&[
+            &under_skus("ServerStandardEval")[..],
+            &["x.xrm-ms"]
+        ]
+        .concat()));
         Ok(())
     }
 

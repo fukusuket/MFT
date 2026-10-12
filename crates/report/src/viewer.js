@@ -372,6 +372,8 @@ const viewer = (function () {
       const w = s.window;
       const rows = [
         ["Host", s.host],
+        ["Edition", s.edition === undefined ? "not found" : s.edition],
+        ...(s.baseline_warning === undefined ? [] : [["Baseline warning", s.baseline_warning]]),
         ["Input", s.input + " (" + s.record_size + "-byte records)"],
         ["USN coverage", s.usn_first === null ? "no USN journal" : s.usn_first + " .. " + s.usn_last],
         [

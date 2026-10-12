@@ -177,9 +177,9 @@ const report = {
   footer: { version: "1.0.0", commit: "abc", source_url: "https://example.com", license: "AGPL-3.0-only" },
 };
 
-function open(hash) {
+function open(hash, data = report) {
   const { document, window } = page(
-    { app: "", data: base64(report), version: "", commit: "", license: "", source: "" },
+    { app: "", data: base64(data), version: "", commit: "", license: "", source: "" },
     hash,
   );
   load().render(document, window);
@@ -385,4 +385,18 @@ test("the active filters are listed with a remove button each, and Clear removes
   screen.find("clear").dispatch("click");
   assert.equal(window.location.hash, "#tab=findings");
   assert.deepEqual(active(), []);
+});
+
+test("Summary: the edition is shown, and a baseline warning only when there is one", () => {
+  const rows = (data) =>
+    Object.fromEntries(open("", data).app.find("summary").children.map((tr) => tr.children.map((c) => c.textContent)));
+  const warning = "This host's edition (ServerStandardEval) is not in the baseline w11.fst, ...";
+
+  const without = rows(report);
+  const withEdition = rows({ ...report, summary: { ...report.summary, edition: "ServerStandardEval", baseline_warning: warning } });
+
+  assert.equal(without["Edition"], "not found");
+  assert.equal("Baseline warning" in without, false);
+  assert.equal(withEdition["Edition"], "ServerStandardEval");
+  assert.equal(withEdition["Baseline warning"], warning);
 });

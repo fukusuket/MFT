@@ -171,6 +171,21 @@ pub fn rows<'a>(
     })
 }
 
+/// The path of an in-use directory `\Windows\System32\spp\tokens\skus\<name>`: one per
+/// Windows edition (SKU) the install carries, named by its last segment.
+pub fn sku_folder<'r>(row: &'r Row<'_>) -> Option<&'r [&'r NtfsName]> {
+    const SKUS: [&str; 5] = ["Windows", "System32", "spp", "tokens", "skus"];
+    let Resolution::Resolved(segments) = &row.resolution else {
+        return None;
+    };
+    let at_skus = segments.len() == SKUS.len() + 1
+        && segments
+            .iter()
+            .zip(SKUS)
+            .all(|(dir, ascii)| same_ascii(dir, ascii));
+    (row.entry.in_use && row.entry.is_dir && at_skus).then_some(segments.as_slice())
+}
+
 /// The [`Hint`]s for `entry`'s `$SI` created, compared with its shown name's `$FN` created.
 fn hints(entry: &Entry) -> Vec<Hint> {
     let Some(si) = entry.si_created else {
@@ -683,6 +698,39 @@ mod tests {
 
         assert_eq!(with, [Some(true), Some(false), Some(false)]);
         assert_eq!(without, [None; 3]);
+    }
+
+    #[test]
+    fn sku_folders_are_in_use_directories_right_under_skus() {
+        let dir = |number: u64, parent: u64, name: &str| {
+            let mut e = entry(number, parent, name);
+            e.is_dir = true;
+            e
+        };
+        let mut deleted = dir(13, 10, "Gone");
+        deleted.in_use = false;
+        let entries = [
+            dir(5, 5, "."),
+            dir(6, 5, "WINDOWS"),
+            dir(7, 6, "system32"),
+            dir(8, 7, "SPP"),
+            dir(9, 8, "tokens"),
+            dir(10, 9, "skus"),
+            dir(11, 10, "ServerStandardEval"),
+            entry(12, 10, "file.xrm-ms"),
+            deleted,
+            dir(14, 11, "deeper"),
+            dir(15, 6, "skus"),
+            dir(16, 15, "Elsewhere"),
+        ];
+
+        let skus: Vec<String> = rows(&entries, &[], None, None, None)
+            .filter_map(|row| {
+                sku_folder(&row).and_then(|path| path.last().map(ToString::to_string))
+            })
+            .collect();
+
+        assert_eq!(skus, ["ServerStandardEval"]);
     }
 
     #[test]
