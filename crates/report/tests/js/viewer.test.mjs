@@ -95,3 +95,21 @@ test("only YYYY-MM-DD and YYYY-MM-DDTHH:MM:SS are valid times", () => {
     assert.equal(validTime(text), false, text);
   }
 });
+
+test("outside-baseline files match the folder, the time range and the path search only", () => {
+  const { matchOutside } = load();
+  const o = {
+    created: "2026-10-02T12:00:00.5000000Z",
+    fn_created: "2026-09-01T00:00:00.0000000Z",
+    path: "\\Users\\Bob\\Downloads\\Tool.EXE",
+    entry: 40,
+    folder: "downloads",
+  };
+
+  assert.equal(matchOutside(o, { ...none, level: "critical", rule: "other" }), true);
+  assert.equal(matchOutside(o, { ...none, folder: "downloads", q: "TOOL" }), true);
+  assert.equal(matchOutside(o, { ...none, folder: "temp" }), false);
+  assert.equal(matchOutside(o, { ...none, q: "public" }), false);
+  assert.equal(matchOutside(o, { ...none, from: "2026-09-01", to: "2026-09-01" }), true); // by $FN
+  assert.equal(matchOutside(o, { ...none, from: "2026-10-03" }), false);
+});

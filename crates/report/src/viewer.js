@@ -79,6 +79,15 @@ const viewer = (function () {
     );
   }
 
+  // Whether an outside-baseline file passes the folder, time and path filters.
+  function matchOutside(o, state) {
+    return (
+      (state.folder === "" || o.folder === state.folder) &&
+      (state.q === "" || o.path.toLowerCase().includes(state.q.toLowerCase())) &&
+      inRange([o.created, o.fn_created], state)
+    );
+  }
+
   function render(document) {
     const data = decode(document.getElementById("data").textContent);
 
@@ -193,7 +202,7 @@ const viewer = (function () {
     document.getElementById("source").textContent = f.source_url;
   }
 
-  return { decode, parseHash, formatHash, validTime, matchFinding, render };
+  return { decode, parseHash, formatHash, validTime, matchFinding, matchOutside, render };
 })();
 
 if (typeof document !== "undefined") viewer.render(document);
