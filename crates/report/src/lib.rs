@@ -3,7 +3,7 @@
 use std::fmt::Write as _;
 use std::io::Write;
 
-use analyze::{Hint, Row, Seen, UsnRow};
+use analyze::{Folder, Hint, Row, Seen, UsnRow};
 use baseline::Status;
 use mft_parse::DiagCode;
 use ntfs_types::{Filetime, NtfsName};
@@ -27,7 +27,7 @@ pub enum Error {
     Json(#[from] serde_json::Error),
 }
 
-const HEADER: [&str; 20] = [
+const HEADER: [&str; 21] = [
     "entry",
     "sequence",
     "in_use",
@@ -48,6 +48,7 @@ const HEADER: [&str; 20] = [
     "streams",
     "hints",
     "in_window",
+    "folder",
 ];
 
 /// CSV with one row per `$MFT` record; columns as in `HEADER`.
@@ -89,6 +90,7 @@ impl<W: Write> CsvWriter<W> {
             streams_cell(&entry.streams),
             hint_names(&row.hints).join(";"),
             bool_cell(row.in_window),
+            folder_name(row.folder).to_string(),
         ])?;
         Ok(())
     }
@@ -131,6 +133,7 @@ impl<W: Write> CsvWriter<W> {
             String::new(),
             String::new(),
             bool_cell(row.in_window),
+            row.folder.map(folder_name).unwrap_or_default().to_string(),
         ])?;
         Ok(())
     }
@@ -181,6 +184,23 @@ pub fn write_skipped_jsonl<W: Write>(mut out: W, skipped: &[sigma::Skipped]) -> 
         out.write_all(b"\n").map_err(serde_json::Error::io)?;
     }
     Ok(out)
+}
+
+fn folder_name(folder: Folder) -> &'static str {
+    match folder {
+        Folder::Public => "public",
+        Folder::Downloads => "downloads",
+        Folder::Desktop => "desktop",
+        Folder::Documents => "documents",
+        Folder::Temp => "temp",
+        Folder::AppData => "appdata",
+        Folder::UserProfile => "user_profile",
+        Folder::ProgramData => "programdata",
+        Folder::ProgramFiles => "program_files",
+        Folder::Windows => "windows",
+        Folder::Other => "other",
+        Folder::NoPath => "no_path",
+    }
 }
 
 /// `true`, `false` or empty.
@@ -466,10 +486,10 @@ mod tests {
 
         assert_eq!(
             csv_of(&[root, full, empty])?,
-            "entry,sequence,in_use,name,path,path_state,baseline,findings,si_created,fn_created,diagnostics,source,usn,reasons,event_time,deleted,seen,streams,hints,in_window\n\
-             5,0,true,.,\\,resolved,,,,1601-01-01T00:00:00.0000000Z,,mft,,,,false,mft,,,\n\
-             42,3,true,a\\\\b.txt,\\a\\\\b.txt,resolved,,,2023-11-14T17:12:46.6777888Z,2024-02-29T12:34:56.1234567Z,fixup_mismatch,mft,,,,false,mft,,si_before_fn,\n\
-             43,0,false,,,unknown,,,,,bad_signature;malformed,mft,,,,true,mft,,,\n"
+            "entry,sequence,in_use,name,path,path_state,baseline,findings,si_created,fn_created,diagnostics,source,usn,reasons,event_time,deleted,seen,streams,hints,in_window,folder\n\
+             5,0,true,.,\\,resolved,,,,1601-01-01T00:00:00.0000000Z,,mft,,,,false,mft,,,,other\n\
+             42,3,true,a\\\\b.txt,\\a\\\\b.txt,resolved,,,2023-11-14T17:12:46.6777888Z,2024-02-29T12:34:56.1234567Z,fixup_mismatch,mft,,,,false,mft,,si_before_fn,,other\n\
+             43,0,false,,,unknown,,,,,bad_signature;malformed,mft,,,,true,mft,,,,no_path\n"
         );
         Ok(())
     }
@@ -525,7 +545,7 @@ mod tests {
             assert_eq!(
                 row,
                 format!(
-                    "0,0,true,{cell},,unknown,,,,1601-01-01T00:00:00.0000000Z,,mft,,,,false,mft,,,"
+                    "0,0,true,{cell},,unknown,,,,1601-01-01T00:00:00.0000000Z,,mft,,,,false,mft,,,,no_path"
                 ),
                 "name {name:?}"
             );
@@ -584,7 +604,7 @@ mod tests {
         assert!(
             csv.lines()
                 .nth(1)
-                .is_some_and(|row| row.ends_with(",orphan_extension,mft,,,,false,mft,,,")),
+                .is_some_and(|row| row.ends_with(",orphan_extension,mft,,,,false,mft,,,,no_path")),
             "{csv}"
         );
         Ok(())
@@ -719,8 +739,8 @@ mod tests {
         let facts: Vec<String> = csv
             .lines()
             .map(|line| {
-                line.rsplitn(6, ',')
-                    .skip(1)
+                line.rsplitn(7, ',')
+                    .skip(2)
                     .take(4)
                     .collect::<Vec<_>>()
                     .join(" | ")
@@ -789,7 +809,7 @@ mod tests {
             let (csv, jsonl) = write(window)?;
             let last: Vec<&str> = csv
                 .lines()
-                .map(|l| l.rsplit(',').next().unwrap_or("?"))
+                .map(|l| l.rsplit(',').nth(1).unwrap_or("?")) // in_window, before folder
                 .collect();
             let fields: Vec<serde_json::Value> = jsonl
                 .lines()
@@ -798,6 +818,71 @@ mod tests {
             assert_eq!(last, cells);
             assert_eq!(serde_json::Value::from(fields), values);
         }
+        Ok(())
+    }
+
+    #[test]
+    fn csv_and_jsonl_write_the_folder_last() -> Result<(), Box<dyn std::error::Error>> {
+        let mut file = dir(60, 7, "a.txt");
+        file.is_dir = false;
+        let mut entries = usn_tree();
+        entries.extend([dir(7, 6, "bob"), file]);
+        let records = vec![
+            usn_event(61 | (1 << 48), 7 | (1 << 48), 64, 0, "b.txt"),
+            usn_event(62 | (1 << 48), 77 | (1 << 48), 128, 0, "c.txt"),
+            usn_parse::Record::Diagnostic(usn_parse::Diagnostic {
+                code: usn_parse::DiagCode::Malformed,
+                offset: 8,
+            }),
+        ];
+
+        let (mut csv, mut jsonl) = (CsvWriter::new(Vec::new())?, JsonlWriter::new(Vec::new()));
+        for row in analyze::rows(&entries, &records, None, None, None) {
+            csv.write(&row)?;
+            jsonl.write(&row)?;
+        }
+        for row in analyze::usn_rows(&entries, &records, None, None, None) {
+            csv.write_usn(&row)?;
+            jsonl.write_usn(&row)?;
+        }
+        let (csv, jsonl) = (
+            String::from_utf8(csv.finish()?)?,
+            String::from_utf8(jsonl.finish()?)?,
+        );
+
+        let last: Vec<&str> = csv
+            .lines()
+            .map(|l| l.rsplit(',').next().unwrap_or("?"))
+            .collect();
+        let fields: Vec<serde_json::Value> = jsonl
+            .lines()
+            .map(|l| Ok(serde_json::from_str::<serde_json::Value>(l)?["folder"].take()))
+            .collect::<Result<_, Box<dyn std::error::Error>>>()?;
+        assert_eq!(
+            last,
+            [
+                "folder",
+                "other",
+                "other",
+                "other",
+                "user_profile",
+                "user_profile",
+                "no_path",
+                ""
+            ]
+        );
+        assert_eq!(
+            serde_json::Value::from(fields),
+            serde_json::json!([
+                "other",
+                "other",
+                "other",
+                "user_profile",
+                "user_profile",
+                "no_path",
+                null
+            ])
+        );
         Ok(())
     }
 
@@ -829,9 +914,9 @@ mod tests {
 
         assert_eq!(
             usn_csv(&usn_tree(), records)?,
-            "60,1,,a.txt,\\Users\\a.txt,resolved,,,,,,usn,4096,,2023-11-14T17:12:46.6777888Z,true,usn,,,\n\
-             61,2,,b.txt,,unknown,,,,,,usn,4160,,2023-11-14T17:12:46.6777888Z,true,usn,,,\n\
-             62,1,,c.txt,\\c.txt,resolved,,,,,,usn,4224,,2023-11-14T17:12:46.6777888Z,true,usn,,,\n"
+            "60,1,,a.txt,\\Users\\a.txt,resolved,,,,,,usn,4096,,2023-11-14T17:12:46.6777888Z,true,usn,,,,other\n\
+             61,2,,b.txt,,unknown,,,,,,usn,4160,,2023-11-14T17:12:46.6777888Z,true,usn,,,,no_path\n\
+             62,1,,c.txt,\\c.txt,resolved,,,,,,usn,4224,,2023-11-14T17:12:46.6777888Z,true,usn,,,,other\n"
         );
         Ok(())
     }
@@ -948,14 +1033,14 @@ mod tests {
 
         assert_eq!(
             csv,
-            ",,,,,unknown,,,,,malformed,usn,,,,,,,,\n\
-             ,,,,,unknown,,,,,truncated,usn,,,,,,,,\n\
-             ,,,,,unknown,,,,,unsupported_version,usn,,,,,,,,\n"
+            ",,,,,unknown,,,,,malformed,usn,,,,,,,,,\n\
+             ,,,,,unknown,,,,,truncated,usn,,,,,,,,,\n\
+             ,,,,,unknown,,,,,unsupported_version,usn,,,,,,,,,\n"
         );
         assert_eq!(
             String::from_utf8(jsonl.finish()?)?.lines().next(),
             Some(
-                r#"{"entry":null,"sequence":null,"in_use":null,"name":null,"path":null,"path_state":"unknown","baseline":null,"findings":[],"si_created":null,"fn_created":null,"diagnostics":["malformed"],"source":"usn","usn":null,"reasons":[],"event_time":null,"deleted":null,"seen":null,"streams":[],"hints":[],"in_window":null}"#
+                r#"{"entry":null,"sequence":null,"in_use":null,"name":null,"path":null,"path_state":"unknown","baseline":null,"findings":[],"si_created":null,"fn_created":null,"diagnostics":["malformed"],"source":"usn","usn":null,"reasons":[],"event_time":null,"deleted":null,"seen":null,"streams":[],"hints":[],"in_window":null,"folder":null}"#
             )
         );
         Ok(())
