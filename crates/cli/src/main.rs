@@ -128,6 +128,11 @@ fn analyze(
                     utc(time.raw().saturating_add(length), "--to")
                 })
                 .transpose()?;
+            if let (Some(start), Some(end)) = (start, end)
+                && start >= end
+            {
+                anyhow::bail!("--from is after --to: the window holds no time");
+            }
             Ok::<_, anyhow::Error>(analyze::Window { start, end })
         })
         .transpose()?;

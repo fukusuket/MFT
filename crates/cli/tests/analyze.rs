@@ -2379,3 +2379,48 @@ fn tz_shifts_the_window_to_utc() -> TestResult {
     );
     Ok(())
 }
+
+#[test]
+fn a_bad_window_fails_with_a_message_and_writes_nothing() -> TestResult {
+    let dir = scratch("a_bad_window_fails_with_a_message_and_writes_nothing")?;
+    let (mft, csv) = (dir.join("MFT"), dir.join("out.csv"));
+    std::fs::write(&mft, window_volume_mft())?;
+    let _ = std::fs::remove_file(&csv); // from an earlier run
+    let cases: [(&[&str], &str); 8] = [
+        (&["--from", "2026-02-30"], "--from \"2026-02-30\""),
+        (&["--from", "2026/10/02"], "--from \"2026/10/02\""),
+        (
+            &["--to", "2026-10-02T24:00:00"],
+            "--to \"2026-10-02T24:00:00\"",
+        ),
+        (&["--to", "2026-10-02T12:00"], "--to \"2026-10-02T12:00\""),
+        (&["--from", "2026-10-02", "--tz", "9"], "--tz \"9\""),
+        (
+            &["--from", "2026-10-02", "--tz", "+24:00"],
+            "--tz \"+24:00\"",
+        ),
+        (&["--from", "1601-01-01", "--tz", "+01:00"], "before 1601"),
+        (
+            &["--from", "2026-10-03", "--to", "2026-10-02"],
+            "--from is after --to",
+        ),
+    ];
+
+    for (args, message) in cases {
+        let out = tool()
+            .args(["analyze", "-i"])
+            .arg(&mft)
+            .arg("--csv")
+            .arg(&csv)
+            .args(args)
+            .output()?;
+
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(!out.status.success(), "{args:?}");
+        assert!(stderr.contains(message), "{args:?}: {stderr}");
+        assert!(!stderr.contains("panicked"), "{args:?}: {stderr}");
+        assert!(!csv.exists(), "{args:?}");
+    }
+    assert_no_temporary_outputs(&dir)?;
+    Ok(())
+}
