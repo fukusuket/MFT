@@ -21,6 +21,8 @@ pub struct Row<'a> {
     pub seen: Seen,
     /// Timestamp-manipulation hints, in [`Hint`] order.
     pub hints: Vec<Hint>,
+    /// Whether `$SI` or `$FN` created is in the window; `None` without a window.
+    pub in_window: Option<bool>,
 }
 
 /// Where a file shows up: by (entry, sequence), in the `$MFT`, the USN journal or both.
@@ -59,6 +61,7 @@ pub fn rows<'a>(
     records: &'a [usn_parse::Record],
     baseline: Option<&'a Baseline>,
     rules: Option<&'a Rules>,
+    window: Option<&'a Window>,
 ) -> impl Iterator<Item = Row<'a>> {
     let resolver = Resolver::new(entries);
     let in_journal: HashSet<(u64, u16)> = records
@@ -94,6 +97,13 @@ pub fn rows<'a>(
                 Seen::Mft
             },
             hints: hints(entry),
+            in_window: window.map(|window| {
+                let fn_created = resolve::chosen_name(&entry.names).map(|name| name.created);
+                [entry.si_created, fn_created]
+                    .into_iter()
+                    .flatten()
+                    .any(|time| window.contains(time))
+            }),
         }
     })
 }
@@ -277,6 +287,39 @@ mod tests {
     }
 
     #[test]
+    fn an_entry_is_in_the_window_when_si_or_fn_created_is() {
+        let times = |si: Option<u64>, fn_created: Option<u64>| {
+            let mut e = entry(40, 5, "a.txt");
+            e.si_created = si.map(Filetime::from_raw);
+            match fn_created {
+                Some(raw) => e.names[0].created = Filetime::from_raw(raw),
+                None => e.names.clear(),
+            }
+            e
+        };
+        let entries = [
+            times(Some(15), Some(5)), // $SI in
+            times(Some(5), Some(15)), // $FN in (timestomped $SI)
+            times(Some(5), Some(25)), // neither
+            times(None, None),        // no time at all
+        ];
+        let window = Window {
+            start: Some(Filetime::from_raw(10)),
+            end: Some(Filetime::from_raw(20)),
+        };
+
+        let with: Vec<Option<bool>> = rows(&entries, &[], None, None, Some(&window))
+            .map(|r| r.in_window)
+            .collect();
+        let without: Vec<Option<bool>> = rows(&entries, &[], None, None, None)
+            .map(|r| r.in_window)
+            .collect();
+
+        assert_eq!(with, [Some(true), Some(true), Some(false), Some(false)]);
+        assert_eq!(without, [None; 4]);
+    }
+
+    #[test]
     fn pairs_each_entry_with_its_resolution_in_entry_order() {
         let entries = [
             entry(5, 5, "."),
@@ -284,7 +327,7 @@ mod tests {
             entry(41, 77, "orphan"),
         ];
 
-        let shown: Vec<(u64, Option<usize>)> = rows(&entries, &[], None, None)
+        let shown: Vec<(u64, Option<usize>)> = rows(&entries, &[], None, None, None)
             .map(|r| {
                 let depth = match &r.resolution {
                     Resolution::Resolved(segments) => Some(segments.len()),
@@ -313,10 +356,10 @@ mod tests {
             entry(43, 77, "a.txt"),
         ];
 
-        let with: Vec<Option<Status>> = rows(&entries, &[], Some(&baseline), None)
+        let with: Vec<Option<Status>> = rows(&entries, &[], Some(&baseline), None, None)
             .map(|r| r.baseline)
             .collect();
-        let without: Vec<Option<Status>> = rows(&entries, &[], None, None)
+        let without: Vec<Option<Status>> = rows(&entries, &[], None, None, None)
             .map(|r| r.baseline)
             .collect();
 
@@ -341,10 +384,10 @@ mod tests {
             entry(41, 5, "b.txt"),
         ];
 
-        let with: Vec<Vec<String>> = rows(&entries, &[], None, Some(&rules))
+        let with: Vec<Vec<String>> = rows(&entries, &[], None, Some(&rules), None)
             .map(|r| r.findings.into_iter().map(|f| f.id).collect())
             .collect();
-        let without = rows(&entries, &[], None, None)
+        let without = rows(&entries, &[], None, None, None)
             .filter(|r| !r.findings.is_empty())
             .count();
 
@@ -379,7 +422,7 @@ mod tests {
         }
         let records = [usn_event("a.txt", 5), reused];
 
-        let seen: Vec<Seen> = rows(&entries, &records, None, None)
+        let seen: Vec<Seen> = rows(&entries, &records, None, None, None)
             .map(|r| r.seen)
             .collect();
 
@@ -404,7 +447,7 @@ mod tests {
         };
         let records = [event(61 | (1 << 48)), event(62), event(62 | (0xFFFF << 48))];
 
-        let seen: Vec<Seen> = rows(&entries, &records, None, None)
+        let seen: Vec<Seen> = rows(&entries, &records, None, None, None)
             .map(|r| r.seen)
             .collect();
         let found: Vec<Option<u64>> = usn_rows(&entries, &records, None, None)
@@ -431,7 +474,9 @@ mod tests {
             times(None, 200_000_000),
         ];
 
-        let hints: Vec<Vec<Hint>> = rows(&entries, &[], None, None).map(|r| r.hints).collect();
+        let hints: Vec<Vec<Hint>> = rows(&entries, &[], None, None, None)
+            .map(|r| r.hints)
+            .collect();
 
         assert_eq!(
             hints,

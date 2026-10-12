@@ -173,7 +173,7 @@ mod tests {
         rules: Option<&sigma::Rules>,
     ) -> Result<String> {
         let mut w = JsonlWriter::new(Vec::new());
-        for row in analyze::rows(entries, &[], baseline, rules) {
+        for row in analyze::rows(entries, &[], baseline, rules, None) {
             w.write(&row)?;
         }
         Ok(String::from_utf8(w.finish()?)?)
@@ -281,7 +281,7 @@ mod tests {
         ];
 
         let mut w = JsonlWriter::new(Vec::new());
-        for row in analyze::rows(&entries, &records, None, None) {
+        for row in analyze::rows(&entries, &records, None, None, None) {
             w.write(&row)?;
         }
         for row in analyze::usn_rows(&entries, &records, None, None) {

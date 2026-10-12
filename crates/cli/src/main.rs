@@ -185,7 +185,13 @@ fn analyze(
         })
         .transpose()?;
     let in_journal = journal.as_deref().unwrap_or_default();
-    for row in analyze::rows(&entries, in_journal, baseline.as_ref(), rules.as_ref()) {
+    for row in analyze::rows(
+        &entries,
+        in_journal,
+        baseline.as_ref(),
+        rules.as_ref(),
+        None,
+    ) {
         if let Some((_, writer)) = &mut csv_writer {
             writer.write(&row)?;
         }
