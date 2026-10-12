@@ -110,32 +110,7 @@ fn analyze(
     rules: &[PathBuf],
     (from, to, tz): (Option<&str>, Option<&str>, Option<&str>),
 ) -> anyhow::Result<()> {
-    let offset = tz.map(parse_offset).transpose()?.unwrap_or(0);
-    let utc = |local: u64, flag: &str| {
-        local
-            .checked_add_signed(-offset)
-            .map(Filetime::from_raw)
-            .with_context(|| format!("{flag} with --tz is before 1601 in UTC"))
-    };
-    let window = (from.is_some() || to.is_some())
-        .then(|| {
-            let start = from
-                .map(|text| utc(parse_time(text, "--from")?.0.raw(), "--from"))
-                .transpose()?;
-            let end = to
-                .map(|text| {
-                    let (time, length) = parse_time(text, "--to")?;
-                    utc(time.raw().saturating_add(length), "--to")
-                })
-                .transpose()?;
-            if let (Some(start), Some(end)) = (start, end)
-                && start >= end
-            {
-                anyhow::bail!("--from is after --to: the window holds no time");
-            }
-            Ok::<_, anyhow::Error>(analyze::Window { start, end })
-        })
-        .transpose()?;
+    let window = window(from, to, tz)?;
     // Skipped rules are listed beside the CSV and JSONL outputs, or beside the HTML report when
     // it is the only output.
     let listed = |path: Option<&Path>, extension| {
@@ -291,6 +266,39 @@ fn analyze(
         pending.commit()?;
     }
     Ok(())
+}
+
+/// The window `--from`, `--to` and `--tz` select, in UTC; `None` without `--from` or `--to`.
+fn window(
+    from: Option<&str>,
+    to: Option<&str>,
+    tz: Option<&str>,
+) -> anyhow::Result<Option<analyze::Window>> {
+    let offset = tz.map(parse_offset).transpose()?.unwrap_or(0);
+    let utc = |local: u64, flag: &str| {
+        local
+            .checked_add_signed(-offset)
+            .map(Filetime::from_raw)
+            .with_context(|| format!("{flag} with --tz is before 1601 in UTC"))
+    };
+    if from.is_none() && to.is_none() {
+        return Ok(None);
+    }
+    let start = from
+        .map(|text| utc(parse_time(text, "--from")?.0.raw(), "--from"))
+        .transpose()?;
+    let end = to
+        .map(|text| {
+            let (time, length) = parse_time(text, "--to")?;
+            utc(time.raw().saturating_add(length), "--to")
+        })
+        .transpose()?;
+    if let (Some(start), Some(end)) = (start, end)
+        && start >= end
+    {
+        anyhow::bail!("--from is after --to: the window holds no time");
+    }
+    Ok(Some(analyze::Window { start, end }))
 }
 
 /// `YYYY-MM-DD` or `YYYY-MM-DDTHH:MM:SS` in UTC, and its length in 100 ns ticks (a day or a
