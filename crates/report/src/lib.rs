@@ -178,9 +178,13 @@ pub fn write_skipped_jsonl<W: Write>(mut out: W, skipped: &[sigma::Skipped]) -> 
     Ok(out)
 }
 
-/// Stream names joined by `;`, escaped like evidence.
+/// Stream names joined by `;`, escaped like evidence; a `;` inside a name shows as `\;` (a `\`
+/// already shows as `\\`).
 fn streams_cell(streams: &[NtfsName]) -> String {
-    let names: Vec<String> = streams.iter().map(ToString::to_string).collect();
+    let names: Vec<String> = streams
+        .iter()
+        .map(|s| s.to_string().replace(';', "\\;"))
+        .collect();
     cell_text(&names.join(";"))
 }
 
@@ -719,6 +723,24 @@ mod tests {
                 " |  | usn | true",
                 " |  |  | ",
             ]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_semicolon_or_backslash_in_a_stream_name_is_escaped_in_csv()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut file = named("a.txt");
+        file.streams = vec![
+            NtfsName::from_units(&units("x;Zone.Identifier")),
+            NtfsName::from_units(&units("a\\b")),
+        ];
+
+        let csv = csv_of(&[file])?;
+
+        assert_eq!(
+            csv.lines().nth(1).and_then(|row| row.split(',').nth(17)),
+            Some(r"x\;Zone.Identifier;a\\b")
         );
         Ok(())
     }
