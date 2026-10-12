@@ -2,7 +2,7 @@
 title: Executable under Windows that is not in the Windows baseline
 id: 290fe785-b499-4e25-b00f-70a4ae863c2f
 status: test
-description: An executable or library under C:\Windows that a clean install of this build does not have.
+description: An executable or library under C:\Windows that a clean install of this build does not have, outside the Windows temp, installer and servicing folders.
 author: tool
 date: 2026-10-08
 logsource:
@@ -15,5 +15,11 @@ detection:
     TargetFilename|endswith:
       - '.exe'
       - '.dll'
-  condition: selection
+  transient:
+    TargetFilename|startswith:
+      - 'C:\Windows\Temp\'
+      - 'C:\Windows\SystemTemp\'
+      - 'C:\Windows\Installer\'
+      - 'C:\Windows\WinSxS\Temp\'
+  condition: selection and not transient
 level: high

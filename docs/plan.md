@@ -172,6 +172,9 @@ Goal: add `$J` to the same end-to-end path: USN events with their paths at the t
 - [x] **P2-9c Viewer performance** (`report`)
   - Done when: with 1 M synthetic rows, a filter or search finishes in ≤ 200 ms (measured by the agent under Node), and scrolling to the last row shows it in Chrome and Firefox (checked by the human). Results recorded in [research/viewer.md](research/viewer.md).
   - Out of scope: gzip and the other escalation steps of ADR 0020 unless the measurement requires them (each by its own ADR).
+- [x] **P2-9d Outside-baseline binary rule: skip transient Windows folders** (`testdata/rules`, ADR 0016 revised; added after a Simulated-Case-1 run: with the matching Server 2025 baseline, 164–337 high findings per host, mostly temp, installer and servicing files)
+  - Done when: `outside_baseline_windows_binary.yml` excludes `C:\Windows\Temp\`, `SystemTemp\`, `Installer\` and `WinSxS\Temp\`; an e2e test shows a file in each gets no finding while `System32`, `WinSxS` components and `\Windows\Temp2\` still do; ADR 0016 defines `high` as reviewable rather than near-zero false positives; high counts on the 3 Simulated-Case-1 hosts recorded in the hand-over.
+  - Out of scope: excluding the VC++ runtime or `assembly`, baseline selection by edition (Phase 3), other rules.
 - [ ] **P2-10 Gate material**
   - Done when: the Rewind comparison (P2-3) is summarized, and a report from Simulated-Case-1 is ready for a non-expert session. The human runs the session and ticks the gate.
   - Out of scope: optimization beyond the gate.
