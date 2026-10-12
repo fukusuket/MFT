@@ -50,6 +50,16 @@ pub struct Finding {
     pub explain: String,
 }
 
+/// A rule that was not loaded, and why.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Skipped {
+    /// The rule directory's name, then the path below it, joined by `/`.
+    pub file: String,
+    pub id: Option<String>,
+    pub title: Option<String>,
+    pub reason: String,
+}
+
 /// A loaded rule set.
 pub struct Rules {
     engine: Engine,
@@ -58,6 +68,7 @@ pub struct Rules {
     authors: HashMap<String, Option<String>>,
     /// Position in `engine.rules()` by rule id, for `explain_rule`.
     compiled: HashMap<String, usize>,
+    skipped: Vec<Skipped>,
 }
 
 impl std::fmt::Debug for Rules {
@@ -77,13 +88,14 @@ impl Rules {
             let mut under = Vec::new();
             rule_files(dir, &mut under)?;
             under.sort();
-            files.extend(under);
+            files.extend(under.into_iter().map(|file| (shown(dir, &file), file)));
         }
 
         let mut ids = Vec::new();
         let mut authors = HashMap::new();
         let mut loaded = Vec::new();
-        for file in files {
+        let mut skipped = Vec::new();
+        for (shown, file) in files {
             let rule_error = |e: &dyn std::fmt::Display| Error::Rule(file.clone(), e.to_string());
             let text = std::fs::read_to_string(&file).map_err(|e| Error::Io(file.clone(), e))?;
             let collection = parse_sigma_yaml(&text).map_err(|e| rule_error(&e))?;
@@ -97,10 +109,16 @@ impl Rules {
                     &"correlation and filter rules are not supported yet",
                 ));
             }
-            for rule in &collection.rules {
+            for rule in collection.rules {
                 // Detections link to rules by id only, so a rule without one is unusable (ADR 0003).
                 let Some(id) = &rule.id else {
-                    return Err(rule_error(&format!("rule {:?} has no id", rule.title)));
+                    skipped.push(Skipped {
+                        file: shown.clone(),
+                        id: None,
+                        title: Some(rule.title),
+                        reason: "no id".to_string(),
+                    });
+                    continue;
                 };
                 if authors.insert(id.clone(), rule.author.clone()).is_some() {
                     return Err(rule_error(&format!(
@@ -108,13 +126,8 @@ impl Rules {
                     )));
                 }
                 ids.push(id.clone());
+                loaded.push((file.clone(), rule));
             }
-            loaded.extend(
-                collection
-                    .rules
-                    .into_iter()
-                    .map(|rule| (file.clone(), rule)),
-            );
         }
         // One batch: each separate add rebuilds the engine's rule index, which is quadratic.
         let mut engine = Engine::new();
@@ -139,7 +152,13 @@ impl Rules {
             ids,
             authors,
             compiled,
+            skipped,
         })
+    }
+
+    /// Rules that were not loaded, in file order.
+    pub fn skipped(&self) -> &[Skipped] {
+        &self.skipped
     }
 
     /// Number of loaded rules.
@@ -182,6 +201,18 @@ impl Rules {
             .map(|rule| serde_json::to_string(&explain_rule(rule, event)).unwrap_or_default())
             .unwrap_or_default()
     }
+}
+
+/// How a rule file is named in output: the rule directory's name, then the path below it, joined
+/// by `/`. The directories above it are the analyst's and stay out of the report.
+fn shown(dir: &Path, file: &Path) -> String {
+    let below = file.strip_prefix(dir).unwrap_or(file);
+    dir.file_name()
+        .into_iter()
+        .chain(below.iter())
+        .map(|part| part.to_string_lossy())
+        .collect::<Vec<_>>()
+        .join("/")
 }
 
 /// Adds the `.yml`/`.yaml` files under `dir` to `files`. Symbolic links to directories are not
@@ -328,19 +359,30 @@ mod tests {
     }
 
     #[test]
-    fn a_rule_without_id_is_an_error_naming_the_file() {
+    fn a_rule_without_id_is_skipped_with_its_file_and_reason() -> Result<(), Error> {
         let no_id = rule("x", "No id", "").replace("id: x\n", "");
         let dir = rule_dir(
             "no-id",
-            &[("a.yml", &rule("rule-a", "A", "")), ("b.yml", &no_id)],
+            &[("a.yml", &rule("rule-a", "A", "")), ("sub/b.yml", &no_id)],
         );
+        let name = dir
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
 
-        let result = Rules::load(&[dir.as_path()]);
+        let rules = Rules::load(&[dir.as_path()])?;
 
-        assert!(
-            matches!(&result, Err(Error::Rule(file, why)) if file.ends_with("b.yml") && why.contains("no id")),
-            "{result:?}"
+        assert_eq!(rules.ids, ["rule-a"]);
+        assert_eq!(
+            rules.skipped(),
+            [Skipped {
+                file: format!("{name}/sub/b.yml"),
+                id: None,
+                title: Some("No id".to_string()),
+                reason: "no id".to_string(),
+            }]
         );
+        Ok(())
     }
 
     #[test]
