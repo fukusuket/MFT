@@ -204,7 +204,7 @@ fn analyze(
     }
     if let Some(journal) = &journal {
         // After the $MFT rows, in $J order; the HTML report shows only their findings.
-        for row in analyze::usn_rows(&entries, journal, baseline.as_ref(), rules.as_ref()) {
+        for row in analyze::usn_rows(&entries, journal, baseline.as_ref(), rules.as_ref(), None) {
             if let Some((_, writer)) = &mut csv_writer {
                 writer.write_usn(&row)?;
             }

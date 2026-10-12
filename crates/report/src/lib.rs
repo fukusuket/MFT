@@ -661,7 +661,7 @@ mod tests {
         records: Vec<usn_parse::Record>,
     ) -> Result<String, Box<dyn std::error::Error>> {
         let mut w = CsvWriter::new(Vec::new())?;
-        for row in analyze::usn_rows(entries, &records, None, None) {
+        for row in analyze::usn_rows(entries, &records, None, None, None) {
             w.write_usn(&row)?;
         }
         Ok(String::from_utf8(w.finish()?)?
@@ -701,7 +701,7 @@ mod tests {
         for row in analyze::rows(&entries, &records, None, None, None) {
             w.write(&row)?;
         }
-        for row in analyze::usn_rows(&entries, &records, None, None) {
+        for row in analyze::usn_rows(&entries, &records, None, None, None) {
             w.write_usn(&row)?;
         }
         let csv = String::from_utf8(w.finish()?)?;
@@ -868,7 +868,7 @@ mod tests {
         let csv = usn_csv(&usn_tree(), records())?;
         let mut jsonl = JsonlWriter::new(Vec::new());
         let (tree, records) = (usn_tree(), records());
-        for row in analyze::usn_rows(&tree, &records, None, None) {
+        for row in analyze::usn_rows(&tree, &records, None, None, None) {
             jsonl.write_usn(&row)?;
         }
 
@@ -909,7 +909,7 @@ mod tests {
 
         let mut csv = CsvWriter::new(Vec::new())?;
         let mut jsonl = JsonlWriter::new(Vec::new());
-        for row in analyze::usn_rows(&entries, &records, Some(&baseline), Some(&rules)) {
+        for row in analyze::usn_rows(&entries, &records, Some(&baseline), Some(&rules), None) {
             csv.write_usn(&row)?;
             jsonl.write_usn(&row)?;
         }
@@ -1004,7 +1004,7 @@ mod tests {
         let csv = usn_csv(&entries, records())?;
         let mut jsonl = JsonlWriter::new(Vec::new());
         let records = records();
-        for row in analyze::usn_rows(&entries, &records, None, None) {
+        for row in analyze::usn_rows(&entries, &records, None, None, None) {
             jsonl.write_usn(&row)?;
         }
         let jsonl = String::from_utf8(jsonl.finish()?)?;

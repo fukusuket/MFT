@@ -557,7 +557,7 @@ mod tests {
         for row in analyze::rows(&entries, &[], None, Some(&rules), None) {
             report.add(&row);
         }
-        for row in analyze::usn_rows(&entries, &records, None, Some(&rules)) {
+        for row in analyze::usn_rows(&entries, &records, None, Some(&rules), None) {
             report.add_usn(&row);
         }
         let html = String::from_utf8(report.finish(Vec::new())?)?;
@@ -603,7 +603,7 @@ mod tests {
         for row in analyze::rows(&entries, &records, None, Some(&rules), None) {
             report.add(&row);
         }
-        for row in analyze::usn_rows(&entries, &records, None, Some(&rules)) {
+        for row in analyze::usn_rows(&entries, &records, None, Some(&rules), None) {
             report.add_usn(&row);
         }
         let html = String::from_utf8(report.finish(Vec::new())?)?;

@@ -151,6 +151,8 @@ pub struct UsnRow<'a> {
     pub findings: Vec<Finding>,
     /// The `$MFT` entry with the event's entry and sequence, if the `$MFT` still has it.
     pub entry: Option<&'a Entry>,
+    /// Whether the USN time is in the window (`false` for a diagnostic); `None` without one.
+    pub in_window: Option<bool>,
 }
 
 /// One row per `$J` item, in `$J` order.
@@ -159,6 +161,7 @@ pub fn usn_rows<'a>(
     records: &'a [usn_parse::Record],
     baseline: Option<&'a Baseline>,
     rules: Option<&'a Rules>,
+    window: Option<&'a Window>,
 ) -> impl Iterator<Item = UsnRow<'a>> {
     let directories = Resolver::new(entries).rewind(records);
     let by_file: HashMap<(u64, u16), &Entry> = entries
@@ -177,12 +180,14 @@ pub fn usn_rows<'a>(
                 baseline: None,
                 findings: Vec::new(),
                 entry: None,
+                in_window: window.map(|_| false),
             };
             let usn_parse::Record::Event(event) = record else {
                 return row;
             };
             let file = (event.file.entry(), event.file.sequence());
             row.entry = by_file.get(&file).copied();
+            row.in_window = window.map(|window| window.contains(event.time));
             // The file's names from the root: its directory's, then its own.
             let segments = match &row.directory {
                 Resolution::Resolved(segments) | Resolution::Inferred(segments) => {
@@ -450,7 +455,7 @@ mod tests {
         let seen: Vec<Seen> = rows(&entries, &records, None, None, None)
             .map(|r| r.seen)
             .collect();
-        let found: Vec<Option<u64>> = usn_rows(&entries, &records, None, None)
+        let found: Vec<Option<u64>> = usn_rows(&entries, &records, None, None, None)
             .map(|r| r.entry.map(|e| e.file_ref.entry()))
             .collect();
 
@@ -510,11 +515,45 @@ mod tests {
             event(62 | (1 << 48)),
         ];
 
-        let found: Vec<Option<(u64, bool)>> = usn_rows(&entries, &records, None, None)
+        let found: Vec<Option<(u64, bool)>> = usn_rows(&entries, &records, None, None, None)
             .map(|r| r.entry.map(|e| (e.file_ref.entry(), e.in_use)))
             .collect();
 
         assert_eq!(found, [Some((60, true)), Some((61, false)), None, None]);
+    }
+
+    #[test]
+    fn a_usn_row_is_in_the_window_by_its_usn_time() {
+        let entries = [entry(5, 5, ".")];
+        let at = |raw: u64| {
+            let mut record = usn_event("x", 5);
+            if let usn_parse::Record::Event(e) = &mut record {
+                e.time = Filetime::from_raw(raw);
+            }
+            record
+        };
+        let records = [
+            at(15),
+            at(25),
+            usn_parse::Record::Diagnostic(usn_parse::Diagnostic {
+                code: usn_parse::DiagCode::Malformed,
+                offset: 0,
+            }),
+        ];
+        let window = Window {
+            start: Some(Filetime::from_raw(10)),
+            end: Some(Filetime::from_raw(20)),
+        };
+
+        let with: Vec<Option<bool>> = usn_rows(&entries, &records, None, None, Some(&window))
+            .map(|r| r.in_window)
+            .collect();
+        let without: Vec<Option<bool>> = usn_rows(&entries, &records, None, None, None)
+            .map(|r| r.in_window)
+            .collect();
+
+        assert_eq!(with, [Some(true), Some(false), Some(false)]);
+        assert_eq!(without, [None; 3]);
     }
 
     #[test]
@@ -530,7 +569,7 @@ mod tests {
         });
         let records = [usn_event("a.txt", 6), usn_event("b.txt", 77), diagnostic];
 
-        let shown: Vec<Option<String>> = usn_rows(&entries, &records, None, None)
+        let shown: Vec<Option<String>> = usn_rows(&entries, &records, None, None, None)
             .map(|r| r.directory.path_text())
             .collect();
 
@@ -551,7 +590,7 @@ mod tests {
             usn_event("b.txt", 6),
         ];
 
-        let shown: Vec<(Option<String>, bool)> = usn_rows(&entries, &records, None, None)
+        let shown: Vec<(Option<String>, bool)> = usn_rows(&entries, &records, None, None, None)
             .map(|r| {
                 (
                     r.directory.path_text(),
@@ -619,7 +658,7 @@ mod tests {
             with_reason(0x8000_0200, usn_event("b.evtx", 6)),
         ];
 
-        let with: Vec<Vec<String>> = usn_rows(&entries, &records, None, Some(&rules))
+        let with: Vec<Vec<String>> = usn_rows(&entries, &records, None, Some(&rules), None)
             .map(|r| r.findings.into_iter().map(|f| f.id).collect())
             .collect();
 
@@ -650,7 +689,7 @@ mod tests {
         let entries = usn_tree();
         let records = [with_reason(0x8000_0300, usn_event("a.evtx", 6))];
 
-        let ids: Vec<Vec<String>> = usn_rows(&entries, &records, None, Some(&rules))
+        let ids: Vec<Vec<String>> = usn_rows(&entries, &records, None, Some(&rules), None)
             .map(|r| r.findings.into_iter().map(|f| f.id).collect())
             .collect();
 
@@ -683,7 +722,7 @@ mod tests {
             of(60, 0x8000_2000, "a.exe"), // a later handle: the old name is used up
         ];
 
-        let hits: Vec<bool> = usn_rows(&entries, &records, None, Some(&rules))
+        let hits: Vec<bool> = usn_rows(&entries, &records, None, Some(&rules), None)
             .map(|r| !r.findings.is_empty())
             .collect();
 
@@ -712,7 +751,7 @@ mod tests {
         ];
 
         let shown: Vec<(Option<Status>, usize)> =
-            usn_rows(&entries, &records, Some(&baseline), Some(&rules))
+            usn_rows(&entries, &records, Some(&baseline), Some(&rules), None)
                 .map(|r| (r.baseline, r.findings.len()))
                 .collect();
 

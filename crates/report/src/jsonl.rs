@@ -284,7 +284,7 @@ mod tests {
         for row in analyze::rows(&entries, &records, None, None, None) {
             w.write(&row)?;
         }
-        for row in analyze::usn_rows(&entries, &records, None, None) {
+        for row in analyze::usn_rows(&entries, &records, None, None, None) {
             w.write_usn(&row)?;
         }
         let jsonl = String::from_utf8(w.finish()?)?;
@@ -424,7 +424,7 @@ mod tests {
         });
         let entries = [root];
         let mut w = JsonlWriter::new(Vec::new());
-        for row in analyze::usn_rows(&entries, &[record], None, None) {
+        for row in analyze::usn_rows(&entries, &[record], None, None, None) {
             w.write_usn(&row)?;
         }
 
