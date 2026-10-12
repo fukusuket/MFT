@@ -3,7 +3,7 @@
 //! Rules decide; this crate only loads them, routes events by logsource and reports matches.
 
 use std::borrow::Cow;
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use rsigma_eval::Engine;
@@ -102,11 +102,12 @@ impl Rules {
 
         let mut ids = Vec::new();
         let mut authors = HashMap::new();
+        // Every id seen, loaded or not: an id names one rule across all directories.
+        let mut used = HashSet::new();
         let mut loaded = Vec::new();
         // Each with its file's position, so engine errors found later still list in file order.
         let mut skipped = Vec::new();
         for (n, (shown, file)) in files.into_iter().enumerate() {
-            let rule_error = |e: &dyn std::fmt::Display| Error::Rule(file.clone(), e.to_string());
             let skip = |id, title, reason: &str| {
                 let file = shown.clone();
                 let reason = reason.to_string();
@@ -137,6 +138,9 @@ impl Rules {
                 .map(|c| (c.id, c.title, "correlation rule"))
                 .chain((collection.filters.into_iter()).map(|f| (f.id, f.title, "filter rule")));
             for (id, title, reason) in others {
+                if let Some(id) = &id {
+                    claim(&mut used, id, &file)?;
+                }
                 skipped.push(skip(id, Some(title), reason));
             }
             for rule in collection.rules {
@@ -145,15 +149,12 @@ impl Rules {
                     skipped.push(skip(None, Some(rule.title), "no id"));
                     continue;
                 };
+                claim(&mut used, id, &file)?;
                 if let Some(reason) = not_emitted(&rule, emitted) {
                     skipped.push(skip(Some(id.clone()), Some(rule.title), &reason));
                     continue;
                 }
-                if authors.insert(id.clone(), rule.author.clone()).is_some() {
-                    return Err(rule_error(&format!(
-                        "rule id {id:?} is used more than once"
-                    )));
-                }
+                authors.insert(id.clone(), rule.author.clone());
                 ids.push(id.clone());
                 loaded.push((n, shown.clone(), rule));
             }
@@ -234,6 +235,16 @@ impl Rules {
             .and_then(|&i| self.engine.rules().get(i))
             .map(|rule| serde_json::to_string(&explain_rule(rule, event)).unwrap_or_default())
             .unwrap_or_default()
+    }
+}
+
+/// Records `id` as used by `file`; an id already used is an error.
+fn claim(used: &mut HashSet<String>, id: &str, file: &Path) -> Result<(), Error> {
+    if used.insert(id.to_string()) {
+        Ok(())
+    } else {
+        let why = format!("rule id {id:?} is used more than once");
+        Err(Error::Rule(file.to_path_buf(), why))
     }
 }
 
@@ -521,6 +532,26 @@ mod tests {
             "{result:?}"
         );
         Ok(())
+    }
+
+    #[test]
+    fn an_id_is_used_once_even_when_one_of_its_rules_is_skipped() {
+        let process = rule("rule-z", "Z", "").replace("file_event", "process_creation");
+        let correlation = "title: C\nid: rule-z\ncorrelation:\n  type: event_count\n  rules:\n    - rule-z\n  group-by:\n    - TargetFilename\n  timespan: 5m\n  condition:\n    gte: 2\n";
+        for (name, text) in [("skipped.yml", process.as_str()), ("corr.yml", correlation)] {
+            let first = rule_dir(
+                &format!("once-1-{name}"),
+                &[("a.yml", &rule("rule-z", "Z", ""))],
+            );
+            let second = rule_dir(&format!("once-2-{name}"), &[(name, text)]);
+
+            let result = Rules::load(&[first.as_path(), second.as_path()], &EMITTED);
+
+            assert!(
+                matches!(&result, Err(Error::Rule(file, why)) if file.ends_with(name) && why.contains("rule-z")),
+                "{name}: {result:?}"
+            );
+        }
     }
 
     #[test]
