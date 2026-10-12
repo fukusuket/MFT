@@ -12,8 +12,8 @@ use sigma::Level;
 
 use crate::base64::Encoder;
 use crate::{
-    Error, display_text, hint_names, level_name, path_state, seen_name, stream_names, usn_deleted,
-    usn_path, usn_seen,
+    Error, display_text, folder_name, hint_names, level_name, path_state, seen_name, stream_names,
+    usn_deleted, usn_path, usn_seen,
 };
 
 const TEMPLATE: &str = include_str!("template.html");
@@ -126,6 +126,7 @@ impl HtmlReport {
                 seen: seen_name(usn_seen(row)),
                 streams: Vec::new(),
                 hints: Vec::new(),
+                folder: row.folder.map(folder_name).unwrap_or_default(),
             });
         }
     }
@@ -159,6 +160,7 @@ impl HtmlReport {
                 created: row.entry.si_created,
                 path: path_text(&row.resolution),
                 entry: row.entry.file_ref.entry(),
+                folder: folder_name(row.folder),
             });
         }
         for finding in &row.findings {
@@ -179,6 +181,7 @@ impl HtmlReport {
                 seen: seen_name(row.seen),
                 streams: stream_names(&row.entry.streams),
                 hints: hint_names(&row.hints),
+                folder: folder_name(row.folder),
             });
         }
     }
@@ -236,6 +239,7 @@ struct OutsideItem {
     created: Option<Filetime>,
     path: String,
     entry: u64,
+    folder: &'static str,
 }
 
 fn iso8601<S: Serializer>(time: &Option<Filetime>, s: S) -> Result<S::Ok, S::Error> {
@@ -293,6 +297,7 @@ struct FindingItem {
     seen: &'static str,
     streams: Vec<String>,
     hints: Vec<&'static str>,
+    folder: &'static str,
 }
 
 #[derive(Debug, Serialize)]
@@ -611,14 +616,14 @@ mod tests {
                     "created": null, "event_time": "1601-01-01T00:00:00.0000300Z", "usn": 4156,
                     "path": "\\Old\\b.exe", "path_state": "inferred", "entry": 60,
                     "explain": data["findings"][0]["explain"],
-                    "deleted": true, "seen": "usn", "streams": [], "hints": []
+                    "deleted": true, "seen": "usn", "streams": [], "hints": [], "folder": "other"
                 },
                 {
                     "level": "high", "title": "Title rule-high", "id": "rule-high", "author": null,
                     "created": "1601-01-01T00:00:00.0000100Z", "event_time": null, "usn": null,
                     "path": "\\a.exe", "path_state": "resolved", "entry": 40,
                     "explain": data["findings"][1]["explain"],
-                    "deleted": false, "seen": "mft", "streams": [], "hints": []
+                    "deleted": false, "seen": "mft", "streams": [], "hints": [], "folder": "other"
                 }
             ])
         );
@@ -796,6 +801,61 @@ mod tests {
     }
 
     #[test]
+    fn findings_and_outside_items_carry_their_folder() -> Result<()> {
+        let vwr = "\"DirectoryName\",\"Name\",\"FullName\"\n\"C:\\\",\"x.txt\",\"C:\\x.txt\"\n";
+        let mut file_bytes = Vec::new();
+        baseline::build(vwr.as_bytes(), &mut file_bytes)?;
+        let baseline = baseline::Baseline::load(file_bytes)?;
+        let rules = rules("folder", &[("rule-high", "high", "", ".exe")])?;
+        let directory = |number: u64, parent: u64, name: &str| {
+            let mut d = file(number, parent, name);
+            d.is_dir = true;
+            d
+        };
+        let entries = [
+            root(),
+            directory(6 | (1 << 48), 5, "Users"),
+            directory(7, 6 | (1 << 48), "bob"),
+            directory(8, 7, "Downloads"),
+            created(file(40, 8, "a.exe"), 100),
+        ];
+        let records = [usn_event(60, 0x8000_0100, 0x20, "b.exe")]; // in \Users
+
+        let mut report = HtmlReport::new(PROVENANCE, input());
+        for row in analyze::rows(&entries, &records, Some(&baseline), Some(&rules), None) {
+            report.add(&row);
+        }
+        for row in analyze::usn_rows(&entries, &records, Some(&baseline), Some(&rules), None) {
+            report.add_usn(&row);
+        }
+        let data = decode(payload(&String::from_utf8(report.finish(Vec::new())?)?)?)?;
+
+        let folders = |key: &str| -> Vec<String> {
+            data[key]
+                .as_array()
+                .map(|items| {
+                    items
+                        .iter()
+                        .map(|i| format!("{} {}", i["path"].as_str().unwrap_or("?"), i["folder"]))
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+        assert_eq!(
+            folders("findings"),
+            [
+                r#"\Users\b.exe "other""#,
+                r#"\Users\bob\Downloads\a.exe "downloads""#
+            ]
+        );
+        assert_eq!(
+            folders("outside")[0],
+            r#"\Users\bob\Downloads\a.exe "downloads""#
+        );
+        Ok(())
+    }
+
+    #[test]
     fn outside_lists_only_outside_baseline_files_newest_first() -> Result<()> {
         let vwr = "\"DirectoryName\",\"Name\",\"FullName\"\n\"C:\\\",\"x.txt\",\"C:\\x.txt\"\n";
         let mut file_bytes = Vec::new();
@@ -816,10 +876,10 @@ mod tests {
         assert_eq!(
             data["outside"],
             serde_json::json!([
-                {"created": "1601-01-01T00:00:00.0000200Z", "path": r"\u.txt", "entry": 44},
-                {"created": "1601-01-01T00:00:00.0000200Z", "path": r"\w.txt", "entry": 42},
-                {"created": "1601-01-01T00:00:00.0000100Z", "path": r"\y.txt", "entry": 41},
-                {"created": null, "path": r"\v.txt", "entry": 43},
+                {"created": "1601-01-01T00:00:00.0000200Z", "path": r"\u.txt", "entry": 44, "folder": "other"},
+                {"created": "1601-01-01T00:00:00.0000200Z", "path": r"\w.txt", "entry": 42, "folder": "other"},
+                {"created": "1601-01-01T00:00:00.0000100Z", "path": r"\y.txt", "entry": 41, "folder": "other"},
+                {"created": null, "path": r"\v.txt", "entry": 43, "folder": "other"},
             ])
         );
         assert_eq!(data["summary"]["outside"], 4);
