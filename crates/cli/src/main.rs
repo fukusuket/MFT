@@ -186,6 +186,20 @@ fn analyze(
             }
         }
     }
+    // Skipped rules go next to the CSV and JSONL outputs, written before anything is committed.
+    let mut skipped = Vec::new();
+    if let Some(rules) = &rules {
+        if let Some(path) = csv {
+            let (pending, file) = AtomicOutput::create(&skipped_path(path, "csv"))?;
+            report::write_skipped_csv(BufWriter::new(file), rules.skipped())?.flush()?;
+            skipped.push(pending);
+        }
+        if let Some(path) = jsonl {
+            let (pending, file) = AtomicOutput::create(&skipped_path(path, "jsonl"))?;
+            report::write_skipped_jsonl(BufWriter::new(file), rules.skipped())?.flush()?;
+            skipped.push(pending);
+        }
+    }
     if let Some((pending, writer)) = jsonl_writer {
         writer.finish()?.flush()?;
         pending.commit()?;
@@ -198,7 +212,17 @@ fn analyze(
         report.finish(BufWriter::new(file))?.flush()?;
         pending.commit()?;
     }
+    for pending in skipped {
+        pending.commit()?;
+    }
     Ok(())
+}
+
+/// `out.csv` → `out.skipped-rules.csv`: the list of rules that were not loaded, beside `output`.
+fn skipped_path(output: &Path, extension: &str) -> PathBuf {
+    let mut name = output.file_stem().unwrap_or_default().to_os_string();
+    name.push(format!(".skipped-rules.{extension}"));
+    output.with_file_name(name)
 }
 
 #[derive(Debug)]

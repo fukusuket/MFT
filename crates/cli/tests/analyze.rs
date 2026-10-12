@@ -591,6 +591,8 @@ fn a_rule_without_id_is_skipped_and_the_run_succeeds() -> TestResult {
         .arg(dir.join("MFT"))
         .arg("--csv")
         .arg(dir.join("out.csv"))
+        .arg("--jsonl")
+        .arg(dir.join("out.jsonl"))
         .arg("--rules")
         .arg(&rules)
         .output()?;
@@ -598,6 +600,15 @@ fn a_rule_without_id_is_skipped_and_the_run_succeeds() -> TestResult {
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(out.status.success(), "{stderr}");
     assert!(dir.join("out.csv").exists());
+    assert_eq!(
+        std::fs::read_to_string(dir.join("out.skipped-rules.csv"))?,
+        "file,id,title,reason\nrules/no_id.yml,,No id,no id\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.join("out.skipped-rules.jsonl"))?,
+        "{\"file\":\"rules/no_id.yml\",\"id\":null,\"title\":\"No id\",\"reason\":\"no id\"}\n"
+    );
+    assert_no_temporary_outputs(&dir)?;
     Ok(())
 }
 
