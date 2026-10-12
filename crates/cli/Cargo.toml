@@ -17,6 +17,7 @@ analyze = { path = "../analyze" }
 baseline = { path = "../baseline" }
 detect = { path = "../detect" }
 mft-parse = { path = "../mft-parse" }
+ntfs-types = { path = "../ntfs-types" }
 report = { path = "../report" }
 sigma = { path = "../sigma" }
 usn-parse = { path = "../usn-parse" }

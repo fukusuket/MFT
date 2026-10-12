@@ -2246,3 +2246,93 @@ fn timestomp_hints_are_listed_in_csv_and_html_findings() -> TestResult {
     );
     Ok(())
 }
+
+/// `\Users` with files created (`$SI` and `$FN` alike) around the window edges, in UTC.
+fn window_volume_mft() -> Vec<u8> {
+    let users = 6 | (1 << 48);
+    let mut mft = usn_volume_mft();
+    let times: [(&str, u64); 6] = [
+        ("noon.txt", 134_354_160_009_999_999), // 2026-10-02T12:00:00.9999999Z
+        ("noon-1s.txt", 134_354_160_010_000_000), // 2026-10-02T12:00:01Z
+        ("day-end.txt", 134_354_591_999_999_999), // 2026-10-02T23:59:59.9999999Z
+        ("next-day.txt", 134_354_592_000_000_000), // 2026-10-03T00:00:00Z
+        ("jst-start.txt", 134_353_404_000_000_000), // 2026-10-01T15:00:00Z
+        ("jst-before.txt", 134_353_403_999_999_999), // 2026-10-01T14:59:59.9999999Z
+    ];
+    for (n, (name, created)) in (7u32..).zip(times) {
+        mft.extend(record(
+            1024,
+            true,
+            n,
+            &[
+                standard_information_created(created),
+                file_name_with(users, &u16s(name), 1, created),
+            ],
+        ));
+    }
+    mft
+}
+
+/// `name|in_window` per `$MFT` file row of a run on the window volume with `args`.
+fn in_window(test: &str, args: &[&str]) -> Result<Vec<String>, Box<dyn Error>> {
+    let dir = scratch(test)?;
+    let (mft, csv) = (dir.join("MFT"), dir.join("out.csv"));
+    std::fs::write(&mft, window_volume_mft())?;
+
+    let out = tool()
+        .args(["analyze", "-i"])
+        .arg(&mft)
+        .arg("--csv")
+        .arg(&csv)
+        .args(args)
+        .output()?;
+
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    Ok(csv_rows(&std::fs::read_to_string(&csv)?)
+        .iter()
+        .skip(3) // $MFT, root, Users
+        .map(|r| format!("{}|{}", r[3], r[19]))
+        .collect())
+}
+
+#[test]
+fn to_holds_its_whole_day_or_its_whole_second() -> TestResult {
+    let day = in_window("to_holds_its_whole_day", &["--to", "2026-10-02"])?;
+    let second = in_window(
+        "to_holds_its_whole_second",
+        &[
+            "--from",
+            "2026-10-02T00:00:00",
+            "--to",
+            "2026-10-02T12:00:00",
+        ],
+    )?;
+
+    assert_eq!(
+        day,
+        [
+            "noon.txt|true",
+            "noon-1s.txt|true",
+            "day-end.txt|true",
+            "next-day.txt|false",
+            "jst-start.txt|true",
+            "jst-before.txt|true",
+        ]
+    );
+    assert_eq!(
+        second,
+        [
+            "noon.txt|true",
+            "noon-1s.txt|false",
+            "day-end.txt|false",
+            "next-day.txt|false",
+            "jst-start.txt|false",
+            "jst-before.txt|false",
+        ]
+    );
+    Ok(())
+}

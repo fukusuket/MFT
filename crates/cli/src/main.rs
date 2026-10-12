@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 use anyhow::Context;
 use baseline::Baseline;
 use clap::{ArgGroup, Parser, Subcommand};
+use ntfs_types::Filetime;
 use report::{CsvWriter, HtmlReport, Input, JsonlWriter, Provenance};
 use sigma::Rules;
 
@@ -46,6 +47,13 @@ enum Command {
         /// Without it no rules run.
         #[arg(long)]
         rules: Vec<PathBuf>,
+        /// Window start, `YYYY-MM-DD` or `YYYY-MM-DDTHH:MM:SS` (inclusive). The HTML report lists
+        /// only rows in the window; CSV/JSONL mark them with `in_window`.
+        #[arg(long)]
+        from: Option<String>,
+        /// Window end, `YYYY-MM-DD` (the whole day) or `YYYY-MM-DDTHH:MM:SS` (the whole second).
+        #[arg(long)]
+        to: Option<String>,
     },
     /// Windows baselines.
     #[command(subcommand)]
@@ -76,14 +84,15 @@ fn main() -> anyhow::Result<()> {
             jsonl,
             baseline,
             rules,
+            from,
+            to,
         } => analyze(
             &input,
             usn.as_deref(),
-            csv.as_deref(),
-            output.as_deref(),
-            jsonl.as_deref(),
+            (csv.as_deref(), output.as_deref(), jsonl.as_deref()),
             baseline.as_deref(),
             &rules,
+            (from.as_deref(), to.as_deref()),
         ),
         Command::Baseline(BaselineCommand::Build { vwr, o }) => build_baseline(&vwr, &o),
     }
@@ -92,12 +101,26 @@ fn main() -> anyhow::Result<()> {
 fn analyze(
     input: &Path,
     usn: Option<&Path>,
-    csv: Option<&Path>,
-    output: Option<&Path>,
-    jsonl: Option<&Path>,
+    (csv, output, jsonl): (Option<&Path>, Option<&Path>, Option<&Path>),
     baseline: Option<&Path>,
     rules: &[PathBuf],
+    (from, to): (Option<&str>, Option<&str>),
 ) -> anyhow::Result<()> {
+    let window = (from.is_some() || to.is_some())
+        .then(|| {
+            let start = from.map(|text| parse_time(text, "--from")).transpose()?;
+            let end = to
+                .map(|text| {
+                    let (time, length) = parse_time(text, "--to")?;
+                    Ok::<_, anyhow::Error>(Filetime::from_raw(time.raw().saturating_add(length)))
+                })
+                .transpose()?;
+            Ok::<_, anyhow::Error>(analyze::Window {
+                start: start.map(|(time, _)| time),
+                end,
+            })
+        })
+        .transpose()?;
     // Skipped rules are listed beside the CSV and JSONL outputs, or beside the HTML report when
     // it is the only output.
     let listed = |path: Option<&Path>, extension| {
@@ -191,7 +214,7 @@ fn analyze(
         in_journal,
         baseline.as_ref(),
         rules.as_ref(),
-        None,
+        window.as_ref(),
     ) {
         if let Some((_, writer)) = &mut csv_writer {
             writer.write(&row)?;
@@ -205,7 +228,13 @@ fn analyze(
     }
     if let Some(journal) = &journal {
         // After the $MFT rows, in $J order; the HTML report shows only their findings.
-        for row in analyze::usn_rows(&entries, journal, baseline.as_ref(), rules.as_ref(), None) {
+        for row in analyze::usn_rows(
+            &entries,
+            journal,
+            baseline.as_ref(),
+            rules.as_ref(),
+            window.as_ref(),
+        ) {
             if let Some((_, writer)) = &mut csv_writer {
                 writer.write_usn(&row)?;
             }
@@ -247,6 +276,35 @@ fn analyze(
         pending.commit()?;
     }
     Ok(())
+}
+
+/// `YYYY-MM-DD` or `YYYY-MM-DDTHH:MM:SS` in UTC, and its length in 100 ns ticks (a day or a
+/// second).
+fn parse_time(text: &str, flag: &str) -> anyhow::Result<(Filetime, u64)> {
+    let fields = |text: &str, separator: char| -> Option<(u64, u64, u64)> {
+        let mut parts = text.split(separator).map(|part| {
+            (!part.is_empty() && part.bytes().all(|b| b.is_ascii_digit()))
+                .then(|| part.parse::<u64>().ok())
+                .flatten()
+        });
+        let fields = (parts.next()??, parts.next()??, parts.next()??);
+        parts.next().is_none().then_some(fields)
+    };
+    let parsed = match text.split_once('T') {
+        None => fields(text, '-').map(|date| (date, (0, 0, 0), 86_400)),
+        Some((date, time)) => fields(date, '-')
+            .zip(fields(time, ':'))
+            .map(|(d, t)| (d, t, 1)),
+    };
+    parsed
+        .and_then(|(date, time, seconds)| {
+            Some((Filetime::from_utc(date, time)?, seconds * 10_000_000))
+        })
+        .with_context(|| {
+            format!(
+                "{flag} {text:?}: expected a date YYYY-MM-DD or YYYY-MM-DDTHH:MM:SS that exists"
+            )
+        })
 }
 
 /// `out.csv` → `out.skipped-rules.csv`: the list of rules that were not loaded, beside `output`.
