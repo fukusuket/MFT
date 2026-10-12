@@ -229,9 +229,19 @@ const viewer = (function () {
       };
     }
 
+    // One row's cells. A path that does not fit loses its start, so the file name stays; the
+    // full path is the cell's tooltip.
     function line(cells) {
       const div = el("div", undefined, "line");
-      cells.forEach(([text, className]) => div.appendChild(el("span", text, className)));
+      cells.forEach(([text, className]) => {
+        if (className !== "path") {
+          div.appendChild(el("span", text, className));
+          return;
+        }
+        const cell = div.appendChild(el("span", undefined, "path"));
+        cell.setAttribute("title", text);
+        cell.appendChild(el("span", text)).setAttribute("dir", "ltr");
+      });
       return div;
     }
 
@@ -258,7 +268,15 @@ const viewer = (function () {
       const count = node.appendChild(el("p", undefined, "count"));
       const show = list(node, ["Created ($SI, UTC)", "Path", "MFT entry"], (row, o) => {
         row.appendChild(line([[o.created, "mono"], [o.path, "path"], [o.entry, "mono"]]));
+        row.addEventListener("click", () =>
+          pane.replaceChildren(
+            el("p", o.path, "path"),
+            el("p", "$SI created " + (o.created ?? "unknown") + " · $FN created " + (o.fn_created ?? "unknown"), "mono"),
+            el("p", "MFT entry " + o.entry + " · folder " + o.folder),
+          ),
+        );
       });
+      const pane = node.appendChild(el("div", "Select a row to see its full path.", "detail"));
       screen.redraws.push(() => {
         const shown = data.outside.filter((o) => matchOutside(o, state));
         count.textContent = shown.length + " of " + data.outside.length;
@@ -301,6 +319,7 @@ const viewer = (function () {
       function detail(f) {
         pane.replaceChildren(
           el("h3", f.title),
+          el("p", f.path_state === "resolved" ? f.path : f.path + " (" + f.path_state + ")", "path"),
           el("p", "Rule " + f.id + " · level " + f.level + " · author " + (f.author === null ? "unknown" : f.author)),
           el("pre", pretty(f.explain)),
         );

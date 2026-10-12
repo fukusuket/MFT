@@ -312,3 +312,24 @@ test("a filter change repaints the shown list once, and a hidden list not at all
   window.go("#tab=outside&q=temp");
   assert.equal(outside.replaced, 1);
 });
+
+test("a cut path shows in full as a tooltip and in the detail pane of findings and outside files", () => {
+  const { app } = open("#tab=findings");
+  const screen = (name) => app.findAll("screen").find((s) => s.getAttribute("data-screen") === name);
+  const findings = screen("findings");
+  const row = findings.findAll("row")[0];
+
+  assert.equal(row.find("path").getAttribute("title"), "\\Users\\Bob\\Downloads\\Tool.EXE");
+  row.dispatch("click");
+  assert.ok(findings.find("detail").textContent.includes("\\Users\\Bob\\Downloads\\Tool.EXE"));
+
+  app.findAll("tab")[2].dispatch("click");
+  const outside = screen("outside");
+  const file = outside.findAll("row")[1];
+  assert.equal(file.find("path").getAttribute("title"), "\\Windows\\Temp\\x.dll");
+  file.dispatch("click");
+  const detail = outside.find("detail").textContent;
+  for (const text of ["\\Windows\\Temp\\x.dll", "2026-10-01T00:00:00.0000000Z", "41", "temp"]) {
+    assert.ok(detail.includes(text), `${text} in ${detail}`);
+  }
+});
