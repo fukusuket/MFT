@@ -54,6 +54,9 @@ enum Command {
         /// Window end, `YYYY-MM-DD` (the whole day) or `YYYY-MM-DDTHH:MM:SS` (the whole second).
         #[arg(long)]
         to: Option<String>,
+        /// UTC offset of `--from` and `--to`, `±HH:MM`; UTC when omitted. Output times stay UTC.
+        #[arg(long, allow_hyphen_values = true)]
+        tz: Option<String>,
     },
     /// Windows baselines.
     #[command(subcommand)]
@@ -86,13 +89,14 @@ fn main() -> anyhow::Result<()> {
             rules,
             from,
             to,
+            tz,
         } => analyze(
             &input,
             usn.as_deref(),
             (csv.as_deref(), output.as_deref(), jsonl.as_deref()),
             baseline.as_deref(),
             &rules,
-            (from.as_deref(), to.as_deref()),
+            (from.as_deref(), to.as_deref(), tz.as_deref()),
         ),
         Command::Baseline(BaselineCommand::Build { vwr, o }) => build_baseline(&vwr, &o),
     }
@@ -104,21 +108,27 @@ fn analyze(
     (csv, output, jsonl): (Option<&Path>, Option<&Path>, Option<&Path>),
     baseline: Option<&Path>,
     rules: &[PathBuf],
-    (from, to): (Option<&str>, Option<&str>),
+    (from, to, tz): (Option<&str>, Option<&str>, Option<&str>),
 ) -> anyhow::Result<()> {
+    let offset = tz.map(parse_offset).transpose()?.unwrap_or(0);
+    let utc = |local: u64, flag: &str| {
+        local
+            .checked_add_signed(-offset)
+            .map(Filetime::from_raw)
+            .with_context(|| format!("{flag} with --tz is before 1601 in UTC"))
+    };
     let window = (from.is_some() || to.is_some())
         .then(|| {
-            let start = from.map(|text| parse_time(text, "--from")).transpose()?;
+            let start = from
+                .map(|text| utc(parse_time(text, "--from")?.0.raw(), "--from"))
+                .transpose()?;
             let end = to
                 .map(|text| {
                     let (time, length) = parse_time(text, "--to")?;
-                    Ok::<_, anyhow::Error>(Filetime::from_raw(time.raw().saturating_add(length)))
+                    utc(time.raw().saturating_add(length), "--to")
                 })
                 .transpose()?;
-            Ok::<_, anyhow::Error>(analyze::Window {
-                start: start.map(|(time, _)| time),
-                end,
-            })
+            Ok::<_, anyhow::Error>(analyze::Window { start, end })
         })
         .transpose()?;
     // Skipped rules are listed beside the CSV and JSONL outputs, or beside the HTML report when
@@ -305,6 +315,27 @@ fn parse_time(text: &str, flag: &str) -> anyhow::Result<(Filetime, u64)> {
                 "{flag} {text:?}: expected a date YYYY-MM-DD or YYYY-MM-DDTHH:MM:SS that exists"
             )
         })
+}
+
+/// `±HH:MM` as 100 ns ticks east of UTC.
+fn parse_offset(text: &str) -> anyhow::Result<i64> {
+    let parse = || {
+        let (sign, rest) = match text.as_bytes().first()? {
+            b'+' => (1, &text[1..]),
+            b'-' => (-1, &text[1..]),
+            _ => return None,
+        };
+        let (h, m) = rest.split_once(':')?;
+        let two_digits = |s: &str| {
+            (s.len() == 2 && s.bytes().all(|b| b.is_ascii_digit()))
+                .then(|| s.parse::<i64>().ok())
+                .flatten()
+        };
+        let (h, m) = (two_digits(h)?, two_digits(m)?);
+        (h <= 23 && m <= 59).then(|| sign * (h * 3600 + m * 60) * 10_000_000)
+    };
+    parse()
+        .with_context(|| format!("--tz {text:?}: expected a UTC offset such as +09:00 or -05:00"))
 }
 
 /// `out.csv` → `out.skipped-rules.csv`: the list of rules that were not loaded, beside `output`.

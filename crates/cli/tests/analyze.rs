@@ -2336,3 +2336,46 @@ fn to_holds_its_whole_day_or_its_whole_second() -> TestResult {
     );
     Ok(())
 }
+
+#[test]
+fn tz_shifts_the_window_to_utc() -> TestResult {
+    let jst = in_window(
+        "tz_shifts_the_window_to_utc",
+        &[
+            "--from",
+            "2026-10-02",
+            "--to",
+            "2026-10-02T00:00:00",
+            "--tz",
+            "+09:00",
+        ],
+    )?;
+    let west = in_window(
+        "tz_shifts_the_window_west",
+        &["--from", "2026-10-02T21:00:00", "--tz", "-03:00"],
+    )?;
+
+    assert_eq!(
+        jst,
+        [
+            "noon.txt|false",
+            "noon-1s.txt|false",
+            "day-end.txt|false",
+            "next-day.txt|false",
+            "jst-start.txt|true",
+            "jst-before.txt|false",
+        ]
+    );
+    assert_eq!(
+        west,
+        [
+            "noon.txt|false",
+            "noon-1s.txt|false",
+            "day-end.txt|false",
+            "next-day.txt|true",
+            "jst-start.txt|false",
+            "jst-before.txt|false",
+        ]
+    );
+    Ok(())
+}
