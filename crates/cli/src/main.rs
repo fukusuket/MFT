@@ -176,7 +176,7 @@ fn analyze(
         (pending, file, HtmlReport::new(PROVENANCE, input))
     });
     let entries = mft_parse::merge_extensions(records.collect::<Result<Vec<_>, _>>()?, record_size);
-    for row in analyze::rows(&entries, baseline.as_ref(), rules.as_ref()) {
+    for row in analyze::rows(&entries, &[], baseline.as_ref(), rules.as_ref()) {
         if let Some((_, writer)) = &mut csv_writer {
             writer.write(&row)?;
         }

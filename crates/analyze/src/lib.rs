@@ -1,6 +1,6 @@
 //! Pipeline from parsed `$MFT` entries to report rows.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use baseline::{Baseline, Status};
 use mft_parse::Entry;
@@ -16,15 +16,33 @@ pub struct Row<'a> {
     pub baseline: Option<Status>,
     /// Matched rules, most severe first (empty without rules).
     pub findings: Vec<Finding>,
+    /// Whether the file shows up in the `$MFT`, the USN journal or both.
+    pub seen: Seen,
+}
+
+/// Where a file shows up: by (entry, sequence), in the `$MFT`, the USN journal or both.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Seen {
+    Mft,
+    Usn,
+    Both,
 }
 
 /// One row per entry, in entry order. Lazy, so only one path is held at a time.
 pub fn rows<'a>(
     entries: &'a [Entry],
+    records: &'a [usn_parse::Record],
     baseline: Option<&'a Baseline>,
     rules: Option<&'a Rules>,
 ) -> impl Iterator<Item = Row<'a>> {
     let resolver = Resolver::new(entries);
+    let in_journal: HashSet<(u64, u16)> = records
+        .iter()
+        .filter_map(|record| match record {
+            usn_parse::Record::Event(event) => Some((event.file.entry(), event.file.sequence())),
+            usn_parse::Record::Diagnostic(_) => None,
+        })
+        .collect();
     entries.iter().map(move |entry| {
         let resolution = resolver.path(entry);
         let status = match (&resolution, baseline) {
@@ -45,6 +63,11 @@ pub fn rows<'a>(
             resolution,
             baseline: status,
             findings,
+            seen: if in_journal.contains(&(entry.file_ref.entry(), entry.file_ref.sequence())) {
+                Seen::Both
+            } else {
+                Seen::Mft
+            },
         }
     })
 }
@@ -173,7 +196,7 @@ mod tests {
             entry(41, 77, "orphan"),
         ];
 
-        let shown: Vec<(u64, Option<usize>)> = rows(&entries, None, None)
+        let shown: Vec<(u64, Option<usize>)> = rows(&entries, &[], None, None)
             .map(|r| {
                 let depth = match &r.resolution {
                     Resolution::Resolved(segments) => Some(segments.len()),
@@ -202,10 +225,12 @@ mod tests {
             entry(43, 77, "a.txt"),
         ];
 
-        let with: Vec<Option<Status>> = rows(&entries, Some(&baseline), None)
+        let with: Vec<Option<Status>> = rows(&entries, &[], Some(&baseline), None)
             .map(|r| r.baseline)
             .collect();
-        let without: Vec<Option<Status>> = rows(&entries, None, None).map(|r| r.baseline).collect();
+        let without: Vec<Option<Status>> = rows(&entries, &[], None, None)
+            .map(|r| r.baseline)
+            .collect();
 
         use Status::*;
         assert_eq!(with, [None, Some(Standard), None, Some(Outside), None]);
@@ -228,10 +253,10 @@ mod tests {
             entry(41, 5, "b.txt"),
         ];
 
-        let with: Vec<Vec<String>> = rows(&entries, None, Some(&rules))
+        let with: Vec<Vec<String>> = rows(&entries, &[], None, Some(&rules))
             .map(|r| r.findings.into_iter().map(|f| f.id).collect())
             .collect();
-        let without = rows(&entries, None, None)
+        let without = rows(&entries, &[], None, None)
             .filter(|r| !r.findings.is_empty())
             .count();
 
@@ -251,6 +276,26 @@ mod tests {
             attributes: 0,
             name: NtfsName::from_units(&name.encode_utf16().collect::<Vec<_>>()),
         })
+    }
+
+    #[test]
+    fn an_entry_with_a_usn_event_of_the_same_entry_and_sequence_is_seen_in_both() {
+        let entries = [
+            entry(5, 5, "."),
+            entry(60, 5, "a.txt"),
+            entry(61, 5, "b.txt"),
+        ];
+        let mut reused = usn_event("b.txt", 5);
+        if let usn_parse::Record::Event(e) = &mut reused {
+            e.file = FileRef::from_raw(61 | (2 << 48)); // entry 61, an older sequence
+        }
+        let records = [usn_event("a.txt", 5), reused];
+
+        let seen: Vec<Seen> = rows(&entries, &records, None, None)
+            .map(|r| r.seen)
+            .collect();
+
+        assert_eq!(seen, [Seen::Mft, Seen::Both, Seen::Mft]);
     }
 
     #[test]

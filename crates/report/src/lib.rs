@@ -323,7 +323,7 @@ mod tests {
         rules: Option<&sigma::Rules>,
     ) -> Result<String, Box<dyn std::error::Error>> {
         let mut w = CsvWriter::new(Vec::new())?;
-        for row in analyze::rows(entries, baseline, rules) {
+        for row in analyze::rows(entries, &[], baseline, rules) {
             w.write(&row)?;
         }
         Ok(String::from_utf8(w.finish()?)?)

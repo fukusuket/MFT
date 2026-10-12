@@ -330,7 +330,7 @@ mod tests {
         input: Input,
     ) -> Result<String> {
         let mut report = HtmlReport::new(PROVENANCE, input);
-        for row in analyze::rows(entries, baseline, rules) {
+        for row in analyze::rows(entries, &[], baseline, rules) {
             report.add(&row);
         }
         Ok(String::from_utf8(report.finish(Vec::new())?)?)
@@ -539,7 +539,7 @@ mod tests {
         let records = [usn_event(60, 0x8000_0100, 0x20, "b.exe"), old];
 
         let mut report = HtmlReport::new(PROVENANCE, input());
-        for row in analyze::rows(&entries, None, Some(&rules)) {
+        for row in analyze::rows(&entries, &[], None, Some(&rules)) {
             report.add(&row);
         }
         for row in analyze::usn_rows(&entries, &records, None, Some(&rules)) {
