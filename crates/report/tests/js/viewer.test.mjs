@@ -41,3 +41,32 @@ test("the URL hash round-trips the tab and filters, and ignores what it does not
   assert.deepEqual({ ...parseHash("") }, { tab: "summary", level: "", rule: "", folder: "", from: "", to: "", q: "" });
   assert.equal(formatHash({ ...parseHash(""), tab: "findings" }), "#tab=findings");
 });
+
+const none = { tab: "findings", level: "", rule: "", folder: "", from: "", to: "", q: "" };
+const finding = (over) => ({
+  level: "high",
+  id: "rule-1",
+  folder: "downloads",
+  path: "\\Users\\Bob\\Downloads\\Tool.EXE",
+  created: "2026-10-02T12:00:00.5000000Z",
+  fn_created: "2026-09-01T00:00:00.0000000Z",
+  event_time: null,
+  ...over,
+});
+
+test("findings match the level, rule, folder and a case-insensitive path search", () => {
+  const { matchFinding } = load();
+  const f = finding({});
+
+  assert.equal(matchFinding(f, none), true);
+  for (const [key, hit, miss] of [
+    ["level", "high", "low"],
+    ["rule", "rule-1", "rule-2"],
+    ["folder", "downloads", "temp"],
+    ["q", "bob\\downloads\\tool.exe", "public"],
+  ]) {
+    assert.equal(matchFinding(f, { ...none, [key]: hit }), true, `${key}=${hit}`);
+    assert.equal(matchFinding(f, { ...none, [key]: miss }), false, `${key}=${miss}`);
+  }
+  assert.equal(matchFinding(f, { ...none, level: "high", folder: "temp" }), false);
+});

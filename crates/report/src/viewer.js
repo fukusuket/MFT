@@ -52,6 +52,16 @@ const viewer = (function () {
     return "#" + parts.join("&");
   }
 
+  // Whether a finding passes every filter that is set.
+  function matchFinding(f, state) {
+    return (
+      (state.level === "" || f.level === state.level) &&
+      (state.rule === "" || f.id === state.rule) &&
+      (state.folder === "" || f.folder === state.folder) &&
+      (state.q === "" || f.path.toLowerCase().includes(state.q.toLowerCase()))
+    );
+  }
+
   function render(document) {
     const data = decode(document.getElementById("data").textContent);
 
@@ -166,7 +176,7 @@ const viewer = (function () {
     document.getElementById("source").textContent = f.source_url;
   }
 
-  return { decode, parseHash, formatHash, render };
+  return { decode, parseHash, formatHash, matchFinding, render };
 })();
 
 if (typeof document !== "undefined") viewer.render(document);
