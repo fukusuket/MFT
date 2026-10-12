@@ -1,4 +1,4 @@
-//! `tool analyze -i <$MFT> [--usn <$J>] [--csv <out>] [-o <report.html>] [--jsonl <out>] [--baseline <file>] [--rules <dir>]`
+//! `tool analyze -i <$MFT> [--usn <$J>] [--csv <out>] [-o <report.html>] [--jsonl <out>] [--baseline <file>] [--rules <dir>]...`
 //! and `tool baseline build`.
 
 use std::ffi::OsString;
@@ -42,9 +42,10 @@ enum Command {
         /// Baseline file from `tool baseline build`; without it the `baseline` column is empty.
         #[arg(long)]
         baseline: Option<PathBuf>,
-        /// Directory of Sigma rules (`.yml`/`.yaml`); without it no rules run.
+        /// Directory of Sigma rules (`.yml`/`.yaml`, subdirectories included); may be repeated.
+        /// Without it no rules run.
         #[arg(long)]
-        rules: Option<PathBuf>,
+        rules: Vec<PathBuf>,
     },
     /// Windows baselines.
     #[command(subcommand)]
@@ -82,7 +83,7 @@ fn main() -> anyhow::Result<()> {
             output.as_deref(),
             jsonl.as_deref(),
             baseline.as_deref(),
-            rules.as_deref(),
+            &rules,
         ),
         Command::Baseline(BaselineCommand::Build { vwr, o }) => build_baseline(&vwr, &o),
     }
@@ -95,7 +96,7 @@ fn analyze(
     output: Option<&Path>,
     jsonl: Option<&Path>,
     baseline: Option<&Path>,
-    rules: Option<&Path>,
+    rules: &[PathBuf],
 ) -> anyhow::Result<()> {
     let outputs = [
         (csv, "CSV output"),
@@ -112,12 +113,12 @@ fn analyze(
             refuse_same_file(path, later, name, later_name)?;
         }
     }
-    let rules = rules
-        .map(|dir| {
-            Rules::load(&[dir], &detect::EMITTED)
-                .with_context(|| format!("loading rules from {}", dir.display()))
-        })
-        .transpose()?;
+    let rules = if rules.is_empty() {
+        None
+    } else {
+        let dirs: Vec<&Path> = rules.iter().map(PathBuf::as_path).collect();
+        Some(Rules::load(&dirs, &detect::EMITTED).context("loading rules")?)
+    };
     let baseline_name = baseline.map(file_name);
     let baseline = baseline
         .map(|path| {

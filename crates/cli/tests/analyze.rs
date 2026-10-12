@@ -1882,3 +1882,62 @@ fn sample_rules_flag_an_executable_deleted_from_public_but_not_a_document() -> T
     assert_eq!(flagged, [true, false], "{hits:?}");
     Ok(())
 }
+
+/// A rules directory `name` under `dir` holding one rule file.
+fn rules_dir(dir: &std::path::Path, name: &str, rule: &str) -> Result<PathBuf, Box<dyn Error>> {
+    let rules = dir.join(name);
+    std::fs::create_dir_all(&rules)?;
+    std::fs::write(rules.join("rule.yml"), rule)?;
+    Ok(rules)
+}
+
+#[test]
+fn rules_from_every_rules_directory_run() -> TestResult {
+    use usn_support::{Fields, v2};
+    let dir = scratch("rules_from_every_rules_directory_run")?;
+    let (mft, j, csv) = (dir.join("MFT"), dir.join("J"), dir.join("out.csv"));
+    std::fs::write(&mft, usn_volume_mft())?;
+    let mut journal = Vec::new();
+    for (file, reason, name) in [(40, 0x8000_0100, "x.exe"), (41, 0x8000_0200, "y.evtx")] {
+        journal.extend(v2(&Fields {
+            file: file | (1 << 48),
+            parent: 6 | (1 << 48),
+            reason,
+            name: u16s(name),
+            ..Fields::default()
+        }));
+    }
+    std::fs::write(&j, journal)?;
+    let first = rules_dir(
+        &dir,
+        "first",
+        "title: A\nid: rule-a\nlevel: high\nlogsource:\n  product: windows\n  category: file_event\ndetection:\n  sel:\n    TargetFilename|endswith: '.exe'\n  condition: sel\n",
+    )?;
+    let second = rules_dir(
+        &dir,
+        "second",
+        "title: B\nid: rule-b\nlevel: low\nlogsource:\n  product: windows\n  category: file_delete\ndetection:\n  sel:\n    TargetFilename|endswith: '.evtx'\n  condition: sel\n",
+    )?;
+
+    let status = tool()
+        .args(["analyze", "-i"])
+        .arg(&mft)
+        .arg("--usn")
+        .arg(&j)
+        .arg("--csv")
+        .arg(&csv)
+        .arg("--rules")
+        .arg(&first)
+        .arg("--rules")
+        .arg(&second)
+        .status()?;
+
+    assert!(status.success());
+    let findings: Vec<String> = csv_rows(&std::fs::read_to_string(&csv)?)
+        .into_iter()
+        .filter(|r| r[11] == "usn")
+        .map(|r| r[7].clone())
+        .collect();
+    assert_eq!(findings, ["high:rule-a", "low:rule-b"]);
+    Ok(())
+}
