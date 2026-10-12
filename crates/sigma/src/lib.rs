@@ -69,15 +69,10 @@ impl std::fmt::Debug for Rules {
 }
 
 impl Rules {
-    /// Loads every `.yml`/`.yaml` file in `dir`, in file-name order.
+    /// Loads every `.yml`/`.yaml` file under `dir`, in path order.
     pub fn load(dir: &Path) -> Result<Self, Error> {
-        let io = |e| Error::Io(dir.to_path_buf(), e);
-        let mut files: Vec<PathBuf> = std::fs::read_dir(dir)
-            .map_err(io)?
-            .map(|entry| entry.map(|e| e.path()))
-            .collect::<Result<_, _>>()
-            .map_err(io)?;
-        files.retain(|f| f.extension().is_some_and(|x| x == "yml" || x == "yaml"));
+        let mut files = Vec::new();
+        rule_files(dir, &mut files)?;
         files.sort();
 
         let mut ids = Vec::new();
@@ -184,6 +179,22 @@ impl Rules {
     }
 }
 
+/// Adds the `.yml`/`.yaml` files under `dir` to `files`. Symbolic links to directories are not
+/// followed, so a link loop cannot recurse forever.
+fn rule_files(dir: &Path, files: &mut Vec<PathBuf>) -> Result<(), Error> {
+    let io = |e| Error::Io(dir.to_path_buf(), e);
+    for entry in std::fs::read_dir(dir).map_err(io)? {
+        let entry = entry.map_err(io)?;
+        let path = entry.path();
+        if entry.file_type().map_err(io)?.is_dir() {
+            rule_files(&path, files)?;
+        } else if path.extension().is_some_and(|x| x == "yml" || x == "yaml") {
+            files.push(path);
+        }
+    }
+    Ok(())
+}
+
 fn level(level: rsigma_parser::Level) -> Level {
     match level {
         rsigma_parser::Level::Informational => Level::Informational,
@@ -233,7 +244,9 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         let _ = std::fs::create_dir_all(&dir);
         for (name, text) in files {
-            let _ = std::fs::write(dir.join(name), text);
+            let path = dir.join(name);
+            let _ = path.parent().map(std::fs::create_dir_all);
+            let _ = std::fs::write(path, text);
         }
         dir
     }
@@ -258,6 +271,23 @@ mod tests {
         let rules = Rules::load(&dir)?;
 
         assert_eq!(rules.ids, ["rule-a", "rule-b"]);
+        Ok(())
+    }
+
+    #[test]
+    fn loads_rules_in_subdirectories_in_path_order() -> Result<(), Error> {
+        let dir = rule_dir(
+            "nested",
+            &[
+                ("b.yml", &rule("rule-b", "B", "")),
+                ("a/deep/c.yml", &rule("rule-c", "C", "")),
+                ("a/z.yml", &rule("rule-z", "Z", "")),
+            ],
+        );
+
+        let rules = Rules::load(&dir)?;
+
+        assert_eq!(rules.ids, ["rule-c", "rule-z", "rule-b"]);
         Ok(())
     }
 
