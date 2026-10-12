@@ -293,3 +293,22 @@ test("each finding row shows its rule's author, as the Detection Rule License re
   assert.ok(rows[0].textContent.includes("Tool in Downloads (author unknown)"), rows[0].textContent);
   assert.ok(rows[1].textContent.includes("DLL in Temp (by a)"), rows[1].textContent);
 });
+
+test("a filter change repaints the shown list once, and a hidden list not at all", () => {
+  const { window, app } = open("#tab=findings");
+  const block = (name) => app.findAll("screen").find((s) => s.getAttribute("data-screen") === name).find("block");
+  const findings = block("findings");
+  const outside = block("outside");
+  findings.replaced = 0;
+  outside.replaced = 0;
+
+  const q = app.findAll("screen").find((s) => s.getAttribute("data-screen") === "findings").find("filter-q");
+  q.value = "temp";
+  q.dispatch("input");
+  window.dispatch("hashchange"); // the browser reports the hash the viewer just set
+
+  assert.equal(findings.replaced, 1);
+  assert.equal(outside.replaced, 0);
+  window.go("#tab=outside&q=temp");
+  assert.equal(outside.replaced, 1);
+});

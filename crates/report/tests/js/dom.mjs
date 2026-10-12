@@ -45,6 +45,7 @@ class Node {
   }
 
   replaceChildren(...children) {
+    this.replaced = (this.replaced || 0) + 1; // lets tests count repaints
     this.children = [];
     children.forEach((c) => this.appendChild(c));
   }

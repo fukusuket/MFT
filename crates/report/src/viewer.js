@@ -140,6 +140,7 @@ const viewer = (function () {
       screen.tab.addEventListener("click", () => go({ ...state, tab: key }));
       screen.node = app.appendChild(el("section", undefined, "screen"));
       screen.node.setAttribute("data-screen", key);
+      screen.redraws = [];
     }
 
     let state = parseHash(window.location.hash);
@@ -149,23 +150,25 @@ const viewer = (function () {
       draw();
     }
     window.addEventListener("hashchange", () => {
-      state = parseHash(window.location.hash);
+      const next = parseHash(window.location.hash);
+      if (formatHash(next) === formatHash(state)) return; // the hash `go` just set
+      state = next;
       draw();
     });
 
-    const drawn = [];
+    // Shows the chosen screen and redraws only it: filtering is the costly part.
     function draw() {
       const shown = state.tab in screens ? state.tab : "summary";
       for (const [key, screen] of Object.entries(screens)) {
         screen.node.style.display = key === shown ? "" : "none";
         screen.tab.className = key === shown ? "tab selected" : "tab";
       }
-      drawn.forEach((redraw) => redraw());
+      screens[shown].redraws.forEach((redraw) => redraw());
     }
 
     // A filter bar; each control writes its key of the state and reads it back on every draw.
-    function filters(node, specs) {
-      const bar = node.appendChild(el("div", undefined, "filters"));
+    function filters(screen, specs) {
+      const bar = screen.node.appendChild(el("div", undefined, "filters"));
       const controls = specs.map(([key, label, options]) => {
         const field = bar.appendChild(el("label", label + " "));
         let control;
@@ -182,7 +185,7 @@ const viewer = (function () {
         control.addEventListener(options ? "change" : "input", () => go({ ...state, [key]: control.value }));
         return [key, control];
       });
-      drawn.push(() => {
+      screen.redraws.push(() => {
         for (const [key, control] of controls) {
           // A value from a shared link that this report lacks is offered, so the filter shows.
           if (control.tagName === "SELECT" && !Array.from(control.children).some((o) => o.value === state[key])) {
@@ -233,11 +236,12 @@ const viewer = (function () {
     }
 
     summary(screens.summary.node);
-    findings(screens.findings.node);
-    outside(screens.outside.node);
+    findings(screens.findings);
+    outside(screens.outside);
     draw();
 
-    function outside(node) {
+    function outside(screen) {
+      const node = screen.node;
       const per = new Map();
       data.outside.forEach((o) => per.set(o.folder, (per.get(o.folder) || 0) + 1));
       const folders = node.appendChild(el("p", undefined, "folders"));
@@ -245,7 +249,7 @@ const viewer = (function () {
         const link = folders.appendChild(el("button", folder + " " + per.get(folder), "folder-link"));
         link.addEventListener("click", () => go({ ...state, folder }));
       });
-      filters(node, [
+      filters(screen, [
         ["folder", "Folder", [["", "all"], ...FOLDERS.map((f) => [f, f])]],
         ["from", "From"],
         ["to", "To"],
@@ -255,16 +259,17 @@ const viewer = (function () {
       const show = list(node, ["Created ($SI, UTC)", "Path", "Folder", "MFT entry"], (row, o) => {
         row.appendChild(line([[o.created, "mono"], [o.path, "path"], [o.folder], [o.entry, "mono"]]));
       });
-      drawn.push(() => {
+      screen.redraws.push(() => {
         const shown = data.outside.filter((o) => matchOutside(o, state));
         count.textContent = shown.length + " of " + data.outside.length;
         show(shown);
       });
     }
 
-    function findings(node) {
+    function findings(screen) {
+      const node = screen.node;
       const rules = new Map(data.findings.map((f) => [f.id, f.title]));
-      filters(node, [
+      filters(screen, [
         ["level", "Level", [["", "all"], ...LEVELS.map((l) => [l, l])]],
         ["rule", "Rule", [["", "all"], ...[...rules].sort((a, b) => (a[0] < b[0] ? -1 : 1)).map(([id, t]) => [id, t])]],
         ["folder", "Folder", [["", "all"], ...FOLDERS.map((f) => [f, f])]],
@@ -301,7 +306,7 @@ const viewer = (function () {
           el("pre", pretty(f.explain)),
         );
       }
-      drawn.push(() => {
+      screen.redraws.push(() => {
         const shown = data.findings.filter((f) => matchFinding(f, state));
         count.textContent = shown.length + " of " + data.findings.length;
         show(shown);
