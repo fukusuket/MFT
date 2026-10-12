@@ -256,8 +256,8 @@ const viewer = (function () {
         ["q", "Search"],
       ]);
       const count = node.appendChild(el("p", undefined, "count"));
-      const show = list(node, ["Created ($SI, UTC)", "Path", "Folder", "MFT entry"], (row, o) => {
-        row.appendChild(line([[o.created, "mono"], [o.path, "path"], [o.folder], [o.entry, "mono"]]));
+      const show = list(node, ["Created ($SI, UTC)", "Path", "MFT entry"], (row, o) => {
+        row.appendChild(line([[o.created, "mono"], [o.path, "path"], [o.entry, "mono"]]));
       });
       screen.redraws.push(() => {
         const shown = data.outside.filter((o) => matchOutside(o, state));
@@ -302,7 +302,6 @@ const viewer = (function () {
         pane.replaceChildren(
           el("h3", f.title),
           el("p", "Rule " + f.id + " · level " + f.level + " · author " + (f.author === null ? "unknown" : f.author)),
-          el("p", "MFT entry " + f.entry + (f.usn === null ? "" : " · USN " + f.usn), "mono"),
           el("pre", pretty(f.explain)),
         );
       }
