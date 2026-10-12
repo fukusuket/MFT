@@ -103,14 +103,22 @@ impl Rules {
         let mut ids = Vec::new();
         let mut authors = HashMap::new();
         let mut loaded = Vec::new();
+        // Each with its file's position, so engine errors found later still list in file order.
         let mut skipped = Vec::new();
-        for (shown, file) in files {
+        for (n, (shown, file)) in files.into_iter().enumerate() {
             let rule_error = |e: &dyn std::fmt::Display| Error::Rule(file.clone(), e.to_string());
-            let skip = |id, title, reason: &str| Skipped {
-                file: shown.clone(),
-                id,
-                title,
-                reason: reason.to_string(),
+            let skip = |id, title, reason: &str| {
+                let file = shown.clone();
+                let reason = reason.to_string();
+                (
+                    n,
+                    Skipped {
+                        file,
+                        id,
+                        title,
+                        reason,
+                    },
+                )
             };
             let text = std::fs::read_to_string(&file).map_err(|e| Error::Io(file.clone(), e))?;
             let collection = match parse_sigma_yaml(&text) {
@@ -147,21 +155,27 @@ impl Rules {
                     )));
                 }
                 ids.push(id.clone());
-                loaded.push((file.clone(), rule));
+                loaded.push((skip(Some(id.clone()), Some(rule.title.clone()), ""), rule));
             }
         }
         // One batch: each separate add rebuilds the engine's rule index, which is quadratic.
+        // The engine keeps the rules it can compile and reports the others.
         let mut engine = Engine::new();
-        if let Some((at, e)) = engine
-            .add_rules(loaded.iter().map(|(_, rule)| rule))
-            .first()
-        {
-            let file = loaded
-                .get(*at)
-                .map(|(file, _)| file.clone())
-                .unwrap_or_default();
-            return Err(Error::Rule(file, e.to_string()));
+        for (at, e) in engine.add_rules(loaded.iter().map(|(_, rule)| rule)) {
+            if let Some(((n, entry), _)) = loaded.get(at) {
+                let reason = format!("engine: {e}");
+                ids.retain(|id| entry.id.as_ref() != Some(id));
+                skipped.push((
+                    *n,
+                    Skipped {
+                        reason,
+                        ..entry.clone()
+                    },
+                ));
+            }
         }
+        skipped.sort_by_key(|&(n, _)| n);
+        let skipped = skipped.into_iter().map(|(_, entry)| entry).collect();
         let compiled = engine
             .rules()
             .iter()
@@ -408,6 +422,35 @@ mod tests {
         let reasons: Vec<&str> = rules.skipped().iter().map(|s| s.reason.as_str()).collect();
         assert_eq!(reasons, ["field not emitted: CommandLine, Image"]);
         assert_eq!(rules.ids, ["rule-k"]);
+        Ok(())
+    }
+
+    #[test]
+    fn a_rule_the_engine_cannot_compile_is_skipped_in_file_order() -> Result<(), Error> {
+        let bad = rule("rule-bad", "Bad", "").replace("|endswith: '.exe'", "|re: '('");
+        let dir = rule_dir(
+            "engine",
+            &[
+                ("a.yml", &bad),
+                ("b.yml", &rule("rule-b", "B", "")),
+                (
+                    "c.yml",
+                    &rule("rule-c", "C", "").replace("id: rule-c\n", ""),
+                ),
+            ],
+        );
+
+        let rules = Rules::load(&[dir.as_path()], &EMITTED)?;
+
+        let skipped: Vec<(Option<&str>, bool)> = rules
+            .skipped()
+            .iter()
+            .map(|s| (s.id.as_deref(), s.reason.starts_with("engine: ")))
+            .collect();
+        assert_eq!(rules.ids, ["rule-b"]);
+        assert_eq!(rules.count(), 1);
+        assert_eq!(skipped, [(Some("rule-bad"), true), (None, false)]);
+        assert_eq!(rules.evaluate(&event(r"C:\x.exe", None)).len(), 1);
         Ok(())
     }
 
