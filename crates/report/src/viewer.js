@@ -2,10 +2,34 @@
 // The viewer: plain functions, and `render`, which draws the page. It renders only when a
 // document is present, so tests can load this file under Node and call the functions.
 const viewer = (function () {
+  const BASE64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+  // Base64 without `atob`, whose string copy runs out of memory on large reports.
+  function fromBase64(text) {
+    const out = new Uint8Array(Math.floor((text.replace(/=+$/, "").length * 3) / 4));
+    let bits = 0;
+    let count = 0;
+    let at = 0;
+    for (let i = 0; i < text.length && text[i] !== "="; i++) {
+      bits = (bits << 6) | BASE64.indexOf(text[i]);
+      count += 6;
+      if (count >= 8) {
+        count -= 8;
+        out[at++] = (bits >> count) & 0xff;
+      }
+    }
+    return out;
+  }
+
+  // The embedded report data: Base64 of UTF-8 JSON.
+  function decode(payload) {
+    const text = payload.trim();
+    const bytes = typeof Uint8Array.fromBase64 === "function" ? Uint8Array.fromBase64(text) : fromBase64(text);
+    return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+  }
+
   function render(document) {
-    const raw = document.getElementById("data").textContent.trim();
-    const bytes = Uint8Array.from(atob(raw), (c) => c.charCodeAt(0));
-    const data = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+    const data = decode(document.getElementById("data").textContent);
 
     // Every value is set with textContent: evidence never becomes markup.
     function el(tag, text, className) {
@@ -118,7 +142,7 @@ const viewer = (function () {
     document.getElementById("source").textContent = f.source_url;
   }
 
-  return { render };
+  return { decode, render };
 })();
 
 if (typeof document !== "undefined") viewer.render(document);
