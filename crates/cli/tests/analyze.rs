@@ -2165,3 +2165,82 @@ fn a_file_is_seen_in_the_mft_the_journal_or_both() -> TestResult {
     );
     Ok(())
 }
+
+#[test]
+fn a_file_no_longer_in_use_in_the_mft_is_deleted() -> TestResult {
+    let deleted = facts_column("a_file_no_longer_in_use_in_the_mft_is_deleted", 15)?;
+
+    assert_eq!(
+        deleted,
+        [
+            "$MFT|false",
+            ".|false",
+            "Users|false",
+            "kept.txt|false",
+            "ads.txt|false",
+            "old.txt|true",
+            "stomped.txt|false",
+            "kept.txt|false",
+            "old.txt|true",
+            "gone.txt|true",
+        ]
+    );
+    Ok(())
+}
+
+#[test]
+fn named_data_streams_are_listed() -> TestResult {
+    let streams = facts_column("named_data_streams_are_listed", 17)?;
+
+    assert_eq!(
+        streams
+            .iter()
+            .filter(|s| !s.ends_with('|'))
+            .collect::<Vec<_>>(),
+        ["ads.txt|Zone.Identifier"]
+    );
+    Ok(())
+}
+
+#[test]
+fn timestomp_hints_are_listed_in_csv_and_html_findings() -> TestResult {
+    let hints = facts_column("timestomp_hints_are_listed_in_csv_and_html_findings", 18)?;
+
+    assert_eq!(
+        hints
+            .iter()
+            .filter(|s| !s.ends_with('|'))
+            .collect::<Vec<_>>(),
+        [
+            "$MFT|si_zero_subseconds", // the volume's own records: 2019-04-17T18:40:00
+            ".|si_zero_subseconds",
+            "Users|si_zero_subseconds",
+            "stomped.txt|si_before_fn;si_zero_subseconds",
+        ]
+    );
+    let dir = scratch("timestomp_hints_html")?;
+    let (mft, html) = (dir.join("MFT"), dir.join("report.html"));
+    std::fs::write(&mft, facts_volume_mft())?;
+    let rules = rules_dir(
+        &dir,
+        "rules",
+        "title: Stomped\nid: stomped\nlevel: low\nlogsource:\n  product: windows\n  category: file_event\ndetection:\n  sel:\n    TargetFilename|endswith: 'stomped.txt'\n  condition: sel\n",
+    )?;
+
+    let status = tool()
+        .args(["analyze", "-i"])
+        .arg(&mft)
+        .arg("--rules")
+        .arg(&rules)
+        .arg("-o")
+        .arg(&html)
+        .status()?;
+
+    assert!(status.success());
+    let data = report_data(&std::fs::read_to_string(&html)?)?;
+    assert_eq!(
+        data["findings"][0]["hints"],
+        serde_json::json!(["si_before_fn", "si_zero_subseconds"])
+    );
+    Ok(())
+}
