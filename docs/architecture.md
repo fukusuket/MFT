@@ -40,7 +40,8 @@ A rule loads only if it can match what `detect` emits (`detect::EMITTED`). Other
 
 | Reason | When |
 |---|---|
-| `parse: …` | The parser rejects the document (invalid YAML, no detection, unknown modifier) |
+| `parse: …` | The parser rejects the document (not UTF-8, invalid YAML, no detection, unknown modifier) |
+| `symbolic link not followed` | A link under a rules directory; links are listed, never followed |
 | `correlation rule`, `filter rule` | Not supported yet |
 | `no id` | Findings link to rules by id (ADR 0003) |
 | `logsource not emitted: …` | `product`, `category` or `service` is set to a value never emitted; an unset one matches anything |
