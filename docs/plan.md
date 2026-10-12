@@ -158,7 +158,7 @@ Goal: add `$J` to the same end-to-end path: USN events with their paths at the t
   - Proposal: run the viewer's JS logic (filters, time range, URL hash, row mapping of the capped virtual scroll) as tests under Node with a small DOM stub, from `cargo nextest` or a separate CI step. Node becomes a CI tool, so this is an H2 decision; no npm packages.
   - Done when: ADR accepted. The CI job and the first tests come with P2-9b.
   - Out of scope: the viewer code.
-- [ ] **P2-9b Viewer: Summary, Findings, Outside-baseline** (`report`; per ADR 0020 and the JS-test ADR)
+- [x] **P2-9b Viewer: Summary, Findings, Outside-baseline** (`report`; per ADR 0020 and the JS-test ADR)
   - Done when: one self-contained HTML file with three tabs; the tab and filter state are kept in the URL hash. All times are UTC.
 
     | Screen | Content |

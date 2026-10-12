@@ -18,6 +18,14 @@ use crate::{
 
 const TEMPLATE: &str = include_str!("template.html");
 const PLACEHOLDER: &str = "__REPORT_DATA__";
+const VIEWER: &str = include_str!("viewer.js");
+const VIEWER_PLACEHOLDER: &str = "__VIEWER__";
+
+/// The page before and after the data: the template with the viewer script inlined.
+fn page() -> (&'static str, String) {
+    let (head, tail) = TEMPLATE.split_once(PLACEHOLDER).unwrap_or((TEMPLATE, ""));
+    (head, tail.replacen(VIEWER_PLACEHOLDER, VIEWER, 1))
+}
 
 /// Build facts shown in the footer (AGPL notice, ADR 0001).
 #[derive(Debug, Clone, Copy, Serialize)]
@@ -62,8 +70,6 @@ pub struct HtmlReport {
     summary: Summary,
     findings: Vec<FindingItem>,
     outside: Vec<OutsideItem>,
-    /// The earliest USN event time seen.
-    first_usn: Option<Filetime>,
 }
 
 impl HtmlReport {
@@ -83,6 +89,8 @@ impl HtmlReport {
             skipped_rules: input.skipped_rules,
             window: input.window,
             warning: None,
+            usn_first: None,
+            usn_last: None,
             findings: Levels::default(),
         };
         Self {
@@ -90,7 +98,6 @@ impl HtmlReport {
             summary,
             findings: Vec::new(),
             outside: Vec::new(),
-            first_usn: None,
         }
     }
 
@@ -99,10 +106,12 @@ impl HtmlReport {
         let usn_parse::Record::Event(event) = row.record else {
             return; // diagnostics have no findings
         };
-        self.first_usn = Some(
-            self.first_usn
+        let s = &mut self.summary;
+        s.usn_first = Some(
+            s.usn_first
                 .map_or(event.time, |first| first.min(event.time)),
         );
+        s.usn_last = Some(s.usn_last.map_or(event.time, |last| last.max(event.time)));
         if row.in_window == Some(false) {
             return;
         }
@@ -114,6 +123,7 @@ impl HtmlReport {
                 id: display_text(&finding.id),
                 author: finding.author.as_deref().map(display_text),
                 created: None,
+                fn_created: None,
                 event_time: Some(event.time),
                 usn: Some(event.usn),
                 path: usn_path(row, event)
@@ -154,10 +164,12 @@ impl HtmlReport {
         if row.in_window == Some(false) {
             return; // counted above, listed only in the window
         }
+        let fn_created = resolve::chosen_name(&row.entry.names).map(|name| name.created);
         if row.baseline == Some(Status::Outside) {
             s.outside += 1;
             self.outside.push(OutsideItem {
                 created: row.entry.si_created,
+                fn_created,
                 path: path_text(&row.resolution),
                 entry: row.entry.file_ref.entry(),
                 folder: folder_name(row.folder),
@@ -171,6 +183,7 @@ impl HtmlReport {
                 id: display_text(&finding.id),
                 author: finding.author.as_deref().map(display_text),
                 created: row.entry.si_created,
+                fn_created,
                 event_time: None,
                 usn: None,
                 path: path_text(&row.resolution),
@@ -188,7 +201,7 @@ impl HtmlReport {
 
     /// Writes the report and returns the writer.
     pub fn finish<W: Write>(mut self, mut out: W) -> Result<W, Error> {
-        if let (Some(window), Some(first)) = (&self.summary.window, self.first_usn)
+        if let (Some(window), Some(first)) = (&self.summary.window, self.summary.usn_first)
             && window.start.is_none_or(|start| start < first)
         {
             self.summary.warning = Some(format!(
@@ -216,7 +229,7 @@ impl HtmlReport {
                 license: "AGPL-3.0-only",
             },
         };
-        let (head, tail) = TEMPLATE.split_once(PLACEHOLDER).unwrap_or((TEMPLATE, ""));
+        let (head, tail) = page();
         out.write_all(head.as_bytes())?;
         // Streamed: the JSON and its Base64 are each about as large as the report (Phase 1 gate).
         // The buffer hands the encoder large chunks instead of serde's many small writes.
@@ -237,6 +250,9 @@ struct OutsideItem {
     /// `$SI` created time.
     #[serde(serialize_with = "iso8601")]
     created: Option<Filetime>,
+    /// The shown name's `$FN` created time.
+    #[serde(serialize_with = "iso8601")]
+    fn_created: Option<Filetime>,
     path: String,
     entry: u64,
     folder: &'static str,
@@ -285,6 +301,9 @@ struct FindingItem {
     /// `$SI` created time, for a finding on a `$MFT` record.
     #[serde(serialize_with = "iso8601")]
     created: Option<Filetime>,
+    /// The shown name's `$FN` created time, for a finding on a `$MFT` record.
+    #[serde(serialize_with = "iso8601")]
+    fn_created: Option<Filetime>,
     /// USN time, for a finding on a USN record.
     #[serde(serialize_with = "iso8601")]
     event_time: Option<Filetime>,
@@ -317,6 +336,11 @@ struct Summary {
     skipped_rules: usize,
     window: Option<WindowText>,
     warning: Option<String>,
+    /// The earliest and the latest USN event time; `None` without `$J` events.
+    #[serde(serialize_with = "iso8601")]
+    usn_first: Option<Filetime>,
+    #[serde(serialize_with = "iso8601")]
+    usn_last: Option<Filetime>,
     findings: Levels,
 }
 
@@ -398,12 +422,12 @@ mod tests {
 
     /// The Base64 payload between the template's halves.
     fn payload(html: &str) -> Result<&str> {
-        let (head, tail) = TEMPLATE.split_once(PLACEHOLDER).ok_or("no placeholder")?;
+        let (head, tail) = page();
         let rest = html
             .strip_prefix(head)
             .ok_or("head differs from the template")?;
         Ok(rest
-            .strip_suffix(tail)
+            .strip_suffix(tail.as_str())
             .ok_or("tail differs from the template")?)
     }
 
@@ -613,14 +637,15 @@ mod tests {
             serde_json::json!([
                 {
                     "level": "high", "title": "Title rule-high", "id": "rule-high", "author": null,
-                    "created": null, "event_time": "1601-01-01T00:00:00.0000300Z", "usn": 4156,
+                    "created": null, "fn_created": null, "event_time": "1601-01-01T00:00:00.0000300Z", "usn": 4156,
                     "path": "\\Old\\b.exe", "path_state": "inferred", "entry": 60,
                     "explain": data["findings"][0]["explain"],
                     "deleted": true, "seen": "usn", "streams": [], "hints": [], "folder": "other"
                 },
                 {
                     "level": "high", "title": "Title rule-high", "id": "rule-high", "author": null,
-                    "created": "1601-01-01T00:00:00.0000100Z", "event_time": null, "usn": null,
+                    "created": "1601-01-01T00:00:00.0000100Z", "fn_created": "1601-01-01T00:00:00.0000000Z",
+                    "event_time": null, "usn": null,
                     "path": "\\a.exe", "path_state": "resolved", "entry": 40,
                     "explain": data["findings"][1]["explain"],
                     "deleted": false, "seen": "mft", "streams": [], "hints": [], "folder": "other"
@@ -755,6 +780,42 @@ mod tests {
     }
 
     #[test]
+    fn the_summary_shows_the_first_and_last_usn_time() -> Result<()> {
+        let entries = [root()];
+        let at = |raw: u64| {
+            let mut record = usn_event(60, 0x8000_0100, 0x20, "a.txt");
+            if let usn_parse::Record::Event(e) = &mut record {
+                e.time = Filetime::from_raw(raw);
+            }
+            record
+        };
+        let coverage = |records: &[usn_parse::Record]| {
+            let mut report = HtmlReport::new(PROVENANCE, input());
+            for row in analyze::usn_rows(&entries, records, None, None, None) {
+                report.add_usn(&row);
+            }
+            let data = decode(payload(&String::from_utf8(report.finish(Vec::new())?)?)?)?;
+            Ok::<_, Box<dyn std::error::Error>>((
+                data["summary"]["usn_first"].clone(),
+                data["summary"]["usn_last"].clone(),
+            ))
+        };
+
+        assert_eq!(
+            coverage(&[at(300), at(200), at(400), at(250)])?,
+            (
+                serde_json::json!("1601-01-01T00:00:00.0000200Z"),
+                serde_json::json!("1601-01-01T00:00:00.0000400Z")
+            )
+        );
+        assert_eq!(
+            coverage(&[])?,
+            (serde_json::Value::Null, serde_json::Value::Null)
+        );
+        Ok(())
+    }
+
+    #[test]
     fn a_window_starting_before_the_first_usn_event_is_warned_about() -> Result<()> {
         let entries = [root()];
         let at = |raw: u64| {
@@ -856,6 +917,50 @@ mod tests {
     }
 
     #[test]
+    fn findings_and_outside_items_carry_fn_created() -> Result<()> {
+        let vwr = "\"DirectoryName\",\"Name\",\"FullName\"\n\"C:\\\",\"x.txt\",\"C:\\x.txt\"\n";
+        let mut file_bytes = Vec::new();
+        baseline::build(vwr.as_bytes(), &mut file_bytes)?;
+        let baseline = baseline::Baseline::load(file_bytes)?;
+        let rules = rules("fn-created", &[("rule-high", "high", "", ".exe")])?;
+        let mut a = created(file(40, 5, "a.exe"), 100);
+        a.names[0].created = Filetime::from_raw(500);
+        let entries = [root(), a];
+        let records = [usn_event(60, 0x8000_0100, 0x20, "b.exe")];
+        let mut dir = file(6 | (1 << 48), 5, "Dir");
+        dir.is_dir = true;
+        let with_dir = [root(), dir, created(file(40, 5, "a.exe"), 100)];
+
+        let mut report = HtmlReport::new(PROVENANCE, input());
+        for row in analyze::rows(&entries, &[], Some(&baseline), Some(&rules), None) {
+            report.add(&row);
+        }
+        for row in analyze::usn_rows(&with_dir, &records, None, Some(&rules), None) {
+            report.add_usn(&row);
+        }
+        let data = decode(payload(&String::from_utf8(report.finish(Vec::new())?)?)?)?;
+
+        let fn_created = |key: &str| -> Vec<serde_json::Value> {
+            data[key]
+                .as_array()
+                .map(|items| items.iter().map(|i| i["fn_created"].clone()).collect())
+                .unwrap_or_default()
+        };
+        assert_eq!(
+            fn_created("findings"),
+            [
+                serde_json::Value::Null,
+                serde_json::json!("1601-01-01T00:00:00.0000500Z")
+            ] // USN first: newer
+        );
+        assert_eq!(
+            fn_created("outside"),
+            [serde_json::json!("1601-01-01T00:00:00.0000500Z")]
+        );
+        Ok(())
+    }
+
+    #[test]
     fn outside_lists_only_outside_baseline_files_newest_first() -> Result<()> {
         let vwr = "\"DirectoryName\",\"Name\",\"FullName\"\n\"C:\\\",\"x.txt\",\"C:\\x.txt\"\n";
         let mut file_bytes = Vec::new();
@@ -876,10 +981,10 @@ mod tests {
         assert_eq!(
             data["outside"],
             serde_json::json!([
-                {"created": "1601-01-01T00:00:00.0000200Z", "path": r"\u.txt", "entry": 44, "folder": "other"},
-                {"created": "1601-01-01T00:00:00.0000200Z", "path": r"\w.txt", "entry": 42, "folder": "other"},
-                {"created": "1601-01-01T00:00:00.0000100Z", "path": r"\y.txt", "entry": 41, "folder": "other"},
-                {"created": null, "path": r"\v.txt", "entry": 43, "folder": "other"},
+                {"created": "1601-01-01T00:00:00.0000200Z", "fn_created": "1601-01-01T00:00:00.0000000Z", "path": r"\u.txt", "entry": 44, "folder": "other"},
+                {"created": "1601-01-01T00:00:00.0000200Z", "fn_created": "1601-01-01T00:00:00.0000000Z", "path": r"\w.txt", "entry": 42, "folder": "other"},
+                {"created": "1601-01-01T00:00:00.0000100Z", "fn_created": "1601-01-01T00:00:00.0000000Z", "path": r"\y.txt", "entry": 41, "folder": "other"},
+                {"created": null, "fn_created": "1601-01-01T00:00:00.0000000Z", "path": r"\v.txt", "entry": 43, "folder": "other"},
             ])
         );
         assert_eq!(data["summary"]["outside"], 4);
@@ -908,9 +1013,10 @@ mod tests {
         for raw in ["<script>alert(1)", "=cmd|", "\u{7}", "\u{202E}"] {
             assert!(!html.contains(raw), "{raw:?} is in the HTML");
         }
+        let (head, tail) = page();
         assert_eq!(
             html.matches("</script>").count(),
-            TEMPLATE.matches("</script>").count()
+            head.matches("</script>").count() + tail.matches("</script>").count()
         );
         let data = decode(payload(&html)?)?;
         let paths: Vec<&str> = data["outside"]
@@ -934,6 +1040,11 @@ mod tests {
 
     #[test]
     fn template_only_builds_markup_through_the_dom_and_loads_nothing() {
+        let (head, tail) = page();
+        let page = format!("{head}{tail}");
+        assert_eq!(page.matches("__VIEWER__").count(), 0);
+        assert_eq!(page.matches(VIEWER).count(), 1);
+        assert!(!VIEWER.to_ascii_lowercase().contains("</script"));
         for banned in [
             "innerHTML",
             "outerHTML",
@@ -946,9 +1057,9 @@ mod tests {
             "http://",
             "https://",
         ] {
-            assert!(!TEMPLATE.contains(banned), "template contains {banned:?}");
+            assert!(!page.contains(banned), "the page contains {banned:?}");
         }
-        assert!(TEMPLATE.contains(
+        assert!(page.contains(
             r#"<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'">"#
         ));
     }
@@ -1073,6 +1184,8 @@ mod tests {
                 "skipped_rules": 0,
                 "window": null,
                 "warning": null,
+                "usn_first": null,
+                "usn_last": null,
                 "findings": {
                     "critical": 0,
                     "high": 0,
