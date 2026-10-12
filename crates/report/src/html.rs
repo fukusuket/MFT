@@ -34,6 +34,8 @@ pub struct Input {
     /// Baseline file name, if one was used.
     pub baseline: Option<String>,
     pub rules: usize,
+    /// Rules found but not loaded (`sigma::Rules::skipped`).
+    pub skipped_rules: usize,
 }
 
 /// Collects rows, then writes one HTML file.
@@ -59,6 +61,7 @@ impl HtmlReport {
             baseline: input.baseline.as_deref().map(display_text),
             outside: 0,
             rules: input.rules,
+            skipped_rules: input.skipped_rules,
             findings: Levels::default(),
         };
         Self {
@@ -254,6 +257,7 @@ struct Summary {
     baseline: Option<String>,
     outside: u64,
     rules: usize,
+    skipped_rules: usize,
     findings: Levels,
 }
 
@@ -311,6 +315,7 @@ mod tests {
             record_size: 1024,
             baseline: None,
             rules: 0,
+            skipped_rules: 0,
         }
     }
 
@@ -706,12 +711,26 @@ mod tests {
             record_size: 1024,
             baseline: Some("b\u{202E}tsf.fst".to_string()),
             rules: 0,
+            skipped_rules: 0,
         };
 
         let summary = &decode(payload(&html_of(&[root()], input)?)?)?["summary"];
 
         assert_eq!(summary["input"], r"M\u{1B}[2JFT");
         assert_eq!(summary["baseline"], r"b\u{202E}tsf.fst");
+        Ok(())
+    }
+
+    #[test]
+    fn summary_counts_the_skipped_rules() -> Result<()> {
+        let input = Input {
+            skipped_rules: 3,
+            ..input()
+        };
+
+        let summary = &decode(payload(&html_of(&[root()], input)?)?)?["summary"];
+
+        assert_eq!(summary["skipped_rules"], 3);
         Ok(())
     }
 
@@ -737,6 +756,7 @@ mod tests {
             record_size: 4096,
             baseline: Some("win11.fst".to_string()),
             rules: 3,
+            skipped_rules: 0,
         };
 
         let html = html_of(&[root(), file(40, 5, "a.txt"), deleted, dir, broken], input)?;
@@ -761,6 +781,7 @@ mod tests {
                 "baseline": "win11.fst",
                 "outside": 0,
                 "rules": 3,
+                "skipped_rules": 0,
                 "findings": {
                     "critical": 0,
                     "high": 0,

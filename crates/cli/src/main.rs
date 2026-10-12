@@ -152,6 +152,7 @@ fn analyze(
             record_size,
             baseline: baseline_name,
             rules: rules.as_ref().map_or(0, Rules::count),
+            skipped_rules: rules.as_ref().map_or(0, |r| r.skipped().len()),
         };
         (pending, file, HtmlReport::new(PROVENANCE, input))
     });
