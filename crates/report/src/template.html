@@ -100,8 +100,16 @@ footer { margin-top: 3em; border-top: 1px solid var(--line); padding-top: 8px; }
     summary.appendChild(tr);
   });
 
+  // Shown next to a finding, never used to order it.
+  const facts = (f) => [
+    ...(f.deleted ? ["deleted"] : []),
+    "seen: " + f.seen,
+    ...(f.streams.length > 0 ? ["ADS: " + f.streams.join(", ")] : []),
+    ...f.hints,
+  ].join("; ");
+
   document.getElementById("findings").appendChild(table(
-    ["Level", "Time ($SI created / USN)", "USN", "Path", "Rule", "Author", "Rule id"],
+    ["Level", "Time ($SI created / USN)", "USN", "Path", "Facts", "Rule", "Author", "Rule id"],
     data.findings.map((f) => {
       const rule = el("td");
       rule.appendChild(el("div", f.title));
@@ -114,6 +122,7 @@ footer { margin-top: 3em; border-top: 1px solid var(--line); padding-top: 8px; }
         el("td", f.created !== null ? f.created : f.event_time, "mono"),
         el("td", f.usn, "mono"),
         el("td", f.path_state === "resolved" ? f.path : f.path + " (" + f.path_state + ")", "path"),
+        el("td", facts(f), "path"),
         rule,
         el("td", f.author === null ? "unknown" : f.author),
         el("td", f.id, "mono"),

@@ -11,7 +11,10 @@ use serde::{Serialize, Serializer};
 use sigma::Level;
 
 use crate::base64::Encoder;
-use crate::{Error, display_text, level_name, path_state, usn_path};
+use crate::{
+    Error, display_text, hint_names, level_name, path_state, seen_name, usn_deleted, usn_path,
+    usn_seen,
+};
 
 const TEMPLATE: &str = include_str!("template.html");
 const PLACEHOLDER: &str = "__REPORT_DATA__";
@@ -93,6 +96,10 @@ impl HtmlReport {
                 path_state: path_state(&row.directory),
                 entry: event.file.entry(),
                 explain: display_text(&finding.explain),
+                deleted: usn_deleted(row),
+                seen: seen_name(usn_seen(row)),
+                streams: Vec::new(),
+                hints: Vec::new(),
             });
         }
     }
@@ -139,6 +146,15 @@ impl HtmlReport {
                 path_state: path_state(&row.resolution),
                 entry: row.entry.file_ref.entry(),
                 explain: display_text(&finding.explain),
+                deleted: !row.entry.in_use,
+                seen: seen_name(row.seen),
+                streams: row
+                    .entry
+                    .streams
+                    .iter()
+                    .map(|s| display_text(&s.to_string()))
+                    .collect(),
+                hints: hint_names(&row.hints),
             });
         }
     }
@@ -241,6 +257,10 @@ struct FindingItem {
     path_state: &'static str,
     entry: u64,
     explain: String,
+    deleted: bool,
+    seen: &'static str,
+    streams: Vec<String>,
+    hints: Vec<&'static str>,
 }
 
 #[derive(Debug, Serialize)]
@@ -555,17 +575,67 @@ mod tests {
                     "level": "high", "title": "Title rule-high", "id": "rule-high", "author": null,
                     "created": null, "event_time": "1601-01-01T00:00:00.0000300Z", "usn": 4156,
                     "path": "\\Old\\b.exe", "path_state": "inferred", "entry": 60,
-                    "explain": data["findings"][0]["explain"]
+                    "explain": data["findings"][0]["explain"],
+                    "deleted": true, "seen": "usn", "streams": [], "hints": []
                 },
                 {
                     "level": "high", "title": "Title rule-high", "id": "rule-high", "author": null,
                     "created": "1601-01-01T00:00:00.0000100Z", "event_time": null, "usn": null,
                     "path": "\\a.exe", "path_state": "resolved", "entry": 40,
-                    "explain": data["findings"][1]["explain"]
+                    "explain": data["findings"][1]["explain"],
+                    "deleted": false, "seen": "mft", "streams": [], "hints": []
                 }
             ])
         );
         assert_eq!(data["summary"]["findings"]["high"], 2);
+        Ok(())
+    }
+
+    #[test]
+    fn findings_carry_the_facts_of_their_row_and_keep_their_order() -> Result<()> {
+        let rules = rules("facts", &[("rule-high", "high", "", ".exe")])?;
+        let mut deleted = created(file(40, 5, "a.exe"), 100_000_000);
+        deleted.in_use = false;
+        let mut live = created(file(41, 5, "b.exe"), 100_000_000);
+        live.names[0].created = Filetime::from_raw(200_000_000);
+        live.streams = vec![NtfsName::from_units(&units("Zone.Identifier"))];
+        let mut dir = file(6 | (1 << 48), 5, "Dir");
+        dir.is_dir = true;
+        let entries = [root(), dir, deleted, live];
+        let records = [usn_event(60, 0x8000_0100, 0x20, "c.exe")];
+
+        let mut report = HtmlReport::new(PROVENANCE, input());
+        for row in analyze::rows(&entries, &records, None, Some(&rules)) {
+            report.add(&row);
+        }
+        for row in analyze::usn_rows(&entries, &records, None, Some(&rules)) {
+            report.add_usn(&row);
+        }
+        let html = String::from_utf8(report.finish(Vec::new())?)?;
+
+        let data = decode(payload(&html)?)?;
+        let facts: Vec<serde_json::Value> = data["findings"]
+            .as_array()
+            .ok_or("no findings")?
+            .iter()
+            .map(|f| {
+                serde_json::json!([f["path"], f["deleted"], f["seen"], f["streams"], f["hints"]])
+            })
+            .collect();
+        assert_eq!(
+            facts,
+            [
+                serde_json::json!(["\\a.exe", true, "mft", [], ["si_zero_subseconds"]]),
+                serde_json::json!([
+                    "\\b.exe",
+                    false,
+                    "mft",
+                    ["Zone.Identifier"],
+                    ["si_before_fn", "si_zero_subseconds"]
+                ]),
+                serde_json::json!(["\\Dir\\c.exe", true, "usn", [], []]),
+            ]
+        );
         Ok(())
     }
 
