@@ -10,7 +10,9 @@ How the tool is built. Decisions behind it: [adr/](adr/). Library choices: [rese
 - No network access.
 - Baselines and rules are versioned data, released separately from the binary.
 
-## Pipeline
+## Target pipeline
+
+The current CLI accepts raw `$MFT` and optional `$J` files. Collection and collection-directory/zip input arrive in Phase 3.
 
 ```
 [collect] raw volume → $MFT, $J, $Boot, $SDS, meta.json → collection.zip
@@ -100,7 +102,7 @@ The report warns when the window starts before the earliest USN event (or has no
 
 ## Crates
 
-So far: `ntfs-types`, `mft-parse`, `usn-parse`, `resolve` (MFT paths and USN Rewind, [research](research/rewind.md)), `baseline` (no zstd yet), `sigma`, `detect`, `analyze`, `report` (CSV, JSONL timeline and an HTML viewer: tabs, filters, virtual scroll in `viewer.js`, tested under Node per ADR 0022), `cli`, `xtask` (synthetic `$MFT` for the gate). `fuzz/` is a separate workspace (ADR 0013).
+Implemented: `ntfs-types`, `mft-parse`, `usn-parse`, `resolve` (MFT paths and USN Rewind, [research](research/rewind.md)), `baseline`, `sigma`, `detect`, `analyze`, `report` (CSV, JSONL timeline and an HTML viewer: tabs, filters, virtual scroll in `viewer.js`, tested under Node per ADR 0022), `cli`, and `xtask` (synthetic `$MFT` for the gate). `fuzz/` is a separate workspace (ADR 0013).
 
 | Crate | Role | Depends on | Built on |
 |---|---|---|---|
@@ -108,12 +110,14 @@ So far: `ntfs-types`, `mft-parse`, `usn-parse`, `resolve` (MFT paths and USN Rew
 | `mft-parse` | `$MFT` → `Entry` + `Diagnostic` | ntfs-types | `mft` @ `18b6c05`, no default features (ADR 0004) |
 | `usn-parse` | `$J` → `UsnEvent` (V2/V3; V4 reported) | ntfs-types | own code (ADR 0021) |
 | `resolve` | MFT↔USN join, Rewind | mft-parse, usn-parse | own code (ADR 0021) |
-| `baseline` | Normalize, `fst` lookup, manifest | ntfs-types | `fst`, `zstd` |
+| `baseline` | Normalize, build and query an `fst` | ntfs-types | `fst`, `csv` |
 | `sigma` | Thin adapter over the Sigma engine; NTFS-agnostic | — | `rsigma-eval` `=0.23.0`, no default features (ADR 0003) |
 | `detect` | NTFS events → Sigma events, logsource mapping | sigma, resolve, baseline, mft-parse, usn-parse | — |
-| `analyze` | Pipeline, facts, findings, sorting | detect, sigma, baseline, resolve | `rayon`, `indexmap` |
-| `report` | HTML, JSONL, CSV | analyze (and the types it returns: sigma, baseline, resolve) | `csv`; viewer in plain JS (ADR 0020) |
-| `collector` | Raw volume read (Windows) | ntfs-types | `ntfs-reader =0.6.0`, Windows only (ADR 0005) |
-| `cli` | `collect`, `analyze`, `baseline`, `rules` | all | `clap` |
+| `analyze` | Pipeline, facts, findings, sorting | detect, sigma, baseline, resolve, mft-parse, ntfs-types, usn-parse | — |
+| `report` | HTML, JSONL, CSV | analyze, baseline, mft-parse, ntfs-types, resolve, sigma, usn-parse | `csv`, `serde`; viewer in plain JS (ADR 0020) |
+| `cli` | `analyze`, `baseline build` | analyze, baseline, detect, mft-parse, ntfs-types, report, sigma, usn-parse | `clap` |
+| `xtask` | Deterministic synthetic `$MFT` generation | — | — |
 
-Repositories: this one (code, AGPL-3.0); `tool-rules` (Sigma rules + `explain/{en,ja}/`, DRL 1.1); `tool-baselines` (fst files + generation CI).
+Phase 3 adds `collector`, built on Windows with `ntfs-reader =0.6.0` (ADR 0005), and the `collect`, `baseline update`, and `rules` CLI surfaces.
+
+Repository plan: this one (code, AGPL-3.0); `tool-rules` (Sigma rules + `explain/{en,ja}/`, DRL 1.1); `tool-baselines` (fst files + generation CI). The current implementation in this repository does not consume the latter two yet.

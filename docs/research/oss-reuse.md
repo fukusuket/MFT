@@ -29,4 +29,6 @@ Surveyed 2026-10-04 (GitHub/crates.io metadata, READMEs, source). Criteria: AGPL
 
 ## Supporting crates
 
-`fst`, `zstd`, `chrono` (matches `rsigma-eval` and `ntfs-core`), `string-interner`, `indexmap`, `rayon`, `clap`, `csv`, `ts-rs`, `insta`, `proptest`, `cargo-fuzz`, `criterion`. Viewer: none, plain JS (ADR 0020). All MIT/Apache/BSD/Unlicense.
+In use: `fst`, `clap`, `csv`, `proptest`, and `cargo-fuzz`. The viewer uses plain JS with no package dependency (ADR 0020).
+
+Candidates surveyed but not currently used as direct dependencies: `zstd`, `chrono`, `string-interner`, `indexmap`, `rayon`, `ts-rs`, `insta`, and `criterion`. All are MIT/Apache/BSD/Unlicense.
