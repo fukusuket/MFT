@@ -4,7 +4,7 @@ use std::collections::{HashMap, HashSet};
 
 use baseline::{Baseline, Status};
 use mft_parse::Entry;
-use ntfs_types::Filetime;
+use ntfs_types::{Filetime, NtfsName};
 use resolve::{Resolution, Resolver};
 use sigma::{Finding, Rules};
 
@@ -23,6 +23,8 @@ pub struct Row<'a> {
     pub hints: Vec<Hint>,
     /// Whether `$SI` or `$FN` created is in the window; `None` without a window.
     pub in_window: Option<bool>,
+    /// Where the entry sits; `NoPath` when its path is unknown.
+    pub folder: Folder,
 }
 
 /// Where a file shows up: by (entry, sequence), in the `$MFT`, the USN journal or both.
@@ -55,6 +57,62 @@ impl Window {
     }
 }
 
+/// Where a file sits, by the directories above it: the first match in the order below.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Folder {
+    Public,
+    Downloads,
+    Desktop,
+    Documents,
+    Temp,
+    AppData,
+    UserProfile,
+    ProgramData,
+    ProgramFiles,
+    Windows,
+    Other,
+    NoPath,
+}
+
+/// The [`Folder`] of a path given as its names from the root (the last one is the file's).
+fn folder(segments: &[&NtfsName]) -> Folder {
+    let dirs = segments.split_last().map_or(&[][..], |(_, dirs)| dirs);
+    let is = |at: usize, name: &str| dirs.get(at).is_some_and(|dir| same_ascii(dir, name));
+    let in_profile = is(0, "Users") && dirs.len() > 1;
+    if is(0, "Users") && is(1, "Public") {
+        Folder::Public
+    } else if in_profile && is(2, "Downloads") {
+        Folder::Downloads
+    } else if in_profile && is(2, "Desktop") {
+        Folder::Desktop
+    } else if in_profile && is(2, "Documents") {
+        Folder::Documents
+    } else if dirs.iter().any(|dir| same_ascii(dir, "Temp")) {
+        Folder::Temp
+    } else if in_profile && is(2, "AppData") {
+        Folder::AppData
+    } else if in_profile {
+        Folder::UserProfile
+    } else if is(0, "ProgramData") {
+        Folder::ProgramData
+    } else if is(0, "Program Files") || is(0, "Program Files (x86)") {
+        Folder::ProgramFiles
+    } else if is(0, "Windows") {
+        Folder::Windows
+    } else {
+        Folder::Other
+    }
+}
+
+/// Whether `name` is `ascii`, ignoring ASCII case; compared as UTF-16 units.
+fn same_ascii(name: &NtfsName, ascii: &str) -> bool {
+    let units = name.units();
+    units.len() == ascii.len()
+        && units.iter().zip(ascii.bytes()).all(|(&unit, byte)| {
+            u8::try_from(unit).is_ok_and(|unit| unit.eq_ignore_ascii_case(&byte))
+        })
+}
+
 /// One row per entry, in entry order. Lazy, so only one path is held at a time.
 pub fn rows<'a>(
     entries: &'a [Entry],
@@ -73,6 +131,10 @@ pub fn rows<'a>(
         .collect();
     entries.iter().map(move |entry| {
         let resolution = resolver.path(entry);
+        let folder = match &resolution {
+            Resolution::Resolved(segments) => folder(segments),
+            Resolution::Inferred(_) | Resolution::Unknown => Folder::NoPath,
+        };
         let status = match (&resolution, baseline) {
             (Resolution::Resolved(segments), Some(baseline))
                 if !entry.is_dir && !segments.is_empty() =>
@@ -104,6 +166,7 @@ pub fn rows<'a>(
                     .flatten()
                     .any(|time| window.contains(time))
             }),
+            folder,
         }
     })
 }
@@ -153,6 +216,9 @@ pub struct UsnRow<'a> {
     pub entry: Option<&'a Entry>,
     /// Whether the USN time is in the window (`false` for a diagnostic); `None` without one.
     pub in_window: Option<bool>,
+    /// Where the event's file sits (`NoPath` if its directory is unknown); `None` for a
+    /// diagnostic.
+    pub folder: Option<Folder>,
 }
 
 /// One row per `$J` item, in `$J` order.
@@ -181,6 +247,7 @@ pub fn usn_rows<'a>(
                 findings: Vec::new(),
                 entry: None,
                 in_window: window.map(|_| false),
+                folder: None,
             };
             let usn_parse::Record::Event(event) = record else {
                 return row;
@@ -197,6 +264,7 @@ pub fn usn_rows<'a>(
                 }
                 Resolution::Unknown => None,
             };
+            row.folder = Some(segments.as_deref().map_or(Folder::NoPath, folder));
             if let (Some(segments), Some(baseline)) = (&segments, baseline)
                 && event.attributes & FILE_ATTRIBUTE_DIRECTORY == 0
             {
@@ -322,6 +390,67 @@ mod tests {
 
         assert_eq!(with, [Some(true), Some(true), Some(false), Some(false)]);
         assert_eq!(without, [None; 4]);
+    }
+
+    #[test]
+    fn a_path_falls_in_the_first_folder_its_directories_match() {
+        let cases = [
+            (r"\Users\Public\Downloads\a.exe", Folder::Public),
+            (r"\Users\bob\Downloads\Temp\a.exe", Folder::Downloads),
+            (r"\Users\bob\Desktop\a.exe", Folder::Desktop),
+            (r"\Users\bob\Documents\a.exe", Folder::Documents),
+            (r"\Users\bob\AppData\Local\Temp\a.exe", Folder::Temp),
+            (r"\Windows\Temp\a.exe", Folder::Temp),
+            (r"\Temp\a.exe", Folder::Temp),
+            (r"\Users\bob\AppData\Roaming\a.exe", Folder::AppData),
+            (r"\Users\bob\a.exe", Folder::UserProfile),
+            (r"\Users\bob\Downloads", Folder::UserProfile), // the directory itself
+            (r"\Users\bob\Documents\temp", Folder::Documents), // only the file is named temp
+            (r"\ProgramData\a.exe", Folder::ProgramData),
+            (r"\Program Files\a.exe", Folder::ProgramFiles),
+            (r"\Program Files (x86)\a.exe", Folder::ProgramFiles),
+            (r"\Windows\System32\a.exe", Folder::Windows),
+            (r"\uSERS\BOB\dOWNLOADS\a.exe", Folder::Downloads),
+            (r"\WINDOWS\TEMP\a.exe", Folder::Temp),
+            (r"\Users\a.exe", Folder::Other),
+            (r"\a.exe", Folder::Other),
+            (r"\Program Files (x86)x\a.exe", Folder::Other),
+            (r"\Windowsx\a.exe", Folder::Other),
+        ];
+
+        for (path, expected) in cases {
+            let names: Vec<NtfsName> = path
+                .split('\\')
+                .skip(1)
+                .map(|s| NtfsName::from_units(&s.encode_utf16().collect::<Vec<_>>()))
+                .collect();
+            let segments: Vec<&NtfsName> = names.iter().collect();
+            assert_eq!(folder(&segments), expected, "{path}");
+        }
+    }
+
+    #[test]
+    fn an_entry_with_a_resolved_path_has_its_folder_and_one_without_has_none() {
+        let entries = [
+            entry(5, 5, "."),
+            entry(6, 5, "Windows"),
+            entry(40, 6, "a.exe"),
+            entry(41, 77, "lost.exe"),
+        ];
+
+        let folders: Vec<Folder> = rows(&entries, &[], None, None, None)
+            .map(|r| r.folder)
+            .collect();
+
+        assert_eq!(
+            folders,
+            [
+                Folder::Other,
+                Folder::Other,
+                Folder::Windows,
+                Folder::NoPath
+            ]
+        );
     }
 
     #[test]
@@ -554,6 +683,29 @@ mod tests {
 
         assert_eq!(with, [Some(true), Some(false), Some(false)]);
         assert_eq!(without, [None; 3]);
+    }
+
+    #[test]
+    fn a_usn_event_has_the_folder_of_its_directory_and_name() {
+        let mut root = entry(5, 5, ".");
+        root.is_dir = true;
+        let mut windows = entry(6, 5, "Windows");
+        windows.is_dir = true;
+        let entries = [root, windows];
+        let records = [
+            usn_event("a.exe", 6),
+            usn_event("b.exe", 77),
+            usn_parse::Record::Diagnostic(usn_parse::Diagnostic {
+                code: usn_parse::DiagCode::Malformed,
+                offset: 0,
+            }),
+        ];
+
+        let folders: Vec<Option<Folder>> = usn_rows(&entries, &records, None, None, None)
+            .map(|r| r.folder)
+            .collect();
+
+        assert_eq!(folders, [Some(Folder::Windows), Some(Folder::NoPath), None]);
     }
 
     #[test]

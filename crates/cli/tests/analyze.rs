@@ -81,13 +81,13 @@ fn analyze_writes_one_csv_row_per_record_with_paths() -> TestResult {
     assert!(status.success());
     assert_eq!(
         std::fs::read_to_string(&csv).unwrap_or_default(),
-        "entry,sequence,in_use,name,path,path_state,baseline,findings,si_created,fn_created,diagnostics,source,usn,reasons,event_time,deleted,seen,streams,hints,in_window\n\
-         0,1,true,$MFT,\\$MFT,resolved,,,2019-04-17T18:40:00.0000000Z,1601-01-01T00:00:00.0000000Z,,mft,,,,false,mft,,si_zero_subseconds,\n\
-         5,1,true,.,\\,resolved,,,2019-04-17T18:40:00.0000000Z,1601-01-01T00:00:00.0000000Z,,mft,,,,false,mft,,si_zero_subseconds,\n\
-         6,1,true,Users,\\Users,resolved,,,2019-04-17T18:40:00.0000000Z,1601-01-01T00:00:00.0000000Z,,mft,,,,false,mft,,si_zero_subseconds,\n\
-         7,1,true,a.txt,\\Users\\a.txt,resolved,,,2019-04-17T18:40:00.0000000Z,1601-01-01T00:00:00.0000000Z,,mft,,,,false,mft,,si_zero_subseconds,\n\
-         8,1,true,old.txt,,unknown,,,2019-04-17T18:40:00.0000000Z,1601-01-01T00:00:00.0000000Z,,mft,,,,false,mft,,si_zero_subseconds,\n\
-         9,0,false,,,unknown,,,,,bad_signature,mft,,,,true,mft,,,\n"
+        "entry,sequence,in_use,name,path,path_state,baseline,findings,si_created,fn_created,diagnostics,source,usn,reasons,event_time,deleted,seen,streams,hints,in_window,folder\n\
+         0,1,true,$MFT,\\$MFT,resolved,,,2019-04-17T18:40:00.0000000Z,1601-01-01T00:00:00.0000000Z,,mft,,,,false,mft,,si_zero_subseconds,,other\n\
+         5,1,true,.,\\,resolved,,,2019-04-17T18:40:00.0000000Z,1601-01-01T00:00:00.0000000Z,,mft,,,,false,mft,,si_zero_subseconds,,other\n\
+         6,1,true,Users,\\Users,resolved,,,2019-04-17T18:40:00.0000000Z,1601-01-01T00:00:00.0000000Z,,mft,,,,false,mft,,si_zero_subseconds,,other\n\
+         7,1,true,a.txt,\\Users\\a.txt,resolved,,,2019-04-17T18:40:00.0000000Z,1601-01-01T00:00:00.0000000Z,,mft,,,,false,mft,,si_zero_subseconds,,other\n\
+         8,1,true,old.txt,,unknown,,,2019-04-17T18:40:00.0000000Z,1601-01-01T00:00:00.0000000Z,,mft,,,,false,mft,,si_zero_subseconds,,no_path\n\
+         9,0,false,,,unknown,,,,,bad_signature,mft,,,,true,mft,,,,no_path\n"
     );
     assert_no_temporary_outputs(&dir)?;
     Ok(())
@@ -1415,7 +1415,7 @@ fn same_input_with_usn_gives_byte_identical_outputs() -> TestResult {
 
     let first = run(1)?;
     assert_eq!(run(2)?, first);
-    assert!(first.0.ends_with(b"unsupported_version,usn,,,,,,,,\n")); // the V4 row comes last
+    assert!(first.0.ends_with(b"unsupported_version,usn,,,,,,,,,\n")); // the V4 row comes last
     Ok(())
 }
 
@@ -2483,5 +2483,71 @@ fn with_a_window_the_html_lists_only_findings_in_it_and_is_reproducible() -> Tes
         data["summary"]["window"],
         serde_json::json!({"from": "2026-10-02T12:00:00", "to": "2026-10-02", "tz": "+00:00"})
     );
+    Ok(())
+}
+
+#[test]
+fn a_file_in_a_users_downloads_is_in_the_downloads_folder_everywhere() -> TestResult {
+    let dir = scratch("a_file_in_a_users_downloads_is_in_the_downloads_folder")?;
+    let (mft, csv, html) = (dir.join("MFT"), dir.join("out.csv"), dir.join("out.html"));
+    let directory = |entry: u32, parent: u64, name: &str| {
+        record_with_flags(
+            1024,
+            3, // in use, directory
+            entry,
+            &[
+                standard_information(),
+                file_name_with(parent, &u16s(name), 1, 0),
+            ],
+        )
+    };
+    let mut volume = usn_volume_mft();
+    volume.extend(directory(7, 6 | (1 << 48), "bob"));
+    volume.extend(directory(8, 7 | (1 << 48), "Downloads"));
+    volume.extend(record(
+        1024,
+        true,
+        9,
+        &[
+            standard_information(),
+            file_name_with(8 | (1 << 48), &u16s("a.exe"), 1, 0),
+        ],
+    ));
+    std::fs::write(&mft, volume)?;
+    let rules = rules_dir(
+        &dir,
+        "rules",
+        "title: Exe\nid: exe\nlevel: low\nlogsource:\n  product: windows\n  category: file_event\ndetection:\n  sel:\n    TargetFilename|endswith: '.exe'\n  condition: sel\n",
+    )?;
+
+    let status = tool()
+        .args(["analyze", "-i"])
+        .arg(&mft)
+        .arg("--rules")
+        .arg(&rules)
+        .arg("--csv")
+        .arg(&csv)
+        .arg("-o")
+        .arg(&html)
+        .status()?;
+
+    assert!(status.success());
+    let folders: Vec<String> = csv_rows(&std::fs::read_to_string(&csv)?)
+        .iter()
+        .map(|r| format!("{}|{}", r[3], r[20]))
+        .collect();
+    assert_eq!(
+        folders,
+        [
+            "$MFT|other",
+            ".|other",
+            "Users|other",
+            "bob|other",
+            "Downloads|user_profile",
+            "a.exe|downloads",
+        ]
+    );
+    let data = report_data(&std::fs::read_to_string(&html)?)?;
+    assert_eq!(data["findings"][0]["folder"], "downloads");
     Ok(())
 }

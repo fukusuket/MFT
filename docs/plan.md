@@ -136,7 +136,7 @@ Goal: add `$J` to the same end-to-end path: USN events with their paths at the t
 - [x] **ADR: viewer build** ([ADR 0020](adr/0020-viewer-build.md): plain JS on the current template, DOM virtual scroll; research in [research/viewer.md](research/viewer.md))
   - Done when: ADR accepted, including its dependency and supply-chain controls (H2).
   - Out of scope: the viewer code.
-- [ ] **P2-9a Folder category** (`analyze`, `report`)
+- [x] **P2-9a Folder category** (`analyze`, `report`)
   - Done when: each `$MFT` and USN row carries a `folder` category, written to CSV/JSONL (last column) and to HTML finding and outside-baseline items. It is the first match, comparing whole path segments case-insensitively (ASCII), in this order:
 
     | Folder | Path |
