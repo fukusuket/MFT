@@ -2386,8 +2386,11 @@ fn a_bad_window_fails_with_a_message_and_writes_nothing() -> TestResult {
     let (mft, csv) = (dir.join("MFT"), dir.join("out.csv"));
     std::fs::write(&mft, window_volume_mft())?;
     let _ = std::fs::remove_file(&csv); // from an earlier run
-    let cases: [(&[&str], &str); 8] = [
+    let cases: [(&[&str], &str); 11] = [
         (&["--from", "2026-02-30"], "--from \"2026-02-30\""),
+        (&["--from", "2026-1-2"], "--from \"2026-1-2\""),
+        (&["--from", "02026-10-02"], "--from \"02026-10-02\""),
+        (&["--to", "2026-10-02T1:2:3"], "--to \"2026-10-02T1:2:3\""),
         (&["--from", "2026/10/02"], "--from \"2026/10/02\""),
         (
             &["--to", "2026-10-02T24:00:00"],

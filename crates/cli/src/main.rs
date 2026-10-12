@@ -309,19 +309,28 @@ fn window(
 /// `YYYY-MM-DD` or `YYYY-MM-DDTHH:MM:SS` in UTC, and its length in 100 ns ticks (a day or a
 /// second).
 fn parse_time(text: &str, flag: &str) -> anyhow::Result<(Filetime, u64)> {
-    let fields = |text: &str, separator: char| -> Option<(u64, u64, u64)> {
-        let mut parts = text.split(separator).map(|part| {
-            (!part.is_empty() && part.bytes().all(|b| b.is_ascii_digit()))
+    // Three fields of exactly `widths` digits each.
+    let fields = |text: &str, separator: char, widths: [usize; 3]| -> Option<(u64, u64, u64)> {
+        let parts: Vec<&str> = text.split(separator).collect();
+        let [a, b, c] = parts.as_slice() else {
+            return None;
+        };
+        let field = |part: &str, width: usize| {
+            (part.len() == width && part.bytes().all(|b| b.is_ascii_digit()))
                 .then(|| part.parse::<u64>().ok())
                 .flatten()
-        });
-        let fields = (parts.next()??, parts.next()??, parts.next()??);
-        parts.next().is_none().then_some(fields)
+        };
+        Some((
+            field(a, widths[0])?,
+            field(b, widths[1])?,
+            field(c, widths[2])?,
+        ))
     };
+    let date = |text| fields(text, '-', [4, 2, 2]);
     let parsed = match text.split_once('T') {
-        None => fields(text, '-').map(|date| (date, (0, 0, 0), 86_400)),
-        Some((date, time)) => fields(date, '-')
-            .zip(fields(time, ':'))
+        None => date(text).map(|date| (date, (0, 0, 0), 86_400)),
+        Some((d, time)) => date(d)
+            .zip(fields(time, ':', [2, 2, 2]))
             .map(|(d, t)| (d, t, 1)),
     };
     parsed
