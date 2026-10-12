@@ -1,4 +1,3 @@
-[package]
 name = "cli"
 description = "Command-line entry point"
 version.workspace = true
