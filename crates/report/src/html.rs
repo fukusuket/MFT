@@ -1013,9 +1013,10 @@ mod tests {
         for raw in ["<script>alert(1)", "=cmd|", "\u{7}", "\u{202E}"] {
             assert!(!html.contains(raw), "{raw:?} is in the HTML");
         }
+        let (head, tail) = page();
         assert_eq!(
             html.matches("</script>").count(),
-            TEMPLATE.matches("</script>").count()
+            head.matches("</script>").count() + tail.matches("</script>").count()
         );
         let data = decode(payload(&html)?)?;
         let paths: Vec<&str> = data["outside"]
@@ -1039,6 +1040,11 @@ mod tests {
 
     #[test]
     fn template_only_builds_markup_through_the_dom_and_loads_nothing() {
+        let (head, tail) = page();
+        let page = format!("{head}{tail}");
+        assert_eq!(page.matches("__VIEWER__").count(), 0);
+        assert_eq!(page.matches(VIEWER).count(), 1);
+        assert!(!VIEWER.to_ascii_lowercase().contains("</script"));
         for banned in [
             "innerHTML",
             "outerHTML",
@@ -1051,9 +1057,9 @@ mod tests {
             "http://",
             "https://",
         ] {
-            assert!(!TEMPLATE.contains(banned), "template contains {banned:?}");
+            assert!(!page.contains(banned), "the page contains {banned:?}");
         }
-        assert!(TEMPLATE.contains(
+        assert!(page.contains(
             r#"<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'">"#
         ));
     }
