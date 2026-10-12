@@ -680,6 +680,7 @@ mod tests {
         ];
         let mut deleted = dir(61, 6, "b.txt");
         deleted.in_use = false;
+        deleted.file_ref = FileRef::from_raw(61 | (2 << 48)); // freeing bumped the sequence
         let mut entries = usn_tree();
         entries.extend([file, deleted]);
         let records = vec![

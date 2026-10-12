@@ -64,12 +64,12 @@ Facts shown next to findings, never used to rank them: baseline status, path-res
 
 | Fact | `$MFT` row | USN row |
 |---|---|---|
-| `deleted` | Not in use | The `$MFT` has no in-use entry with the event's entry and sequence |
-| `seen` | `both` if `$J` has an event with its entry and sequence, else `mft` | `both` if the `$MFT` has that entry and sequence, else `usn` |
+| `deleted` | Not in use | The `$MFT` has no in-use entry for the event's file |
+| `seen` | `both` if `$J` has an event for its file, else `mft` | `both` if the `$MFT` has an entry for that file, else `usn` |
 | `streams` | Names of named `$DATA` attributes (ADS, `Zone.Identifier` included) | — |
 | `hints` | `si_before_fn` (`$SI` created < shown name's `$FN` created), `si_zero_subseconds` (`$SI` created) | — |
 
-Owner SID (`$SDS`) comes later.
+An entry's file is its entry and sequence number; for a deleted entry, the sequence number before the delete (NTFS bumps it on free, as Rewind assumes). `streams` and `hints` come from the `$MFT` and are empty on USN rows. Owner SID (`$SDS`) comes later.
 
 ## Crates
 

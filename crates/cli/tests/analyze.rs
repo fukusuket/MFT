@@ -2064,7 +2064,7 @@ fn analyze_refuses_a_skipped_rules_list_that_is_its_input_or_another_output() ->
 }
 
 /// `\Users` with: `kept.txt` (also in `$J`), `ads.txt` (a `Zone.Identifier` stream),
-/// `old.txt` (deleted, also in `$J`) and `stomped.txt` (`$SI` created a whole second before
+/// `old.txt` (deleted, in `$J` under its sequence before the delete) and `stomped.txt` (`$SI` created a whole second before
 /// `$FN` created).
 fn facts_volume_mft() -> Vec<u8> {
     let users = 6 | (1 << 48);
@@ -2088,7 +2088,9 @@ fn facts_volume_mft() -> Vec<u8> {
         later,
         vec![data(&u16s("Zone.Identifier"), b"[ZoneTransfer]", 2)],
     ));
-    mft.extend(file(42, false, "old.txt", later, vec![]));
+    let mut old = file(42, false, "old.txt", later, vec![]);
+    old[0x10] = 2; // freeing the record bumped its sequence number
+    mft.extend(old);
     mft.extend(file(
         43,
         true,

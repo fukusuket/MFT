@@ -74,7 +74,7 @@ pub fn rows<'a>(
             resolution,
             baseline: status,
             findings,
-            seen: if in_journal.contains(&(entry.file_ref.entry(), entry.file_ref.sequence())) {
+            seen: if file_of(entry).is_some_and(|file| in_journal.contains(&file)) {
                 Seen::Both
             } else {
                 Seen::Mft
@@ -97,6 +97,19 @@ fn hints(entry: &Entry) -> Vec<Hint> {
         hints.push(Hint::SiZeroSubseconds);
     }
     hints
+}
+
+/// The (entry, sequence) of the file the entry describes, as `$J` names it. NTFS bumps the
+/// sequence number when it frees a record, so a deleted record describes the previous one
+/// (as in Rewind); a free record with sequence 0 describes none.
+fn file_of(entry: &Entry) -> Option<(u64, u16)> {
+    let sequence = entry.file_ref.sequence();
+    let sequence = if entry.in_use {
+        sequence
+    } else {
+        sequence.checked_sub(1)?
+    };
+    Some((entry.file_ref.entry(), sequence))
 }
 
 /// FILETIME counts 100 ns ticks.
@@ -126,7 +139,7 @@ pub fn usn_rows<'a>(
     let directories = Resolver::new(entries).rewind(records);
     let by_file: HashMap<(u64, u16), &Entry> = entries
         .iter()
-        .map(|entry| ((entry.file_ref.entry(), entry.file_ref.sequence()), entry))
+        .filter_map(|entry| Some((file_of(entry)?, entry)))
         .collect();
     // A rename's old path by file (entry, sequence), until the handle closes.
     let mut old_paths: HashMap<(u64, u16), String> = HashMap::new();
@@ -337,6 +350,35 @@ mod tests {
     }
 
     #[test]
+    fn a_deleted_entry_is_matched_under_the_sequence_before_its_delete() {
+        let mut deleted = entry(61, 5, "b.txt");
+        deleted.in_use = false;
+        deleted.file_ref = FileRef::from_raw(61 | (2 << 48));
+        let mut never = entry(62, 5, "c.txt");
+        never.in_use = false;
+        never.file_ref = FileRef::from_raw(62); // free with sequence 0: no previous file
+        let entries = [entry(5, 5, "."), deleted, never];
+        let event = |file: u64| {
+            let mut record = usn_event("x", 5);
+            if let usn_parse::Record::Event(e) = &mut record {
+                e.file = FileRef::from_raw(file);
+            }
+            record
+        };
+        let records = [event(61 | (1 << 48)), event(62), event(62 | (0xFFFF << 48))];
+
+        let seen: Vec<Seen> = rows(&entries, &records, None, None)
+            .map(|r| r.seen)
+            .collect();
+        let found: Vec<Option<u64>> = usn_rows(&entries, &records, None, None)
+            .map(|r| r.entry.map(|e| e.file_ref.entry()))
+            .collect();
+
+        assert_eq!(seen, [Seen::Mft, Seen::Both, Seen::Mft]);
+        assert_eq!(found, [Some(61), None, None]);
+    }
+
+    #[test]
     fn si_created_before_fn_created_or_without_sub_seconds_are_hints() {
         let times = |si: Option<u64>, fn_created: u64| {
             let mut e = entry(40, 5, "a.txt");
@@ -370,6 +412,7 @@ mod tests {
     fn a_usn_row_carries_the_mft_entry_with_its_entry_and_sequence() {
         let mut deleted = entry(61, 5, "b.txt");
         deleted.in_use = false;
+        deleted.file_ref = FileRef::from_raw(61 | (2 << 48)); // freeing bumped the sequence
         let entries = [entry(5, 5, "."), entry(60, 5, "a.txt"), deleted];
         let event = |file: u64| {
             let mut record = usn_event("x", 5);
