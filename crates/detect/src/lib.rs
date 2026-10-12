@@ -6,6 +6,20 @@ use resolve::Resolution;
 use sigma::Event;
 use usn_parse::UsnEvent;
 
+/// Every logsource and field the events below can carry: rules needing anything else are skipped.
+pub const EMITTED: sigma::Emitted = sigma::Emitted {
+    product: "windows",
+    categories: &["file_event", "file_delete", "file_rename", "file_change"],
+    services: &["baseline_outside"],
+    fields: &[
+        "TargetFilename",
+        "SourceFilename",
+        "CreationUtcTime",
+        "FnCreationUtcTime",
+        "UtcTime",
+    ],
+};
+
 /// The `file_event` for a file, or `None` when there is nothing to match on.
 pub fn file_event(
     entry: &Entry,

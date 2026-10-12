@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use rsigma_eval::Engine;
 use rsigma_eval::event::EventValue;
 use rsigma_eval::explain::explain_rule;
-use rsigma_parser::{LogSource, parse_sigma_yaml};
+use rsigma_parser::{LogSource, SigmaRule, parse_sigma_yaml};
 
 /// Fatal problems loading rules.
 #[derive(Debug, thiserror::Error)]
@@ -50,6 +50,15 @@ pub struct Finding {
     pub explain: String,
 }
 
+/// What the caller can emit; a rule that needs anything else could never match and is skipped.
+#[derive(Debug, Clone, Copy)]
+pub struct Emitted {
+    pub product: &'static str,
+    pub categories: &'static [&'static str],
+    pub services: &'static [&'static str],
+    pub fields: &'static [&'static str],
+}
+
 /// A rule that was not loaded, and why.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Skipped {
@@ -82,7 +91,7 @@ impl std::fmt::Debug for Rules {
 impl Rules {
     /// Loads every `.yml`/`.yaml` file under each of `dirs`: the directories in the given order,
     /// the files under each in path order.
-    pub fn load(dirs: &[&Path]) -> Result<Self, Error> {
+    pub fn load(dirs: &[&Path], emitted: &Emitted) -> Result<Self, Error> {
         let mut files = Vec::new();
         for dir in dirs {
             let mut under = Vec::new();
@@ -128,6 +137,10 @@ impl Rules {
                     skipped.push(skip(None, Some(rule.title), "no id"));
                     continue;
                 };
+                if let Some(reason) = not_emitted(&rule, emitted) {
+                    skipped.push(skip(Some(id.clone()), Some(rule.title), &reason));
+                    continue;
+                }
                 if authors.insert(id.clone(), rule.author.clone()).is_some() {
                     return Err(rule_error(&format!(
                         "rule id {id:?} is used more than once"
@@ -211,6 +224,21 @@ impl Rules {
     }
 }
 
+/// Why `rule` could never match what is emitted; `None` if it can. A logsource attribute the
+/// rule leaves out matches anything.
+fn not_emitted(rule: &SigmaRule, emitted: &Emitted) -> Option<String> {
+    let source = &rule.logsource;
+    let checks = [
+        ("product", &source.product, &[emitted.product][..]),
+        ("category", &source.category, emitted.categories),
+        ("service", &source.service, emitted.services),
+    ];
+    checks.into_iter().find_map(|(name, value, known)| {
+        let value = value.as_deref()?;
+        (!known.contains(&value)).then(|| format!("logsource not emitted: {name}={value}"))
+    })
+}
+
 /// How a rule file is named in output: the rule directory's name, then the path below it, joined
 /// by `/`. The directories above it are the analyst's and stay out of the report.
 fn shown(dir: &Path, file: &Path) -> String {
@@ -282,6 +310,55 @@ impl rsigma_eval::event::Event for Event {
 mod tests {
     use super::*;
 
+    const EMITTED: Emitted = Emitted {
+        product: "windows",
+        categories: &["file_event"],
+        services: &["baseline_outside"],
+        fields: &["TargetFilename"],
+    };
+
+    #[test]
+    fn a_rule_for_a_logsource_never_emitted_is_skipped() -> Result<(), Error> {
+        let source = |id: &str, from: &str, to: &str| rule(id, id, "").replace(from, to);
+        let dir = rule_dir(
+            "logsource",
+            &[
+                (
+                    "a.yml",
+                    &source(
+                        "rule-a",
+                        "category: file_event",
+                        "category: process_creation",
+                    ),
+                ),
+                (
+                    "b.yml",
+                    &source("rule-b", "product: windows", "product: linux"),
+                ),
+                ("c.yml", &rule("rule-c", "C", "  service: security\n")),
+                (
+                    "d.yml",
+                    &rule("rule-d", "D", "  service: baseline_outside\n"),
+                ),
+                ("e.yml", &source("rule-e", "  category: file_event\n", "")),
+            ],
+        );
+
+        let rules = Rules::load(&[dir.as_path()], &EMITTED)?;
+
+        let reasons: Vec<&str> = rules.skipped().iter().map(|s| s.reason.as_str()).collect();
+        assert_eq!(
+            reasons,
+            [
+                "logsource not emitted: category=process_creation",
+                "logsource not emitted: product=linux",
+                "logsource not emitted: service=security",
+            ]
+        );
+        assert_eq!(rules.ids, ["rule-d", "rule-e"]);
+        Ok(())
+    }
+
     /// A fresh directory holding the given files.
     pub(crate) fn rule_dir(test: &str, files: &[(&str, &str)]) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("sigma-tests-{}-{test}", std::process::id()));
@@ -312,7 +389,7 @@ mod tests {
             ],
         );
 
-        let rules = Rules::load(&[dir.as_path()])?;
+        let rules = Rules::load(&[dir.as_path()], &EMITTED)?;
 
         assert_eq!(rules.ids, ["rule-a", "rule-b"]);
         Ok(())
@@ -329,7 +406,7 @@ mod tests {
             ],
         );
 
-        let rules = Rules::load(&[dir.as_path()])?;
+        let rules = Rules::load(&[dir.as_path()], &EMITTED)?;
 
         assert_eq!(rules.ids, ["rule-c", "rule-z", "rule-b"]);
         Ok(())
@@ -341,8 +418,8 @@ mod tests {
         let second = rule_dir("dirs-2", &[("a.yml", &rule("rule-a", "A", ""))]);
         let again = rule_dir("dirs-3", &[("b.yml", &rule("rule-z", "Z again", ""))]);
 
-        let rules = Rules::load(&[first.as_path(), second.as_path()])?;
-        let result = Rules::load(&[first.as_path(), again.as_path()]);
+        let rules = Rules::load(&[first.as_path(), second.as_path()], &EMITTED)?;
+        let result = Rules::load(&[first.as_path(), again.as_path()], &EMITTED);
 
         assert_eq!(rules.ids, ["rule-z", "rule-a"]);
         assert!(
@@ -362,7 +439,7 @@ mod tests {
             ],
         );
 
-        assert_eq!(Rules::load(&[dir.as_path()])?.count(), 2);
+        assert_eq!(Rules::load(&[dir.as_path()], &EMITTED)?.count(), 2);
         Ok(())
     }
 
@@ -378,7 +455,7 @@ mod tests {
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_default();
 
-        let rules = Rules::load(&[dir.as_path()])?;
+        let rules = Rules::load(&[dir.as_path()], &EMITTED)?;
 
         assert_eq!(rules.ids, ["rule-a"]);
         assert_eq!(
@@ -408,7 +485,7 @@ mod tests {
             ],
         );
 
-        let rules = Rules::load(&[dir.as_path()])?;
+        let rules = Rules::load(&[dir.as_path()], &EMITTED)?;
 
         let skipped: Vec<(&str, bool)> = rules
             .skipped()
@@ -433,7 +510,7 @@ mod tests {
             &[("a.yml", &rule("rule-a", "A", "")), ("b.yml", &odd)],
         );
 
-        let rules = Rules::load(&[dir.as_path()])?;
+        let rules = Rules::load(&[dir.as_path()], &EMITTED)?;
 
         let reasons: Vec<&str> = rules.skipped().iter().map(|s| s.reason.as_str()).collect();
         assert_eq!(rules.ids, ["rule-a"]);
@@ -456,7 +533,7 @@ mod tests {
     #[test]
     fn a_matching_rule_gives_a_finding_with_id_title_level_and_author() -> Result<(), Error> {
         let dir = rule_dir("finding", &[("a.yml", &rule("rule-a", "Executable", ""))]);
-        let rules = Rules::load(&[dir.as_path()])?;
+        let rules = Rules::load(&[dir.as_path()], &EMITTED)?;
 
         let hit = rules.evaluate(&event(r"C:\x.exe", None));
         let miss = rules.evaluate(&event(r"C:\x.txt", None));
@@ -490,7 +567,7 @@ mod tests {
             "service",
             &[("a.yml", &rule("rule-any", "Any", "")), ("b.yml", &outside)],
         );
-        let rules = Rules::load(&[dir.as_path()])?;
+        let rules = Rules::load(&[dir.as_path()], &EMITTED)?;
 
         let ids = |service| -> Vec<String> {
             let mut ids: Vec<String> = rules
@@ -510,7 +587,7 @@ mod tests {
     #[test]
     fn explain_names_the_matched_field_and_value() -> Result<(), Box<dyn std::error::Error>> {
         let dir = rule_dir("explain", &[("a.yml", &rule("rule-a", "Executable", ""))]);
-        let rules = Rules::load(&[dir.as_path()])?;
+        let rules = Rules::load(&[dir.as_path()], &EMITTED)?;
 
         let findings = rules.evaluate(&event(r"C:\Windows\x.exe", None));
 
@@ -543,7 +620,7 @@ mod tests {
                 ("c.yml", &at("rule-a", "high")),
             ],
         );
-        let rules = Rules::load(&[dir.as_path()])?;
+        let rules = Rules::load(&[dir.as_path()], &EMITTED)?;
 
         let ids: Vec<String> = rules
             .evaluate(&event(r"C:\x.exe", None))
@@ -565,7 +642,7 @@ mod tests {
             ],
         );
 
-        let result = Rules::load(&[dir.as_path()]);
+        let result = Rules::load(&[dir.as_path()], &EMITTED);
 
         assert!(
             matches!(&result, Err(Error::Rule(file, why)) if file.ends_with("b.yml") && why.contains("same")),
@@ -581,7 +658,7 @@ mod tests {
         let doc = format!("{}---\n{correlation}---\n{filter}", rule("rule-a", "A", ""));
         let dir = rule_dir("corr", &[("x.yml", &doc)]);
 
-        let rules = Rules::load(&[dir.as_path()])?;
+        let rules = Rules::load(&[dir.as_path()], &EMITTED)?;
 
         let skipped: Vec<(Option<&str>, Option<&str>, &str)> = rules
             .skipped()

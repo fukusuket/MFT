@@ -576,8 +576,8 @@ fn sample_rules_find_what_they_describe() -> TestResult {
 }
 
 #[test]
-fn a_rule_without_id_fails_with_a_message_not_a_panic() -> TestResult {
-    let dir = scratch("a_rule_without_id_fails_with_a_message_not_a_panic")?;
+fn a_rule_without_id_is_skipped_and_the_run_succeeds() -> TestResult {
+    let dir = scratch("a_rule_without_id_is_skipped_and_the_run_succeeds")?;
     let rules = dir.join("rules");
     std::fs::create_dir_all(&rules)?;
     std::fs::write(
@@ -596,12 +596,8 @@ fn a_rule_without_id_fails_with_a_message_not_a_panic() -> TestResult {
         .output()?;
 
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert_eq!(out.status.code(), Some(1), "{stderr}");
-    assert!(
-        stderr.contains("no_id.yml") && stderr.contains("no id"),
-        "{stderr}"
-    );
-    assert!(!stderr.contains("panicked"), "{stderr}");
+    assert!(out.status.success(), "{stderr}");
+    assert!(dir.join("out.csv").exists());
     Ok(())
 }
 

@@ -15,6 +15,7 @@ path = "src/main.rs"
 [dependencies]
 analyze = { path = "../analyze" }
 baseline = { path = "../baseline" }
+detect = { path = "../detect" }
 mft-parse = { path = "../mft-parse" }
 report = { path = "../report" }
 sigma = { path = "../sigma" }
