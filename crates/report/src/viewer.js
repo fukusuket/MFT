@@ -105,6 +105,14 @@ const viewer = (function () {
     return { first, last: Math.min(total, first + fit + 1), top: capped ? scrollTop : first * rowHeight };
   }
 
+  const LEVELS = ["critical", "high", "medium", "low", "informational", "none"];
+  const FOLDERS = [
+    "public", "downloads", "desktop", "documents", "temp", "appdata", "user_profile",
+    "programdata", "program_files", "windows", "other", "no_path",
+  ];
+  const ROW_HEIGHT = 44; // two lines: the row and its facts
+  const SPACER_CAP = 8000000; // below Firefox's element height limit (ADR 0020)
+
   // Draws the report into #app and follows the URL hash. Every value is set with textContent:
   // evidence never becomes markup.
   function render(document, window) {
@@ -143,16 +151,133 @@ const viewer = (function () {
       draw();
     });
 
+    const drawn = [];
     function draw() {
       const shown = state.tab in screens ? state.tab : "summary";
       for (const [key, screen] of Object.entries(screens)) {
         screen.node.style.display = key === shown ? "" : "none";
         screen.tab.className = key === shown ? "tab selected" : "tab";
       }
+      drawn.forEach((redraw) => redraw());
+    }
+
+    // A filter bar; each control writes its key of the state and reads it back on every draw.
+    function filters(node, specs) {
+      const bar = node.appendChild(el("div", undefined, "filters"));
+      const controls = specs.map(([key, label, options]) => {
+        const field = bar.appendChild(el("label", label + " "));
+        let control;
+        if (options) {
+          control = field.appendChild(el("select", undefined, "filter-" + key));
+          for (const [value, text] of options) {
+            const option = control.appendChild(el("option", text));
+            option.value = value;
+          }
+        } else {
+          control = field.appendChild(el("input", undefined, "filter-" + key));
+          control.setAttribute("placeholder", key === "q" ? "path contains" : "YYYY-MM-DD[THH:MM:SS]");
+        }
+        control.addEventListener(options ? "change" : "input", () => go({ ...state, [key]: control.value }));
+        return [key, control];
+      });
+      drawn.push(() => {
+        for (const [key, control] of controls) {
+          if (control.value !== state[key]) control.value = state[key];
+          if (key === "from" || key === "to") {
+            control.className = "filter-" + key + (validTime(state[key]) ? "" : " invalid");
+          }
+        }
+      });
+    }
+
+    // A virtual-scroll list: only the rows in view exist in the DOM (ADR 0020).
+    function list(node, columns, drawRow) {
+      const head = node.appendChild(el("div", undefined, "list-head"));
+      columns.forEach((c) => head.appendChild(el("span", c)));
+      const viewport = node.appendChild(el("div", undefined, "viewport"));
+      const spacer = viewport.appendChild(el("div", undefined, "spacer"));
+      const block = spacer.appendChild(el("div", undefined, "block"));
+      let rows = [];
+      function paint() {
+        const r = rowRange(viewport.scrollTop, viewport.clientHeight, ROW_HEIGHT, rows.length, SPACER_CAP);
+        block.style.top = r.top + "px";
+        block.replaceChildren(...rows.slice(r.first, r.last).map(drawRow));
+      }
+      viewport.addEventListener("scroll", paint);
+      return (next) => {
+        rows = next;
+        spacer.style.height = Math.min(rows.length * ROW_HEIGHT, SPACER_CAP) + "px";
+        paint();
+      };
+    }
+
+    function line(cells) {
+      const div = el("div", undefined, "line");
+      cells.forEach(([text, className]) => div.appendChild(el("span", text, className)));
+      return div;
     }
 
     summary(screens.summary.node);
+    findings(screens.findings.node);
     draw();
+
+    function findings(node) {
+      const rules = new Map(data.findings.map((f) => [f.id, f.title]));
+      filters(node, [
+        ["level", "Level", [["", "all"], ...LEVELS.map((l) => [l, l])]],
+        ["rule", "Rule", [["", "all"], ...[...rules].sort((a, b) => (a[0] < b[0] ? -1 : 1)).map(([id, t]) => [id, t])]],
+        ["folder", "Folder", [["", "all"], ...FOLDERS.map((f) => [f, f])]],
+        ["from", "From"],
+        ["to", "To"],
+        ["q", "Search"],
+      ]);
+      const count = node.appendChild(el("p", undefined, "count"));
+      const show = list(node, ["Level", "Time (UTC)", "Path", "Folder", "Rule"], (f) => {
+        const row = el("div", undefined, "row");
+        row.style.height = ROW_HEIGHT + "px";
+        row.appendChild(
+          line([
+            [f.level, "level level-" + f.level],
+            [f.created !== null ? f.created : f.event_time, "mono"],
+            [f.path_state === "resolved" ? f.path : f.path + " (" + f.path_state + ")", "path"],
+            [f.folder],
+            [f.title],
+          ]),
+        );
+        const facts = [
+          ...(f.deleted ? ["deleted"] : []),
+          ...f.streams.map((s) => "ADS: " + s),
+          "seen: " + f.seen,
+          ...f.hints,
+        ];
+        row.appendChild(el("div", facts.join(" · "), "facts"));
+        row.addEventListener("click", () => detail(f));
+        return row;
+      });
+      const pane = node.appendChild(el("div", "Select a row to see why it matched.", "detail"));
+      function detail(f) {
+        pane.replaceChildren(
+          el("h3", f.title),
+          el("p", "Rule " + f.id + " · level " + f.level + " · author " + (f.author === null ? "unknown" : f.author)),
+          el("p", "MFT entry " + f.entry + (f.usn === null ? "" : " · USN " + f.usn), "mono"),
+          el("pre", pretty(f.explain)),
+        );
+      }
+      drawn.push(() => {
+        const shown = data.findings.filter((f) => matchFinding(f, state));
+        count.textContent = shown.length + " of " + data.findings.length;
+        show(shown);
+      });
+    }
+
+    // The explain trace is JSON; show it indented, or as is if it doesn't parse.
+    function pretty(text) {
+      try {
+        return JSON.stringify(JSON.parse(text), null, 2);
+      } catch (e) {
+        return text;
+      }
+    }
 
     function summary(node) {
       const s = data.summary;

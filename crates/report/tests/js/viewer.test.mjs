@@ -196,3 +196,38 @@ test("the URL hash chooses the tab, and the tabs change the hash", () => {
   assert.equal(window.location.hash, "#tab=findings");
   assert.deepEqual(shown(), ["findings"]);
 });
+
+test("Findings: filters change the hash, the N of M count and the rows; a row opens its detail", () => {
+  const { window, app } = open("#tab=findings&level=high");
+  const screen = app.findAll("screen").find((s) => s.getAttribute("data-screen") === "findings");
+  const count = () => screen.find("count").textContent;
+  const rows = () => screen.findAll("row");
+  const control = (name) => screen.find("filter-" + name);
+
+  assert.equal(count(), "1 of 2");
+  assert.equal(rows().length, 1);
+  assert.equal(control("level").value, "high");
+  const row = rows()[0].textContent;
+  for (const text of ["high", "2026-10-02T12:00:00.5000000Z", "\\Users\\Bob\\Downloads\\Tool.EXE", "downloads", "Tool in Downloads", "ADS: Zone.Identifier", "seen: mft"]) {
+    assert.ok(row.includes(text), `${text} in ${row}`);
+  }
+
+  control("level").value = "";
+  control("level").dispatch("change");
+  assert.equal(count(), "2 of 2");
+  assert.equal(window.location.hash, "#tab=findings");
+
+  control("q").value = "TEMP";
+  control("q").dispatch("input");
+  assert.equal(count(), "1 of 2");
+  assert.ok(rows()[0].textContent.includes("deleted"));
+  assert.ok(rows()[0].textContent.includes("\\Windows\\Temp\\x.dll (inferred)"));
+
+  control("from").value = "2026/10";
+  control("from").dispatch("input");
+  assert.equal(count(), "1 of 2");
+  assert.ok(control("from").className.includes("invalid"));
+
+  rows()[0].dispatch("click");
+  assert.ok(screen.find("detail").textContent.includes("DLL in Temp"));
+});
