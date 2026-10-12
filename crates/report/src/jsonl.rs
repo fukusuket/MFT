@@ -46,6 +46,7 @@ impl<W: Write> JsonlWriter<W> {
             seen: Some(seen_name(row.seen)),
             streams: stream_names(&entry.streams),
             hints: hint_names(&row.hints),
+            in_window: row.in_window,
         };
         self.line(&record)
     }
@@ -75,6 +76,7 @@ impl<W: Write> JsonlWriter<W> {
                     seen: None,
                     streams: Vec::new(),
                     hints: Vec::new(),
+                    in_window: row.in_window,
                 });
             }
         };
@@ -98,6 +100,7 @@ impl<W: Write> JsonlWriter<W> {
             seen: Some(seen_name(usn_seen(row))),
             streams: Vec::new(),
             hints: Vec::new(),
+            in_window: row.in_window,
         };
         self.line(&record)
     }
@@ -136,6 +139,7 @@ struct Record {
     seen: Option<&'static str>,
     streams: Vec<String>,
     hints: Vec<&'static str>,
+    in_window: Option<bool>,
 }
 
 /// One matched rule, most severe first (the order `sigma` returns).
@@ -173,7 +177,7 @@ mod tests {
         rules: Option<&sigma::Rules>,
     ) -> Result<String> {
         let mut w = JsonlWriter::new(Vec::new());
-        for row in analyze::rows(entries, &[], baseline, rules) {
+        for row in analyze::rows(entries, &[], baseline, rules, None) {
             w.write(&row)?;
         }
         Ok(String::from_utf8(w.finish()?)?)
@@ -229,11 +233,11 @@ mod tests {
         assert_eq!(
             jsonl_with(&[named(5, "."), full, empty], None, None)?,
             concat!(
-                r#"{"entry":5,"sequence":0,"in_use":true,"name":".","path":"\\","path_state":"resolved","baseline":null,"findings":[],"si_created":null,"fn_created":"1601-01-01T00:00:00.0000000Z","diagnostics":[],"source":"mft","usn":null,"reasons":[],"event_time":null,"deleted":false,"seen":"mft","streams":[],"hints":[]}"#,
+                r#"{"entry":5,"sequence":0,"in_use":true,"name":".","path":"\\","path_state":"resolved","baseline":null,"findings":[],"si_created":null,"fn_created":"1601-01-01T00:00:00.0000000Z","diagnostics":[],"source":"mft","usn":null,"reasons":[],"event_time":null,"deleted":false,"seen":"mft","streams":[],"hints":[],"in_window":null}"#,
                 "\n",
-                r#"{"entry":42,"sequence":3,"in_use":true,"name":"a\\\\b.txt","path":"\\a\\\\b.txt","path_state":"resolved","baseline":null,"findings":[],"si_created":"2023-11-14T17:12:46.6777888Z","fn_created":"2024-02-29T12:34:56.1234567Z","diagnostics":["fixup_mismatch"],"source":"mft","usn":null,"reasons":[],"event_time":null,"deleted":false,"seen":"mft","streams":[],"hints":["si_before_fn"]}"#,
+                r#"{"entry":42,"sequence":3,"in_use":true,"name":"a\\\\b.txt","path":"\\a\\\\b.txt","path_state":"resolved","baseline":null,"findings":[],"si_created":"2023-11-14T17:12:46.6777888Z","fn_created":"2024-02-29T12:34:56.1234567Z","diagnostics":["fixup_mismatch"],"source":"mft","usn":null,"reasons":[],"event_time":null,"deleted":false,"seen":"mft","streams":[],"hints":["si_before_fn"],"in_window":null}"#,
                 "\n",
-                r#"{"entry":43,"sequence":0,"in_use":false,"name":null,"path":null,"path_state":"unknown","baseline":null,"findings":[],"si_created":null,"fn_created":null,"diagnostics":["bad_signature","malformed"],"source":"mft","usn":null,"reasons":[],"event_time":null,"deleted":true,"seen":"mft","streams":[],"hints":[]}"#,
+                r#"{"entry":43,"sequence":0,"in_use":false,"name":null,"path":null,"path_state":"unknown","baseline":null,"findings":[],"si_created":null,"fn_created":null,"diagnostics":["bad_signature","malformed"],"source":"mft","usn":null,"reasons":[],"event_time":null,"deleted":true,"seen":"mft","streams":[],"hints":[],"in_window":null}"#,
                 "\n",
             )
         );
@@ -281,10 +285,10 @@ mod tests {
         ];
 
         let mut w = JsonlWriter::new(Vec::new());
-        for row in analyze::rows(&entries, &records, None, None) {
+        for row in analyze::rows(&entries, &records, None, None, None) {
             w.write(&row)?;
         }
-        for row in analyze::usn_rows(&entries, &records, None, None) {
+        for row in analyze::usn_rows(&entries, &records, None, None, None) {
             w.write_usn(&row)?;
         }
         let jsonl = String::from_utf8(w.finish()?)?;
@@ -424,14 +428,14 @@ mod tests {
         });
         let entries = [root];
         let mut w = JsonlWriter::new(Vec::new());
-        for row in analyze::usn_rows(&entries, &[record], None, None) {
+        for row in analyze::usn_rows(&entries, &[record], None, None, None) {
             w.write_usn(&row)?;
         }
 
         assert_eq!(
             String::from_utf8(w.finish()?)?,
             concat!(
-                r#"{"entry":60,"sequence":2,"in_use":null,"name":"a.txt","path":"\\a.txt","path_state":"resolved","baseline":null,"findings":[],"si_created":null,"fn_created":null,"diagnostics":[],"source":"usn","usn":4096,"reasons":[],"event_time":"2023-11-14T17:12:46.6777888Z","deleted":true,"seen":"usn","streams":[],"hints":[]}"#,
+                r#"{"entry":60,"sequence":2,"in_use":null,"name":"a.txt","path":"\\a.txt","path_state":"resolved","baseline":null,"findings":[],"si_created":null,"fn_created":null,"diagnostics":[],"source":"usn","usn":4096,"reasons":[],"event_time":"2023-11-14T17:12:46.6777888Z","deleted":true,"seen":"usn","streams":[],"hints":[],"in_window":null}"#,
                 "\n"
             )
         );

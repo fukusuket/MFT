@@ -9,7 +9,8 @@ use std::path::{Path, PathBuf};
 use anyhow::Context;
 use baseline::Baseline;
 use clap::{ArgGroup, Parser, Subcommand};
-use report::{CsvWriter, HtmlReport, Input, JsonlWriter, Provenance};
+use ntfs_types::Filetime;
+use report::{CsvWriter, HtmlReport, Input, JsonlWriter, Provenance, WindowText};
 use sigma::Rules;
 
 #[derive(Debug, Parser)]
@@ -46,6 +47,16 @@ enum Command {
         /// Without it no rules run.
         #[arg(long)]
         rules: Vec<PathBuf>,
+        /// Window start, `YYYY-MM-DD` or `YYYY-MM-DDTHH:MM:SS` (inclusive). The HTML report lists
+        /// only rows in the window; CSV/JSONL mark them with `in_window`.
+        #[arg(long)]
+        from: Option<String>,
+        /// Window end, `YYYY-MM-DD` (the whole day) or `YYYY-MM-DDTHH:MM:SS` (the whole second).
+        #[arg(long)]
+        to: Option<String>,
+        /// UTC offset of `--from` and `--to`, `±HH:MM`; UTC when omitted. Output times stay UTC.
+        #[arg(long, allow_hyphen_values = true)]
+        tz: Option<String>,
     },
     /// Windows baselines.
     #[command(subcommand)]
@@ -76,14 +87,16 @@ fn main() -> anyhow::Result<()> {
             jsonl,
             baseline,
             rules,
+            from,
+            to,
+            tz,
         } => analyze(
             &input,
             usn.as_deref(),
-            csv.as_deref(),
-            output.as_deref(),
-            jsonl.as_deref(),
+            (csv.as_deref(), output.as_deref(), jsonl.as_deref()),
             baseline.as_deref(),
             &rules,
+            (from.as_deref(), to.as_deref(), tz.as_deref()),
         ),
         Command::Baseline(BaselineCommand::Build { vwr, o }) => build_baseline(&vwr, &o),
     }
@@ -92,12 +105,12 @@ fn main() -> anyhow::Result<()> {
 fn analyze(
     input: &Path,
     usn: Option<&Path>,
-    csv: Option<&Path>,
-    output: Option<&Path>,
-    jsonl: Option<&Path>,
+    (csv, output, jsonl): (Option<&Path>, Option<&Path>, Option<&Path>),
     baseline: Option<&Path>,
     rules: &[PathBuf],
+    (from, to, tz): (Option<&str>, Option<&str>, Option<&str>),
 ) -> anyhow::Result<()> {
+    let window = window(from, to, tz)?;
     // Skipped rules are listed beside the CSV and JSONL outputs, or beside the HTML report when
     // it is the only output.
     let listed = |path: Option<&Path>, extension| {
@@ -172,6 +185,12 @@ fn analyze(
             baseline: baseline_name,
             rules: rules.as_ref().map_or(0, Rules::count),
             skipped_rules: rules.as_ref().map_or(0, |r| r.skipped().len()),
+            window: window.map(|window| WindowText {
+                from: from.map(str::to_string),
+                to: to.map(str::to_string),
+                tz: tz.unwrap_or("+00:00").to_string(),
+                start: window.start,
+            }),
         };
         (pending, file, HtmlReport::new(PROVENANCE, input))
     });
@@ -185,7 +204,13 @@ fn analyze(
         })
         .transpose()?;
     let in_journal = journal.as_deref().unwrap_or_default();
-    for row in analyze::rows(&entries, in_journal, baseline.as_ref(), rules.as_ref()) {
+    for row in analyze::rows(
+        &entries,
+        in_journal,
+        baseline.as_ref(),
+        rules.as_ref(),
+        window.as_ref(),
+    ) {
         if let Some((_, writer)) = &mut csv_writer {
             writer.write(&row)?;
         }
@@ -198,7 +223,13 @@ fn analyze(
     }
     if let Some(journal) = &journal {
         // After the $MFT rows, in $J order; the HTML report shows only their findings.
-        for row in analyze::usn_rows(&entries, journal, baseline.as_ref(), rules.as_ref()) {
+        for row in analyze::usn_rows(
+            &entries,
+            journal,
+            baseline.as_ref(),
+            rules.as_ref(),
+            window.as_ref(),
+        ) {
             if let Some((_, writer)) = &mut csv_writer {
                 writer.write_usn(&row)?;
             }
@@ -240,6 +271,98 @@ fn analyze(
         pending.commit()?;
     }
     Ok(())
+}
+
+/// The window `--from`, `--to` and `--tz` select, in UTC; `None` without `--from` or `--to`.
+fn window(
+    from: Option<&str>,
+    to: Option<&str>,
+    tz: Option<&str>,
+) -> anyhow::Result<Option<analyze::Window>> {
+    let offset = tz.map(parse_offset).transpose()?.unwrap_or(0);
+    let utc = |local: u64, flag: &str| {
+        local
+            .checked_add_signed(-offset)
+            .map(Filetime::from_raw)
+            .with_context(|| format!("{flag} with --tz is before 1601 in UTC"))
+    };
+    if from.is_none() && to.is_none() {
+        return Ok(None);
+    }
+    let start = from
+        .map(|text| utc(parse_time(text, "--from")?.0.raw(), "--from"))
+        .transpose()?;
+    let end = to
+        .map(|text| {
+            let (time, length) = parse_time(text, "--to")?;
+            utc(time.raw().saturating_add(length), "--to")
+        })
+        .transpose()?;
+    if let (Some(start), Some(end)) = (start, end)
+        && start >= end
+    {
+        anyhow::bail!("--from is after --to: the window holds no time");
+    }
+    Ok(Some(analyze::Window { start, end }))
+}
+
+/// `YYYY-MM-DD` or `YYYY-MM-DDTHH:MM:SS` in UTC, and its length in 100 ns ticks (a day or a
+/// second).
+fn parse_time(text: &str, flag: &str) -> anyhow::Result<(Filetime, u64)> {
+    // Three fields of exactly `widths` digits each.
+    let fields = |text: &str, separator: char, widths: [usize; 3]| -> Option<(u64, u64, u64)> {
+        let parts: Vec<&str> = text.split(separator).collect();
+        let [a, b, c] = parts.as_slice() else {
+            return None;
+        };
+        let field = |part: &str, width: usize| {
+            (part.len() == width && part.bytes().all(|b| b.is_ascii_digit()))
+                .then(|| part.parse::<u64>().ok())
+                .flatten()
+        };
+        Some((
+            field(a, widths[0])?,
+            field(b, widths[1])?,
+            field(c, widths[2])?,
+        ))
+    };
+    let date = |text| fields(text, '-', [4, 2, 2]);
+    let parsed = match text.split_once('T') {
+        None => date(text).map(|date| (date, (0, 0, 0), 86_400)),
+        Some((d, time)) => date(d)
+            .zip(fields(time, ':', [2, 2, 2]))
+            .map(|(d, t)| (d, t, 1)),
+    };
+    parsed
+        .and_then(|(date, time, seconds)| {
+            Some((Filetime::from_utc(date, time)?, seconds * 10_000_000))
+        })
+        .with_context(|| {
+            format!(
+                "{flag} {text:?}: expected a date YYYY-MM-DD or YYYY-MM-DDTHH:MM:SS that exists"
+            )
+        })
+}
+
+/// `±HH:MM` as 100 ns ticks east of UTC.
+fn parse_offset(text: &str) -> anyhow::Result<i64> {
+    let parse = || {
+        let (sign, rest) = match text.as_bytes().first()? {
+            b'+' => (1, &text[1..]),
+            b'-' => (-1, &text[1..]),
+            _ => return None,
+        };
+        let (h, m) = rest.split_once(':')?;
+        let two_digits = |s: &str| {
+            (s.len() == 2 && s.bytes().all(|b| b.is_ascii_digit()))
+                .then(|| s.parse::<i64>().ok())
+                .flatten()
+        };
+        let (h, m) = (two_digits(h)?, two_digits(m)?);
+        (h <= 23 && m <= 59).then(|| sign * (h * 3600 + m * 60) * 10_000_000)
+    };
+    parse()
+        .with_context(|| format!("--tz {text:?}: expected a UTC offset such as +09:00 or -05:00"))
 }
 
 /// `out.csv` → `out.skipped-rules.csv`: the list of rules that were not loaded, beside `output`.

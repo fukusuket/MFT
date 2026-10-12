@@ -79,8 +79,14 @@ footer { margin-top: 3em; border-top: 1px solid var(--line); padding-top: 8px; }
   const s = data.summary;
   const levels = Object.keys(s.findings).map((k) => k + " " + s.findings[k]).join(", ");
   const diagnostics = Object.keys(s.diagnostics).map((k) => k + " " + s.diagnostics[k]).join(", ");
+  const w = s.window;
+  const range = w === null
+    ? "none (all rows listed)"
+    : (w.from === null ? "start" : w.from) + " .. " + (w.to === null ? "end" : w.to) + " (" + w.tz + ")";
   const summary = document.getElementById("summary");
   [
+    ["Time window (findings and outside-baseline files listed and counted in it)", range],
+    ...(s.warning === null ? [] : [["Warning", s.warning]]),
     ["Host", s.host],
     ["Input", s.input],
     ["MFT record size", s.record_size],

@@ -12,11 +12,9 @@ baseline = { path = "../baseline" }
 detect = { path = "../detect" }
 sigma = { path = "../sigma" }
 mft-parse = { path = "../mft-parse" }
+ntfs-types = { path = "../ntfs-types" }
 resolve = { path = "../resolve" }
 usn-parse = { path = "../usn-parse" }
-
-[dev-dependencies]
-ntfs-types = { path = "../ntfs-types" }
 
 [lints]
 workspace = true

@@ -81,13 +81,13 @@ fn analyze_writes_one_csv_row_per_record_with_paths() -> TestResult {
     assert!(status.success());
     assert_eq!(
         std::fs::read_to_string(&csv).unwrap_or_default(),
-        "entry,sequence,in_use,name,path,path_state,baseline,findings,si_created,fn_created,diagnostics,source,usn,reasons,event_time,deleted,seen,streams,hints\n\
-         0,1,true,$MFT,\\$MFT,resolved,,,2019-04-17T18:40:00.0000000Z,1601-01-01T00:00:00.0000000Z,,mft,,,,false,mft,,si_zero_subseconds\n\
-         5,1,true,.,\\,resolved,,,2019-04-17T18:40:00.0000000Z,1601-01-01T00:00:00.0000000Z,,mft,,,,false,mft,,si_zero_subseconds\n\
-         6,1,true,Users,\\Users,resolved,,,2019-04-17T18:40:00.0000000Z,1601-01-01T00:00:00.0000000Z,,mft,,,,false,mft,,si_zero_subseconds\n\
-         7,1,true,a.txt,\\Users\\a.txt,resolved,,,2019-04-17T18:40:00.0000000Z,1601-01-01T00:00:00.0000000Z,,mft,,,,false,mft,,si_zero_subseconds\n\
-         8,1,true,old.txt,,unknown,,,2019-04-17T18:40:00.0000000Z,1601-01-01T00:00:00.0000000Z,,mft,,,,false,mft,,si_zero_subseconds\n\
-         9,0,false,,,unknown,,,,,bad_signature,mft,,,,true,mft,,\n"
+        "entry,sequence,in_use,name,path,path_state,baseline,findings,si_created,fn_created,diagnostics,source,usn,reasons,event_time,deleted,seen,streams,hints,in_window\n\
+         0,1,true,$MFT,\\$MFT,resolved,,,2019-04-17T18:40:00.0000000Z,1601-01-01T00:00:00.0000000Z,,mft,,,,false,mft,,si_zero_subseconds,\n\
+         5,1,true,.,\\,resolved,,,2019-04-17T18:40:00.0000000Z,1601-01-01T00:00:00.0000000Z,,mft,,,,false,mft,,si_zero_subseconds,\n\
+         6,1,true,Users,\\Users,resolved,,,2019-04-17T18:40:00.0000000Z,1601-01-01T00:00:00.0000000Z,,mft,,,,false,mft,,si_zero_subseconds,\n\
+         7,1,true,a.txt,\\Users\\a.txt,resolved,,,2019-04-17T18:40:00.0000000Z,1601-01-01T00:00:00.0000000Z,,mft,,,,false,mft,,si_zero_subseconds,\n\
+         8,1,true,old.txt,,unknown,,,2019-04-17T18:40:00.0000000Z,1601-01-01T00:00:00.0000000Z,,mft,,,,false,mft,,si_zero_subseconds,\n\
+         9,0,false,,,unknown,,,,,bad_signature,mft,,,,true,mft,,,\n"
     );
     assert_no_temporary_outputs(&dir)?;
     Ok(())
@@ -1415,7 +1415,7 @@ fn same_input_with_usn_gives_byte_identical_outputs() -> TestResult {
 
     let first = run(1)?;
     assert_eq!(run(2)?, first);
-    assert!(first.0.ends_with(b"unsupported_version,usn,,,,,,,\n")); // the V4 row comes last
+    assert!(first.0.ends_with(b"unsupported_version,usn,,,,,,,,\n")); // the V4 row comes last
     Ok(())
 }
 
@@ -2243,6 +2243,245 @@ fn timestomp_hints_are_listed_in_csv_and_html_findings() -> TestResult {
     assert_eq!(
         data["findings"][0]["hints"],
         serde_json::json!(["si_before_fn", "si_zero_subseconds"])
+    );
+    Ok(())
+}
+
+/// `\Users` with files created (`$SI` and `$FN` alike) around the window edges, in UTC.
+fn window_volume_mft() -> Vec<u8> {
+    let users = 6 | (1 << 48);
+    let mut mft = usn_volume_mft();
+    let times: [(&str, u64); 6] = [
+        ("noon.txt", 134_354_160_009_999_999), // 2026-10-02T12:00:00.9999999Z
+        ("noon-1s.txt", 134_354_160_010_000_000), // 2026-10-02T12:00:01Z
+        ("day-end.txt", 134_354_591_999_999_999), // 2026-10-02T23:59:59.9999999Z
+        ("next-day.txt", 134_354_592_000_000_000), // 2026-10-03T00:00:00Z
+        ("jst-start.txt", 134_353_404_000_000_000), // 2026-10-01T15:00:00Z
+        ("jst-before.txt", 134_353_403_999_999_999), // 2026-10-01T14:59:59.9999999Z
+    ];
+    for (n, (name, created)) in (7u32..).zip(times) {
+        mft.extend(record(
+            1024,
+            true,
+            n,
+            &[
+                standard_information_created(created),
+                file_name_with(users, &u16s(name), 1, created),
+            ],
+        ));
+    }
+    mft
+}
+
+/// `name|in_window` per `$MFT` file row of a run on the window volume with `args`.
+fn in_window(test: &str, args: &[&str]) -> Result<Vec<String>, Box<dyn Error>> {
+    let dir = scratch(test)?;
+    let (mft, csv) = (dir.join("MFT"), dir.join("out.csv"));
+    std::fs::write(&mft, window_volume_mft())?;
+
+    let out = tool()
+        .args(["analyze", "-i"])
+        .arg(&mft)
+        .arg("--csv")
+        .arg(&csv)
+        .args(args)
+        .output()?;
+
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    Ok(csv_rows(&std::fs::read_to_string(&csv)?)
+        .iter()
+        .skip(3) // $MFT, root, Users
+        .map(|r| format!("{}|{}", r[3], r[19]))
+        .collect())
+}
+
+#[test]
+fn to_holds_its_whole_day_or_its_whole_second() -> TestResult {
+    let day = in_window("to_holds_its_whole_day", &["--to", "2026-10-02"])?;
+    let second = in_window(
+        "to_holds_its_whole_second",
+        &[
+            "--from",
+            "2026-10-02T00:00:00",
+            "--to",
+            "2026-10-02T12:00:00",
+        ],
+    )?;
+
+    assert_eq!(
+        day,
+        [
+            "noon.txt|true",
+            "noon-1s.txt|true",
+            "day-end.txt|true",
+            "next-day.txt|false",
+            "jst-start.txt|true",
+            "jst-before.txt|true",
+        ]
+    );
+    assert_eq!(
+        second,
+        [
+            "noon.txt|true",
+            "noon-1s.txt|false",
+            "day-end.txt|false",
+            "next-day.txt|false",
+            "jst-start.txt|false",
+            "jst-before.txt|false",
+        ]
+    );
+    Ok(())
+}
+
+#[test]
+fn tz_shifts_the_window_to_utc() -> TestResult {
+    let jst = in_window(
+        "tz_shifts_the_window_to_utc",
+        &[
+            "--from",
+            "2026-10-02",
+            "--to",
+            "2026-10-02T00:00:00",
+            "--tz",
+            "+09:00",
+        ],
+    )?;
+    let west = in_window(
+        "tz_shifts_the_window_west",
+        &["--from", "2026-10-02T21:00:00", "--tz", "-03:00"],
+    )?;
+
+    assert_eq!(
+        jst,
+        [
+            "noon.txt|false",
+            "noon-1s.txt|false",
+            "day-end.txt|false",
+            "next-day.txt|false",
+            "jst-start.txt|true",
+            "jst-before.txt|false",
+        ]
+    );
+    assert_eq!(
+        west,
+        [
+            "noon.txt|false",
+            "noon-1s.txt|false",
+            "day-end.txt|false",
+            "next-day.txt|true",
+            "jst-start.txt|false",
+            "jst-before.txt|false",
+        ]
+    );
+    Ok(())
+}
+
+#[test]
+fn a_bad_window_fails_with_a_message_and_writes_nothing() -> TestResult {
+    let dir = scratch("a_bad_window_fails_with_a_message_and_writes_nothing")?;
+    let (mft, csv) = (dir.join("MFT"), dir.join("out.csv"));
+    std::fs::write(&mft, window_volume_mft())?;
+    let _ = std::fs::remove_file(&csv); // from an earlier run
+    let cases: [(&[&str], &str); 11] = [
+        (&["--from", "2026-02-30"], "--from \"2026-02-30\""),
+        (&["--from", "2026-1-2"], "--from \"2026-1-2\""),
+        (&["--from", "02026-10-02"], "--from \"02026-10-02\""),
+        (&["--to", "2026-10-02T1:2:3"], "--to \"2026-10-02T1:2:3\""),
+        (&["--from", "2026/10/02"], "--from \"2026/10/02\""),
+        (
+            &["--to", "2026-10-02T24:00:00"],
+            "--to \"2026-10-02T24:00:00\"",
+        ),
+        (&["--to", "2026-10-02T12:00"], "--to \"2026-10-02T12:00\""),
+        (&["--from", "2026-10-02", "--tz", "9"], "--tz \"9\""),
+        (
+            &["--from", "2026-10-02", "--tz", "+24:00"],
+            "--tz \"+24:00\"",
+        ),
+        (&["--from", "1601-01-01", "--tz", "+01:00"], "before 1601"),
+        (
+            &["--from", "2026-10-03", "--to", "2026-10-02"],
+            "--from is after --to",
+        ),
+    ];
+
+    for (args, message) in cases {
+        let out = tool()
+            .args(["analyze", "-i"])
+            .arg(&mft)
+            .arg("--csv")
+            .arg(&csv)
+            .args(args)
+            .output()?;
+
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(!out.status.success(), "{args:?}");
+        assert!(stderr.contains(message), "{args:?}: {stderr}");
+        assert!(!stderr.contains("panicked"), "{args:?}: {stderr}");
+        assert!(!csv.exists(), "{args:?}");
+    }
+    assert_no_temporary_outputs(&dir)?;
+    Ok(())
+}
+
+#[test]
+fn with_a_window_the_html_lists_only_findings_in_it_and_is_reproducible() -> TestResult {
+    let dir = scratch("with_a_window_the_html_lists_only_findings_in_it")?;
+    let mft = dir.join("MFT");
+    std::fs::write(&mft, window_volume_mft())?;
+    let rules = rules_dir(
+        &dir,
+        "rules",
+        "title: Text\nid: text\nlevel: low\nlogsource:\n  product: windows\n  category: file_event\ndetection:\n  sel:\n    TargetFilename|endswith: '.txt'\n  condition: sel\n",
+    )?;
+    let run = |html: &std::path::Path| {
+        tool()
+            .args(["analyze", "-i"])
+            .arg(&mft)
+            .arg("--rules")
+            .arg(&rules)
+            .args([
+                "--from",
+                "2026-10-02T12:00:00",
+                "--to",
+                "2026-10-02",
+                "--tz",
+                "+00:00",
+            ])
+            .arg("-o")
+            .arg(html)
+            .status()
+    };
+    let (first, second) = (dir.join("a.html"), dir.join("b.html"));
+
+    assert!(run(&first)?.success());
+    assert!(run(&second)?.success());
+
+    let html = std::fs::read(&first)?;
+    assert_eq!(html, std::fs::read(&second)?);
+    let data = report_data(&String::from_utf8(html)?)?;
+    let paths: Vec<&str> = data["findings"]
+        .as_array()
+        .ok_or("no findings")?
+        .iter()
+        .filter_map(|f| f["path"].as_str())
+        .collect();
+    assert_eq!(
+        paths,
+        [
+            r"\Users\day-end.txt",
+            r"\Users\noon-1s.txt",
+            r"\Users\noon.txt"
+        ]
+    );
+    assert_eq!(data["summary"]["findings"]["low"], 3);
+    assert_eq!(
+        data["summary"]["window"],
+        serde_json::json!({"from": "2026-10-02T12:00:00", "to": "2026-10-02", "tz": "+00:00"})
     );
     Ok(())
 }

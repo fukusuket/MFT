@@ -233,6 +233,7 @@ dependencies = [
  "clap",
  "detect",
  "mft-parse",
+ "ntfs-types",
  "report",
  "serde_json",
  "sigma",

@@ -71,6 +71,18 @@ Facts shown next to findings, never used to rank them: baseline status, path-res
 
 An entry's file is its entry and sequence number; for a deleted entry, the sequence number before the delete (NTFS bumps it on free, as Rewind assumes). `streams` and `hints` come from the `$MFT` and are empty on USN rows. Owner SID (`$SDS`) comes later.
 
+## Time window
+
+`--from`/`--to`/`--tz` give a window `[start, end)` in UTC. A date-only `--to` ends at the end of that day; `--to` with a time, at the end of that second. Detection runs on every row; the window only selects what the HTML lists and counts, and CSV/JSONL mark each row `in_window` (empty without a window).
+
+| Row | In the window when |
+|---|---|
+| `$MFT` | `$SI` created or the shown name's `$FN` created is in it (ADR 0011); `false` with neither |
+| USN event | its USN time is in it |
+| USN diagnostic | never (`false`) |
+
+The report warns when the window starts before the earliest USN event (or has no start): findings cannot cover that part. Without `$J` there is no USN coverage to compare, so no warning.
+
 ## Crates
 
 So far: `ntfs-types`, `mft-parse`, `usn-parse`, `resolve` (MFT paths and USN Rewind, [research](research/rewind.md)), `baseline` (no zstd yet), `sigma`, `detect`, `analyze`, `report` (CSV, JSONL timeline and a static HTML template; viewer per ADR 0020 not built yet), `cli`, `xtask` (synthetic `$MFT` for the gate). `fuzz/` is a separate workspace (ADR 0013).

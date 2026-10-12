@@ -14,7 +14,7 @@ mod base64;
 mod html;
 mod jsonl;
 
-pub use html::{HtmlReport, Input, Provenance};
+pub use html::{HtmlReport, Input, Provenance, WindowText};
 pub use jsonl::JsonlWriter;
 
 #[derive(Debug, thiserror::Error)]
@@ -27,7 +27,7 @@ pub enum Error {
     Json(#[from] serde_json::Error),
 }
 
-const HEADER: [&str; 19] = [
+const HEADER: [&str; 20] = [
     "entry",
     "sequence",
     "in_use",
@@ -47,6 +47,7 @@ const HEADER: [&str; 19] = [
     "seen",
     "streams",
     "hints",
+    "in_window",
 ];
 
 /// CSV with one row per `$MFT` record; columns as in `HEADER`.
@@ -87,6 +88,7 @@ impl<W: Write> CsvWriter<W> {
             seen_name(row.seen).to_string(),
             streams_cell(&entry.streams),
             hint_names(&row.hints).join(";"),
+            bool_cell(row.in_window),
         ])?;
         Ok(())
     }
@@ -100,6 +102,8 @@ impl<W: Write> CsvWriter<W> {
                 cells[5] = path_state(&row.directory);
                 cells[10] = usn_code(d.code);
                 cells[11] = "usn";
+                let in_window = bool_cell(row.in_window);
+                cells[19] = &in_window;
                 self.csv.write_record(cells)?;
                 return Ok(());
             }
@@ -126,6 +130,7 @@ impl<W: Write> CsvWriter<W> {
             seen_name(usn_seen(row)).to_string(),
             String::new(),
             String::new(),
+            bool_cell(row.in_window),
         ])?;
         Ok(())
     }
@@ -176,6 +181,11 @@ pub fn write_skipped_jsonl<W: Write>(mut out: W, skipped: &[sigma::Skipped]) -> 
         out.write_all(b"\n").map_err(serde_json::Error::io)?;
     }
     Ok(out)
+}
+
+/// `true`, `false` or empty.
+fn bool_cell(value: Option<bool>) -> String {
+    value.map(|v| v.to_string()).unwrap_or_default()
 }
 
 /// Stream names joined by `;`, escaped like evidence; a `;` inside a name shows as `\;` (a `\`
@@ -385,7 +395,7 @@ mod tests {
         rules: Option<&sigma::Rules>,
     ) -> Result<String, Box<dyn std::error::Error>> {
         let mut w = CsvWriter::new(Vec::new())?;
-        for row in analyze::rows(entries, &[], baseline, rules) {
+        for row in analyze::rows(entries, &[], baseline, rules, None) {
             w.write(&row)?;
         }
         Ok(String::from_utf8(w.finish()?)?)
@@ -456,10 +466,10 @@ mod tests {
 
         assert_eq!(
             csv_of(&[root, full, empty])?,
-            "entry,sequence,in_use,name,path,path_state,baseline,findings,si_created,fn_created,diagnostics,source,usn,reasons,event_time,deleted,seen,streams,hints\n\
-             5,0,true,.,\\,resolved,,,,1601-01-01T00:00:00.0000000Z,,mft,,,,false,mft,,\n\
-             42,3,true,a\\\\b.txt,\\a\\\\b.txt,resolved,,,2023-11-14T17:12:46.6777888Z,2024-02-29T12:34:56.1234567Z,fixup_mismatch,mft,,,,false,mft,,si_before_fn\n\
-             43,0,false,,,unknown,,,,,bad_signature;malformed,mft,,,,true,mft,,\n"
+            "entry,sequence,in_use,name,path,path_state,baseline,findings,si_created,fn_created,diagnostics,source,usn,reasons,event_time,deleted,seen,streams,hints,in_window\n\
+             5,0,true,.,\\,resolved,,,,1601-01-01T00:00:00.0000000Z,,mft,,,,false,mft,,,\n\
+             42,3,true,a\\\\b.txt,\\a\\\\b.txt,resolved,,,2023-11-14T17:12:46.6777888Z,2024-02-29T12:34:56.1234567Z,fixup_mismatch,mft,,,,false,mft,,si_before_fn,\n\
+             43,0,false,,,unknown,,,,,bad_signature;malformed,mft,,,,true,mft,,,\n"
         );
         Ok(())
     }
@@ -515,7 +525,7 @@ mod tests {
             assert_eq!(
                 row,
                 format!(
-                    "0,0,true,{cell},,unknown,,,,1601-01-01T00:00:00.0000000Z,,mft,,,,false,mft,,"
+                    "0,0,true,{cell},,unknown,,,,1601-01-01T00:00:00.0000000Z,,mft,,,,false,mft,,,"
                 ),
                 "name {name:?}"
             );
@@ -574,7 +584,7 @@ mod tests {
         assert!(
             csv.lines()
                 .nth(1)
-                .is_some_and(|row| row.ends_with(",orphan_extension,mft,,,,false,mft,,")),
+                .is_some_and(|row| row.ends_with(",orphan_extension,mft,,,,false,mft,,,")),
             "{csv}"
         );
         Ok(())
@@ -661,7 +671,7 @@ mod tests {
         records: Vec<usn_parse::Record>,
     ) -> Result<String, Box<dyn std::error::Error>> {
         let mut w = CsvWriter::new(Vec::new())?;
-        for row in analyze::usn_rows(entries, &records, None, None) {
+        for row in analyze::usn_rows(entries, &records, None, None, None) {
             w.write_usn(&row)?;
         }
         Ok(String::from_utf8(w.finish()?)?
@@ -698,17 +708,23 @@ mod tests {
         ];
 
         let mut w = CsvWriter::new(Vec::new())?;
-        for row in analyze::rows(&entries, &records, None, None) {
+        for row in analyze::rows(&entries, &records, None, None, None) {
             w.write(&row)?;
         }
-        for row in analyze::usn_rows(&entries, &records, None, None) {
+        for row in analyze::usn_rows(&entries, &records, None, None, None) {
             w.write_usn(&row)?;
         }
         let csv = String::from_utf8(w.finish()?)?;
 
         let facts: Vec<String> = csv
             .lines()
-            .map(|line| line.rsplitn(5, ',').take(4).collect::<Vec<_>>().join(" | "))
+            .map(|line| {
+                line.rsplitn(6, ',')
+                    .skip(1)
+                    .take(4)
+                    .collect::<Vec<_>>()
+                    .join(" | ")
+            })
             .collect();
         assert_eq!(
             facts,
@@ -724,6 +740,64 @@ mod tests {
                 " |  |  | ",
             ]
         );
+        Ok(())
+    }
+
+    #[test]
+    fn csv_and_jsonl_write_in_window_last() -> Result<(), Box<dyn std::error::Error>> {
+        let mut early = dir(60, 6, "a.txt");
+        early.is_dir = false;
+        early.si_created = Some(Filetime::from_raw(5));
+        let mut entries = usn_tree();
+        entries.push(early);
+        let records = vec![
+            usn_event(61 | (1 << 48), 6 | (1 << 48), 64, 0, "b.txt"),
+            usn_parse::Record::Diagnostic(usn_parse::Diagnostic {
+                code: usn_parse::DiagCode::Malformed,
+                offset: 8,
+            }),
+        ];
+        let window = analyze::Window {
+            start: Some(Filetime::from_raw(1)),
+            end: Some(Filetime::from_raw(133_444_555_666_777_889)), // just after the USN time
+        };
+        let write = |window: Option<&analyze::Window>| -> Result<(String, String), Box<dyn std::error::Error>> {
+            let (mut csv, mut jsonl) = (CsvWriter::new(Vec::new())?, JsonlWriter::new(Vec::new()));
+            for row in analyze::rows(&entries, &records, None, None, window) {
+                csv.write(&row)?;
+                jsonl.write(&row)?;
+            }
+            for row in analyze::usn_rows(&entries, &records, None, None, window) {
+                csv.write_usn(&row)?;
+                jsonl.write_usn(&row)?;
+            }
+            Ok((String::from_utf8(csv.finish()?)?, String::from_utf8(jsonl.finish()?)?))
+        };
+
+        for (window, cells, values) in [
+            (
+                Some(&window),
+                ["in_window", "false", "false", "true", "true", "false"], // the tree: $FN at 0
+                serde_json::json!([false, false, true, true, false]),
+            ),
+            (
+                None,
+                ["in_window", "", "", "", "", ""],
+                serde_json::json!([null, null, null, null, null]),
+            ),
+        ] {
+            let (csv, jsonl) = write(window)?;
+            let last: Vec<&str> = csv
+                .lines()
+                .map(|l| l.rsplit(',').next().unwrap_or("?"))
+                .collect();
+            let fields: Vec<serde_json::Value> = jsonl
+                .lines()
+                .map(|l| Ok(serde_json::from_str::<serde_json::Value>(l)?["in_window"].take()))
+                .collect::<Result<_, Box<dyn std::error::Error>>>()?;
+            assert_eq!(last, cells);
+            assert_eq!(serde_json::Value::from(fields), values);
+        }
         Ok(())
     }
 
@@ -755,9 +829,9 @@ mod tests {
 
         assert_eq!(
             usn_csv(&usn_tree(), records)?,
-            "60,1,,a.txt,\\Users\\a.txt,resolved,,,,,,usn,4096,,2023-11-14T17:12:46.6777888Z,true,usn,,\n\
-             61,2,,b.txt,,unknown,,,,,,usn,4160,,2023-11-14T17:12:46.6777888Z,true,usn,,\n\
-             62,1,,c.txt,\\c.txt,resolved,,,,,,usn,4224,,2023-11-14T17:12:46.6777888Z,true,usn,,\n"
+            "60,1,,a.txt,\\Users\\a.txt,resolved,,,,,,usn,4096,,2023-11-14T17:12:46.6777888Z,true,usn,,,\n\
+             61,2,,b.txt,,unknown,,,,,,usn,4160,,2023-11-14T17:12:46.6777888Z,true,usn,,,\n\
+             62,1,,c.txt,\\c.txt,resolved,,,,,,usn,4224,,2023-11-14T17:12:46.6777888Z,true,usn,,,\n"
         );
         Ok(())
     }
@@ -868,20 +942,20 @@ mod tests {
         let csv = usn_csv(&usn_tree(), records())?;
         let mut jsonl = JsonlWriter::new(Vec::new());
         let (tree, records) = (usn_tree(), records());
-        for row in analyze::usn_rows(&tree, &records, None, None) {
+        for row in analyze::usn_rows(&tree, &records, None, None, None) {
             jsonl.write_usn(&row)?;
         }
 
         assert_eq!(
             csv,
-            ",,,,,unknown,,,,,malformed,usn,,,,,,,\n\
-             ,,,,,unknown,,,,,truncated,usn,,,,,,,\n\
-             ,,,,,unknown,,,,,unsupported_version,usn,,,,,,,\n"
+            ",,,,,unknown,,,,,malformed,usn,,,,,,,,\n\
+             ,,,,,unknown,,,,,truncated,usn,,,,,,,,\n\
+             ,,,,,unknown,,,,,unsupported_version,usn,,,,,,,,\n"
         );
         assert_eq!(
             String::from_utf8(jsonl.finish()?)?.lines().next(),
             Some(
-                r#"{"entry":null,"sequence":null,"in_use":null,"name":null,"path":null,"path_state":"unknown","baseline":null,"findings":[],"si_created":null,"fn_created":null,"diagnostics":["malformed"],"source":"usn","usn":null,"reasons":[],"event_time":null,"deleted":null,"seen":null,"streams":[],"hints":[]}"#
+                r#"{"entry":null,"sequence":null,"in_use":null,"name":null,"path":null,"path_state":"unknown","baseline":null,"findings":[],"si_created":null,"fn_created":null,"diagnostics":["malformed"],"source":"usn","usn":null,"reasons":[],"event_time":null,"deleted":null,"seen":null,"streams":[],"hints":[],"in_window":null}"#
             )
         );
         Ok(())
@@ -909,7 +983,7 @@ mod tests {
 
         let mut csv = CsvWriter::new(Vec::new())?;
         let mut jsonl = JsonlWriter::new(Vec::new());
-        for row in analyze::usn_rows(&entries, &records, Some(&baseline), Some(&rules)) {
+        for row in analyze::usn_rows(&entries, &records, Some(&baseline), Some(&rules), None) {
             csv.write_usn(&row)?;
             jsonl.write_usn(&row)?;
         }
@@ -1004,7 +1078,7 @@ mod tests {
         let csv = usn_csv(&entries, records())?;
         let mut jsonl = JsonlWriter::new(Vec::new());
         let records = records();
-        for row in analyze::usn_rows(&entries, &records, None, None) {
+        for row in analyze::usn_rows(&entries, &records, None, None, None) {
             jsonl.write_usn(&row)?;
         }
         let jsonl = String::from_utf8(jsonl.finish()?)?;
