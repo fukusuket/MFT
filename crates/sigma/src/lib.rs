@@ -425,6 +425,25 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn a_rule_with_an_unknown_modifier_is_skipped_naming_the_modifier() -> Result<(), Error> {
+        let odd = rule("rule-odd", "Odd", "").replace("|endswith", "|sometimes");
+        let dir = rule_dir(
+            "modifier",
+            &[("a.yml", &rule("rule-a", "A", "")), ("b.yml", &odd)],
+        );
+
+        let rules = Rules::load(&[dir.as_path()])?;
+
+        let reasons: Vec<&str> = rules.skipped().iter().map(|s| s.reason.as_str()).collect();
+        assert_eq!(rules.ids, ["rule-a"]);
+        assert!(
+            matches!(reasons.as_slice(), [r] if r.starts_with("parse: ") && r.contains("sometimes")),
+            "{reasons:?}"
+        );
+        Ok(())
+    }
+
     fn event(target: &str, service: Option<&'static str>) -> Event {
         Event {
             product: "windows",
