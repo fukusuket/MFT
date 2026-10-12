@@ -83,6 +83,8 @@ impl HtmlReport {
             skipped_rules: input.skipped_rules,
             window: input.window,
             warning: None,
+            usn_first: None,
+            usn_last: None,
             findings: Levels::default(),
         };
         Self {
@@ -103,6 +105,12 @@ impl HtmlReport {
             self.first_usn
                 .map_or(event.time, |first| first.min(event.time)),
         );
+        let s = &mut self.summary;
+        s.usn_first = Some(
+            s.usn_first
+                .map_or(event.time, |first| first.min(event.time)),
+        );
+        s.usn_last = Some(s.usn_last.map_or(event.time, |last| last.max(event.time)));
         if row.in_window == Some(false) {
             return;
         }
@@ -317,6 +325,11 @@ struct Summary {
     skipped_rules: usize,
     window: Option<WindowText>,
     warning: Option<String>,
+    /// The earliest and the latest USN event time; `None` without `$J` events.
+    #[serde(serialize_with = "iso8601")]
+    usn_first: Option<Filetime>,
+    #[serde(serialize_with = "iso8601")]
+    usn_last: Option<Filetime>,
     findings: Levels,
 }
 
@@ -755,6 +768,42 @@ mod tests {
     }
 
     #[test]
+    fn the_summary_shows_the_first_and_last_usn_time() -> Result<()> {
+        let entries = [root()];
+        let at = |raw: u64| {
+            let mut record = usn_event(60, 0x8000_0100, 0x20, "a.txt");
+            if let usn_parse::Record::Event(e) = &mut record {
+                e.time = Filetime::from_raw(raw);
+            }
+            record
+        };
+        let coverage = |records: &[usn_parse::Record]| {
+            let mut report = HtmlReport::new(PROVENANCE, input());
+            for row in analyze::usn_rows(&entries, records, None, None, None) {
+                report.add_usn(&row);
+            }
+            let data = decode(payload(&String::from_utf8(report.finish(Vec::new())?)?)?)?;
+            Ok::<_, Box<dyn std::error::Error>>((
+                data["summary"]["usn_first"].clone(),
+                data["summary"]["usn_last"].clone(),
+            ))
+        };
+
+        assert_eq!(
+            coverage(&[at(300), at(200), at(400), at(250)])?,
+            (
+                serde_json::json!("1601-01-01T00:00:00.0000200Z"),
+                serde_json::json!("1601-01-01T00:00:00.0000400Z")
+            )
+        );
+        assert_eq!(
+            coverage(&[])?,
+            (serde_json::Value::Null, serde_json::Value::Null)
+        );
+        Ok(())
+    }
+
+    #[test]
     fn a_window_starting_before_the_first_usn_event_is_warned_about() -> Result<()> {
         let entries = [root()];
         let at = |raw: u64| {
@@ -1073,6 +1122,8 @@ mod tests {
                 "skipped_rules": 0,
                 "window": null,
                 "warning": null,
+                "usn_first": null,
+                "usn_last": null,
                 "findings": {
                     "critical": 0,
                     "high": 0,
