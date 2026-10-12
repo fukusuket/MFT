@@ -23,6 +23,21 @@ impl Filetime {
         format!("{date} {h:02}:{m:02}:{sec:02}.{:03}", fraction / 10_000)
     }
 
+    /// The UTC time at `date` (year, month, day) and `time` (hours, minutes, seconds); `None`
+    /// if there is no such time or it is before 1601.
+    pub fn from_utc(date: (u64, u64, u64), time: (u64, u64, u64)) -> Option<Self> {
+        let (year, month, day) = date;
+        let (h, m, sec) = time;
+        if year < 1601 || !(1..=12).contains(&month) || h > 23 || m > 59 || sec > 59 {
+            return None;
+        }
+        let days = days_from_civil(year, month, day)?;
+        let secs = days
+            .checked_mul(86_400)?
+            .checked_add(h * 3600 + m * 60 + sec)?;
+        Some(Self(secs.checked_mul(10_000_000)?))
+    }
+
     /// `YYYY-MM-DD`, (hours, minutes, seconds) and the 100 ns fraction of the second.
     fn parts(self) -> (String, (u64, u64, u64), u64) {
         let (secs, fraction) = (self.0 / 10_000_000, self.0 % 10_000_000);
@@ -31,6 +46,27 @@ impl Filetime {
         let time = (secs_of_day / 3600, secs_of_day / 60 % 60, secs_of_day % 60);
         (format!("{year:04}-{month:02}-{day:02}"), time, fraction)
     }
+}
+
+/// Day count since 1601-01-01 for a Gregorian date from 1601 on (H. Hinnant's
+/// `days_from_civil`, counted from 1600-03-01); `None` if the day is not in the month.
+fn days_from_civil(year: u64, month: u64, day: u64) -> Option<u64> {
+    let leap = year.is_multiple_of(4) && (!year.is_multiple_of(100) || year.is_multiple_of(400));
+    let days_in_month = match month {
+        2 if leap => 29,
+        2 => 28,
+        4 | 6 | 9 | 11 => 30,
+        _ => 31,
+    };
+    if !(1..=days_in_month).contains(&day) {
+        return None;
+    }
+    let y = year - 1600 - u64::from(month <= 2);
+    let (era, yoe) = (y / 400, y % 400);
+    let mp = if month > 2 { month - 3 } else { month + 9 };
+    let doy = (153 * mp + 2) / 5 + day - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    era.checked_mul(146_097)?.checked_add(doe)?.checked_sub(306)
 }
 
 /// Gregorian date for a day count since 1601-01-01 (H. Hinnant's `civil_from_days`,
@@ -76,6 +112,44 @@ mod tests {
         ];
         for (raw, text) in cases {
             assert_eq!(Filetime::from_raw(raw).iso8601(), text, "raw {raw}");
+        }
+    }
+
+    #[test]
+    fn from_utc_builds_the_time_iso8601_shows() {
+        let cases = [
+            ((1601, 1, 1), (0, 0, 0), "1601-01-01T00:00:00.0000000Z"),
+            ((2000, 2, 29), (0, 0, 0), "2000-02-29T00:00:00.0000000Z"),
+            ((2024, 2, 29), (12, 34, 56), "2024-02-29T12:34:56.0000000Z"),
+            ((2026, 10, 2), (23, 59, 59), "2026-10-02T23:59:59.0000000Z"),
+        ];
+        for (date, time, text) in cases {
+            assert_eq!(
+                Filetime::from_utc(date, time).map(Filetime::iso8601),
+                Some(text.to_string()),
+                "{date:?} {time:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn from_utc_rejects_times_that_do_not_exist() {
+        let cases = [
+            ((1600, 12, 31), (23, 59, 59)),
+            ((2026, 2, 29), (0, 0, 0)),
+            ((1900, 2, 29), (0, 0, 0)),
+            ((2026, 2, 30), (0, 0, 0)),
+            ((2026, 4, 31), (0, 0, 0)),
+            ((2026, 13, 1), (0, 0, 0)),
+            ((2026, 0, 1), (0, 0, 0)),
+            ((2026, 1, 0), (0, 0, 0)),
+            ((2026, 1, 1), (24, 0, 0)),
+            ((2026, 1, 1), (0, 60, 0)),
+            ((2026, 1, 1), (0, 0, 60)),
+            ((u64::MAX, 1, 1), (0, 0, 0)),
+        ];
+        for (date, time) in cases {
+            assert_eq!(Filetime::from_utc(date, time), None, "{date:?} {time:?}");
         }
     }
 
