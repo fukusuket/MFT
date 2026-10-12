@@ -176,7 +176,16 @@ fn analyze(
         (pending, file, HtmlReport::new(PROVENANCE, input))
     });
     let entries = mft_parse::merge_extensions(records.collect::<Result<Vec<_>, _>>()?, record_size);
-    for row in analyze::rows(&entries, &[], baseline.as_ref(), rules.as_ref()) {
+    // Read before the $MFT rows, which tell whether the journal has each file too.
+    let journal = journal
+        .map(|journal| {
+            usn_parse::records(BufReader::new(journal))
+                .collect::<Result<Vec<_>, _>>()
+                .context("reading the USN journal")
+        })
+        .transpose()?;
+    let in_journal = journal.as_deref().unwrap_or_default();
+    for row in analyze::rows(&entries, in_journal, baseline.as_ref(), rules.as_ref()) {
         if let Some((_, writer)) = &mut csv_writer {
             writer.write(&row)?;
         }
@@ -187,12 +196,9 @@ fn analyze(
             report.add(&row);
         }
     }
-    if let Some(journal) = journal {
+    if let Some(journal) = &journal {
         // After the $MFT rows, in $J order; the HTML report shows only their findings.
-        let records = usn_parse::records(BufReader::new(journal))
-            .collect::<Result<Vec<_>, _>>()
-            .context("reading the USN journal")?;
-        for row in analyze::usn_rows(&entries, &records, baseline.as_ref(), rules.as_ref()) {
+        for row in analyze::usn_rows(&entries, journal, baseline.as_ref(), rules.as_ref()) {
             if let Some((_, writer)) = &mut csv_writer {
                 writer.write_usn(&row)?;
             }

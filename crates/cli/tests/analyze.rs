@@ -9,7 +9,10 @@ use std::error::Error;
 use std::path::PathBuf;
 use std::process::Command;
 
-use support::{extension, file_name_with, record, record_with_flags, standard_information, u16s};
+use support::{
+    data, extension, file_name_with, record, record_with_flags, standard_information,
+    standard_information_created, u16s,
+};
 
 type TestResult = Result<(), Box<dyn Error>>;
 
@@ -2057,5 +2060,108 @@ fn analyze_refuses_a_skipped_rules_list_that_is_its_input_or_another_output() ->
         );
         assert_eq!(std::fs::read(&evidence)?, small_volume_mft());
     }
+    Ok(())
+}
+
+/// `\Users` with: `kept.txt` (also in `$J`), `ads.txt` (a `Zone.Identifier` stream),
+/// `old.txt` (deleted, also in `$J`) and `stomped.txt` (`$SI` created a whole second before
+/// `$FN` created).
+fn facts_volume_mft() -> Vec<u8> {
+    let users = 6 | (1 << 48);
+    let fn_created = 133_000_000_000_000_000;
+    let file = |entry: u32, in_use: bool, name: &str, si_created: u64, extra: Vec<Vec<u8>>| {
+        let mut attrs = vec![
+            standard_information_created(si_created),
+            file_name_with(users, &u16s(name), 1, fn_created),
+        ];
+        attrs.extend(extra);
+        record(1024, in_use, entry, &attrs)
+    };
+    let later = fn_created + 1;
+    let mut mft = usn_volume_mft();
+    mft.extend(vec![0u8; 33 * 1024]); // entries 7..=39 never used
+    mft.extend(file(40, true, "kept.txt", later, vec![]));
+    mft.extend(file(
+        41,
+        true,
+        "ads.txt",
+        later,
+        vec![data(&u16s("Zone.Identifier"), b"[ZoneTransfer]", 2)],
+    ));
+    mft.extend(file(42, false, "old.txt", later, vec![]));
+    mft.extend(file(
+        43,
+        true,
+        "stomped.txt",
+        fn_created - 10_000_000,
+        vec![],
+    ));
+    mft
+}
+
+/// Closed creates of `kept.txt` and `old.txt` (in the `$MFT`) and `gone.txt` (entry 44, not).
+fn facts_journal() -> Vec<u8> {
+    use usn_support::{Fields, v2};
+    [
+        (40, "kept.txt", 64),
+        (42, "old.txt", 136),
+        (44, "gone.txt", 208),
+    ]
+    .iter()
+    .flat_map(|&(entry, name, usn)| {
+        v2(&Fields {
+            file: entry | (1 << 48),
+            parent: 6 | (1 << 48),
+            usn,
+            reason: 0x8000_0100,
+            name: u16s(name),
+            ..Fields::default()
+        })
+    })
+    .collect()
+}
+
+/// `name|column` per CSV row of a run on the facts volume, for one of the fact columns.
+fn facts_column(test: &str, column: usize) -> Result<Vec<String>, Box<dyn Error>> {
+    let dir = scratch(test)?;
+    let (mft, j, csv) = (dir.join("MFT"), dir.join("J"), dir.join("out.csv"));
+    std::fs::write(&mft, facts_volume_mft())?;
+    std::fs::write(&j, facts_journal())?;
+
+    let status = tool()
+        .args(["analyze", "-i"])
+        .arg(&mft)
+        .arg("--usn")
+        .arg(&j)
+        .arg("--csv")
+        .arg(&csv)
+        .status()?;
+
+    assert!(status.success());
+    Ok(csv_rows(&std::fs::read_to_string(&csv)?)
+        .iter()
+        .map(|r| format!("{}|{}", r[3], r[column]))
+        .collect())
+}
+
+#[test]
+fn a_file_is_seen_in_the_mft_the_journal_or_both() -> TestResult {
+    let seen = facts_column("a_file_is_seen_in_the_mft_the_journal_or_both", 16)?;
+
+    assert_eq!(
+        seen,
+        [
+            "$MFT|mft",
+            ".|mft",
+            "Users|mft",
+            "kept.txt|both",
+            "ads.txt|mft",
+            "old.txt|both",
+            "stomped.txt|mft",
+            "kept.txt|both",
+            "old.txt|both",
+            "gone.txt|usn",
+        ]
+    );
     Ok(())
 }
