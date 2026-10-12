@@ -52,13 +52,30 @@ const viewer = (function () {
     return "#" + parts.join("&");
   }
 
+  // `YYYY-MM-DD` or `YYYY-MM-DDTHH:MM:SS` (UTC); empty means unset.
+  function validTime(text) {
+    return /^(\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}:\d{2})?)?$/.test(text);
+  }
+
+  // Whether any of `times` (ISO 8601, UTC) is in the range. A time is cut to the bound's length,
+  // so `to` holds its whole day or second. Malformed bounds are ignored.
+  function inRange(times, state) {
+    const from = validTime(state.from) ? state.from : "";
+    const to = validTime(state.to) ? state.to : "";
+    if (from === "" && to === "") return true;
+    return times.some(
+      (t) => t !== null && (from === "" || t.slice(0, from.length) >= from) && (to === "" || t.slice(0, to.length) <= to),
+    );
+  }
+
   // Whether a finding passes every filter that is set.
   function matchFinding(f, state) {
     return (
       (state.level === "" || f.level === state.level) &&
       (state.rule === "" || f.id === state.rule) &&
       (state.folder === "" || f.folder === state.folder) &&
-      (state.q === "" || f.path.toLowerCase().includes(state.q.toLowerCase()))
+      (state.q === "" || f.path.toLowerCase().includes(state.q.toLowerCase())) &&
+      inRange([f.created, f.fn_created, f.event_time], state)
     );
   }
 
@@ -176,7 +193,7 @@ const viewer = (function () {
     document.getElementById("source").textContent = f.source_url;
   }
 
-  return { decode, parseHash, formatHash, matchFinding, render };
+  return { decode, parseHash, formatHash, validTime, matchFinding, render };
 })();
 
 if (typeof document !== "undefined") viewer.render(document);

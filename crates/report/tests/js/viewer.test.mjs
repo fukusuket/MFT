@@ -70,3 +70,28 @@ test("findings match the level, rule, folder and a case-insensitive path search"
   }
   assert.equal(matchFinding(f, { ...none, level: "high", folder: "temp" }), false);
 });
+
+test("the time range holds from, the whole to-day or to-second, on any of the row's times", () => {
+  const { matchFinding } = load();
+  const f = finding({}); // $SI 2026-10-02T12:00:00.5Z, $FN 2026-09-01
+  const usn = finding({ created: null, fn_created: null, event_time: "2026-10-03T00:00:00.0000000Z" });
+  const at = (from, to, row = f) => matchFinding(row, { ...none, from, to });
+
+  assert.equal(at("2026-10-02T12:00:00", ""), true); // from holds its second
+  assert.equal(at("2026-10-02T12:00:01", ""), false);
+  assert.equal(at("", "2026-10-02T12:00:00"), true); // to holds its whole second
+  assert.equal(at("", "2026-10-02"), true); // and its whole day
+  assert.equal(at("", "2026-08-31"), false);
+  assert.equal(at("2026-09-01", "2026-09-01"), true); // only $FN is in
+  assert.equal(at("2026-10-03", "2026-10-03", usn), true); // only the USN time is in
+  assert.equal(at("2026-10-04", "", usn), false);
+  assert.equal(at("2026/10/04", "2026-10-1", usn), true); // malformed bounds are ignored
+});
+
+test("only YYYY-MM-DD and YYYY-MM-DDTHH:MM:SS are valid times", () => {
+  const { validTime } = load();
+  for (const text of ["", "2026-10-02", "2026-10-02T23:59:59"]) assert.equal(validTime(text), true, text);
+  for (const text of ["2026/10/02", "2026-10-2", "2026-10-02T1:00:00", "2026-10-02 12:00:00", "x"]) {
+    assert.equal(validTime(text), false, text);
+  }
+});
