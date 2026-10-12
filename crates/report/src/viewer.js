@@ -190,8 +190,9 @@ const viewer = (function () {
       });
     }
 
-    // A virtual-scroll list: only the rows in view exist in the DOM (ADR 0020).
-    function list(node, columns, drawRow) {
+    // A virtual-scroll list: only the rows in view exist in the DOM (ADR 0020). `fill` puts
+    // one item's content into its fixed-height row.
+    function list(node, columns, fill) {
       const head = node.appendChild(el("div", undefined, "list-head"));
       columns.forEach((c) => head.appendChild(el("span", c)));
       const viewport = node.appendChild(el("div", undefined, "viewport"));
@@ -201,7 +202,14 @@ const viewer = (function () {
       function paint() {
         const r = rowRange(viewport.scrollTop, viewport.clientHeight, ROW_HEIGHT, rows.length, SPACER_CAP);
         block.style.top = r.top + "px";
-        block.replaceChildren(...rows.slice(r.first, r.last).map(drawRow));
+        block.replaceChildren(
+          ...rows.slice(r.first, r.last).map((item) => {
+            const row = el("div", undefined, "row");
+            row.style.height = ROW_HEIGHT + "px";
+            fill(row, item);
+            return row;
+          }),
+        );
       }
       viewport.addEventListener("scroll", paint);
       return (next) => {
@@ -237,11 +245,8 @@ const viewer = (function () {
         ["q", "Search"],
       ]);
       const count = node.appendChild(el("p", undefined, "count"));
-      const show = list(node, ["Created ($SI, UTC)", "Path", "Folder", "MFT entry"], (o) => {
-        const row = el("div", undefined, "row");
-        row.style.height = ROW_HEIGHT + "px";
+      const show = list(node, ["Created ($SI, UTC)", "Path", "Folder", "MFT entry"], (row, o) => {
         row.appendChild(line([[o.created, "mono"], [o.path, "path"], [o.folder], [o.entry, "mono"]]));
-        return row;
       });
       drawn.push(() => {
         const shown = data.outside.filter((o) => matchOutside(o, state));
@@ -261,9 +266,7 @@ const viewer = (function () {
         ["q", "Search"],
       ]);
       const count = node.appendChild(el("p", undefined, "count"));
-      const show = list(node, ["Level", "Time (UTC)", "Path", "Folder", "Rule"], (f) => {
-        const row = el("div", undefined, "row");
-        row.style.height = ROW_HEIGHT + "px";
+      const show = list(node, ["Level", "Time (UTC)", "Path", "Folder", "Rule"], (row, f) => {
         row.appendChild(
           line([
             [f.level, "level level-" + f.level],
@@ -281,7 +284,6 @@ const viewer = (function () {
         ];
         row.appendChild(el("div", facts.join(" · "), "facts"));
         row.addEventListener("click", () => detail(f));
-        return row;
       });
       const pane = node.appendChild(el("div", "Select a row to see why it matched.", "detail"));
       function detail(f) {
