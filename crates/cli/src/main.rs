@@ -21,6 +21,8 @@ struct Cli {
 }
 
 #[derive(Debug, Subcommand)]
+// This value is created once at startup; boxing individual clap fields would only add allocations.
+#[allow(clippy::large_enum_variant)]
 enum Command {
     /// Parse a raw $MFT and write an HTML report and/or one CSV row per record.
     #[command(group(ArgGroup::new("out").args(["csv", "output", "jsonl"]).required(true).multiple(true)))]
