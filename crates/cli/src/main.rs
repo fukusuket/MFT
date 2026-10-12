@@ -10,7 +10,7 @@ use anyhow::Context;
 use baseline::Baseline;
 use clap::{ArgGroup, Parser, Subcommand};
 use ntfs_types::Filetime;
-use report::{CsvWriter, HtmlReport, Input, JsonlWriter, Provenance};
+use report::{CsvWriter, HtmlReport, Input, JsonlWriter, Provenance, WindowText};
 use sigma::Rules;
 
 #[derive(Debug, Parser)]
@@ -185,7 +185,12 @@ fn analyze(
             baseline: baseline_name,
             rules: rules.as_ref().map_or(0, Rules::count),
             skipped_rules: rules.as_ref().map_or(0, |r| r.skipped().len()),
-            window: None,
+            window: window.map(|window| WindowText {
+                from: from.map(str::to_string),
+                to: to.map(str::to_string),
+                tz: tz.unwrap_or("+00:00").to_string(),
+                start: window.start,
+            }),
         };
         (pending, file, HtmlReport::new(PROVENANCE, input))
     });

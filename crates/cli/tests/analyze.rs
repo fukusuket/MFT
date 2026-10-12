@@ -2424,3 +2424,61 @@ fn a_bad_window_fails_with_a_message_and_writes_nothing() -> TestResult {
     assert_no_temporary_outputs(&dir)?;
     Ok(())
 }
+
+#[test]
+fn with_a_window_the_html_lists_only_findings_in_it_and_is_reproducible() -> TestResult {
+    let dir = scratch("with_a_window_the_html_lists_only_findings_in_it")?;
+    let mft = dir.join("MFT");
+    std::fs::write(&mft, window_volume_mft())?;
+    let rules = rules_dir(
+        &dir,
+        "rules",
+        "title: Text\nid: text\nlevel: low\nlogsource:\n  product: windows\n  category: file_event\ndetection:\n  sel:\n    TargetFilename|endswith: '.txt'\n  condition: sel\n",
+    )?;
+    let run = |html: &std::path::Path| {
+        tool()
+            .args(["analyze", "-i"])
+            .arg(&mft)
+            .arg("--rules")
+            .arg(&rules)
+            .args([
+                "--from",
+                "2026-10-02T12:00:00",
+                "--to",
+                "2026-10-02",
+                "--tz",
+                "+00:00",
+            ])
+            .arg("-o")
+            .arg(html)
+            .status()
+    };
+    let (first, second) = (dir.join("a.html"), dir.join("b.html"));
+
+    assert!(run(&first)?.success());
+    assert!(run(&second)?.success());
+
+    let html = std::fs::read(&first)?;
+    assert_eq!(html, std::fs::read(&second)?);
+    let data = report_data(&String::from_utf8(html)?)?;
+    let paths: Vec<&str> = data["findings"]
+        .as_array()
+        .ok_or("no findings")?
+        .iter()
+        .filter_map(|f| f["path"].as_str())
+        .collect();
+    assert_eq!(
+        paths,
+        [
+            r"\Users\day-end.txt",
+            r"\Users\noon-1s.txt",
+            r"\Users\noon.txt"
+        ]
+    );
+    assert_eq!(data["summary"]["findings"]["low"], 3);
+    assert_eq!(
+        data["summary"]["window"],
+        serde_json::json!({"from": "2026-10-02T12:00:00", "to": "2026-10-02", "tz": "+00:00"})
+    );
+    Ok(())
+}
