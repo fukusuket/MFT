@@ -104,10 +104,16 @@ impl Rules {
                 reason: reason.to_string(),
             };
             let text = std::fs::read_to_string(&file).map_err(|e| Error::Io(file.clone(), e))?;
-            let collection = parse_sigma_yaml(&text).map_err(|e| rule_error(&e))?;
+            let collection = match parse_sigma_yaml(&text) {
+                Ok(collection) => collection,
+                Err(e) => {
+                    skipped.push(skip(None, None, &format!("parse: {e}")));
+                    continue;
+                }
+            };
             // The parser keeps going past bad documents and lists them here.
-            if let Some(first) = collection.errors.first() {
-                return Err(rule_error(first));
+            for error in &collection.errors {
+                skipped.push(skip(None, None, &format!("parse: {error}")));
             }
             // Detection rules only so far; the others are listed, never silently ignored.
             let others = (collection.correlations.into_iter())
@@ -388,24 +394,35 @@ mod tests {
     }
 
     #[test]
-    fn invalid_yaml_or_a_rule_without_detection_is_an_error_naming_the_file() {
-        let cases = [
-            ("broken.yml", "title: [unclosed\n"),
-            (
-                "nodetect.yml",
-                "title: T\nid: t\nlogsource:\n  category: file_event\n",
-            ),
-        ];
-        for (name, text) in cases {
-            let dir = rule_dir(name, &[(name, text)]);
+    fn invalid_yaml_or_a_rule_without_detection_is_skipped_as_a_parse_problem() -> Result<(), Error>
+    {
+        let dir = rule_dir(
+            "parse",
+            &[
+                ("a.yml", &rule("rule-a", "A", "")),
+                ("broken.yml", "title: [unclosed\n"),
+                (
+                    "nodetect.yml",
+                    "title: T\nid: t\nlogsource:\n  category: file_event\n",
+                ),
+            ],
+        );
 
-            let result = Rules::load(&[dir.as_path()]);
+        let rules = Rules::load(&[dir.as_path()])?;
 
-            assert!(
-                matches!(&result, Err(Error::Rule(file, _)) if file.ends_with(name)),
-                "{name}: {result:?}"
-            );
-        }
+        let skipped: Vec<(&str, bool)> = rules
+            .skipped()
+            .iter()
+            .map(|s| {
+                (
+                    s.file.rsplit('/').next().unwrap_or_default(),
+                    s.reason.starts_with("parse: "),
+                )
+            })
+            .collect();
+        assert_eq!(rules.ids, ["rule-a"]);
+        assert_eq!(skipped, [("broken.yml", true), ("nodetect.yml", true)]);
+        Ok(())
     }
 
     fn event(target: &str, service: Option<&'static str>) -> Event {
