@@ -2485,3 +2485,69 @@ fn with_a_window_the_html_lists_only_findings_in_it_and_is_reproducible() -> Tes
     );
     Ok(())
 }
+
+#[test]
+fn a_file_in_a_users_downloads_is_in_the_downloads_folder_everywhere() -> TestResult {
+    let dir = scratch("a_file_in_a_users_downloads_is_in_the_downloads_folder")?;
+    let (mft, csv, html) = (dir.join("MFT"), dir.join("out.csv"), dir.join("out.html"));
+    let directory = |entry: u32, parent: u64, name: &str| {
+        record_with_flags(
+            1024,
+            3, // in use, directory
+            entry,
+            &[
+                standard_information(),
+                file_name_with(parent, &u16s(name), 1, 0),
+            ],
+        )
+    };
+    let mut volume = usn_volume_mft();
+    volume.extend(directory(7, 6 | (1 << 48), "bob"));
+    volume.extend(directory(8, 7 | (1 << 48), "Downloads"));
+    volume.extend(record(
+        1024,
+        true,
+        9,
+        &[
+            standard_information(),
+            file_name_with(8 | (1 << 48), &u16s("a.exe"), 1, 0),
+        ],
+    ));
+    std::fs::write(&mft, volume)?;
+    let rules = rules_dir(
+        &dir,
+        "rules",
+        "title: Exe\nid: exe\nlevel: low\nlogsource:\n  product: windows\n  category: file_event\ndetection:\n  sel:\n    TargetFilename|endswith: '.exe'\n  condition: sel\n",
+    )?;
+
+    let status = tool()
+        .args(["analyze", "-i"])
+        .arg(&mft)
+        .arg("--rules")
+        .arg(&rules)
+        .arg("--csv")
+        .arg(&csv)
+        .arg("-o")
+        .arg(&html)
+        .status()?;
+
+    assert!(status.success());
+    let folders: Vec<String> = csv_rows(&std::fs::read_to_string(&csv)?)
+        .iter()
+        .map(|r| format!("{}|{}", r[3], r[20]))
+        .collect();
+    assert_eq!(
+        folders,
+        [
+            "$MFT|other",
+            ".|other",
+            "Users|other",
+            "bob|other",
+            "Downloads|user_profile",
+            "a.exe|downloads",
+        ]
+    );
+    let data = report_data(&std::fs::read_to_string(&html)?)?;
+    assert_eq!(data["findings"][0]["folder"], "downloads");
+    Ok(())
+}
