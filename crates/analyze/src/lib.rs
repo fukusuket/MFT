@@ -216,6 +216,9 @@ pub struct UsnRow<'a> {
     pub entry: Option<&'a Entry>,
     /// Whether the USN time is in the window (`false` for a diagnostic); `None` without one.
     pub in_window: Option<bool>,
+    /// Where the event's file sits (`NoPath` if its directory is unknown); `None` for a
+    /// diagnostic.
+    pub folder: Option<Folder>,
 }
 
 /// One row per `$J` item, in `$J` order.
@@ -244,6 +247,7 @@ pub fn usn_rows<'a>(
                 findings: Vec::new(),
                 entry: None,
                 in_window: window.map(|_| false),
+                folder: None,
             };
             let usn_parse::Record::Event(event) = record else {
                 return row;
@@ -260,6 +264,7 @@ pub fn usn_rows<'a>(
                 }
                 Resolution::Unknown => None,
             };
+            row.folder = Some(segments.as_deref().map_or(Folder::NoPath, folder));
             if let (Some(segments), Some(baseline)) = (&segments, baseline)
                 && event.attributes & FILE_ATTRIBUTE_DIRECTORY == 0
             {
@@ -678,6 +683,29 @@ mod tests {
 
         assert_eq!(with, [Some(true), Some(false), Some(false)]);
         assert_eq!(without, [None; 3]);
+    }
+
+    #[test]
+    fn a_usn_event_has_the_folder_of_its_directory_and_name() {
+        let mut root = entry(5, 5, ".");
+        root.is_dir = true;
+        let mut windows = entry(6, 5, "Windows");
+        windows.is_dir = true;
+        let entries = [root, windows];
+        let records = [
+            usn_event("a.exe", 6),
+            usn_event("b.exe", 77),
+            usn_parse::Record::Diagnostic(usn_parse::Diagnostic {
+                code: usn_parse::DiagCode::Malformed,
+                offset: 0,
+            }),
+        ];
+
+        let folders: Vec<Option<Folder>> = usn_rows(&entries, &records, None, None, None)
+            .map(|r| r.folder)
+            .collect();
+
+        assert_eq!(folders, [Some(Folder::Windows), Some(Folder::NoPath), None]);
     }
 
     #[test]
