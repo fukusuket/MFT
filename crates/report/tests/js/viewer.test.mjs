@@ -231,3 +231,13 @@ test("Findings: filters change the hash, the N of M count and the rows; a row op
   rows()[0].dispatch("click");
   assert.ok(screen.find("detail").textContent.includes("DLL in Temp"));
 });
+
+test("Summary: the critical and high counts open Findings filtered to that level", () => {
+  const { window, app, shown } = open("");
+  const links = app.findAll("level-link");
+
+  assert.deepEqual(links.map((l) => l.textContent), ["critical 0", "high 1"]);
+  links[1].dispatch("click");
+  assert.equal(window.location.hash, "#tab=findings&level=high");
+  assert.deepEqual(shown(), ["findings"]);
+});

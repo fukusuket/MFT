@@ -293,7 +293,7 @@ const viewer = (function () {
             : (w.from === null ? "start" : w.from) + " .. " + (w.to === null ? "end" : w.to) + " (" + w.tz + ")",
         ],
         ...(s.warning === null ? [] : [["Warning", s.warning]]),
-        ["Findings by level", Object.keys(s.findings).map((k) => k + " " + s.findings[k]).join(", ")],
+        ["Findings by level", levelCounts(s.findings)],
         ["Outside-baseline files" + (w === null ? "" : " in the window"), s.baseline === null ? "n/a" : s.outside],
         ["Baseline", s.baseline === null ? "none" : s.baseline],
         ["Sigma rules", s.rules + " loaded, " + s.skipped_rules + " skipped (see the skipped-rules CSV/JSONL)"],
@@ -305,8 +305,26 @@ const viewer = (function () {
       for (const [label, value] of rows) {
         const tr = table.appendChild(el("tr"));
         tr.appendChild(el("th", label));
-        tr.appendChild(el("td", value));
+        const td = tr.appendChild(el("td"));
+        if (typeof value === "object") td.appendChild(value);
+        else td.textContent = String(value);
       }
+    }
+
+    // Each level's count; critical and high open Findings filtered to that level.
+    function levelCounts(counts) {
+      const cell = el("span");
+      LEVELS.forEach((level, i) => {
+        if (i > 0) cell.appendChild(el("span", ", "));
+        const text = level + " " + counts[level];
+        if (level !== "critical" && level !== "high") {
+          cell.appendChild(el("span", text));
+          return;
+        }
+        const link = cell.appendChild(el("button", text, "level-link level-" + level));
+        link.addEventListener("click", () => go({ ...parseHash(""), tab: "findings", level }));
+      });
+      return cell;
     }
 
     const f = data.footer;
