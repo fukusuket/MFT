@@ -850,7 +850,7 @@ mod tests {
         assert_eq!(
             String::from_utf8(jsonl.finish()?)?.lines().next(),
             Some(
-                r#"{"entry":null,"sequence":null,"in_use":null,"name":null,"path":null,"path_state":"unknown","baseline":null,"findings":[],"si_created":null,"fn_created":null,"diagnostics":["malformed"],"source":"usn","usn":null,"reasons":[],"event_time":null}"#
+                r#"{"entry":null,"sequence":null,"in_use":null,"name":null,"path":null,"path_state":"unknown","baseline":null,"findings":[],"si_created":null,"fn_created":null,"diagnostics":["malformed"],"source":"usn","usn":null,"reasons":[],"event_time":null,"deleted":null,"seen":null,"streams":[],"hints":[]}"#
             )
         );
         Ok(())
