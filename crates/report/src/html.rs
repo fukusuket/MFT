@@ -115,6 +115,7 @@ impl HtmlReport {
                 id: display_text(&finding.id),
                 author: finding.author.as_deref().map(display_text),
                 created: None,
+                fn_created: None,
                 event_time: Some(event.time),
                 usn: Some(event.usn),
                 path: usn_path(row, event)
@@ -155,10 +156,12 @@ impl HtmlReport {
         if row.in_window == Some(false) {
             return; // counted above, listed only in the window
         }
+        let fn_created = resolve::chosen_name(&row.entry.names).map(|name| name.created);
         if row.baseline == Some(Status::Outside) {
             s.outside += 1;
             self.outside.push(OutsideItem {
                 created: row.entry.si_created,
+                fn_created,
                 path: path_text(&row.resolution),
                 entry: row.entry.file_ref.entry(),
                 folder: folder_name(row.folder),
@@ -172,6 +175,7 @@ impl HtmlReport {
                 id: display_text(&finding.id),
                 author: finding.author.as_deref().map(display_text),
                 created: row.entry.si_created,
+                fn_created,
                 event_time: None,
                 usn: None,
                 path: path_text(&row.resolution),
@@ -238,6 +242,9 @@ struct OutsideItem {
     /// `$SI` created time.
     #[serde(serialize_with = "iso8601")]
     created: Option<Filetime>,
+    /// The shown name's `$FN` created time.
+    #[serde(serialize_with = "iso8601")]
+    fn_created: Option<Filetime>,
     path: String,
     entry: u64,
     folder: &'static str,
@@ -286,6 +293,9 @@ struct FindingItem {
     /// `$SI` created time, for a finding on a `$MFT` record.
     #[serde(serialize_with = "iso8601")]
     created: Option<Filetime>,
+    /// The shown name's `$FN` created time, for a finding on a `$MFT` record.
+    #[serde(serialize_with = "iso8601")]
+    fn_created: Option<Filetime>,
     /// USN time, for a finding on a USN record.
     #[serde(serialize_with = "iso8601")]
     event_time: Option<Filetime>,
@@ -619,14 +629,15 @@ mod tests {
             serde_json::json!([
                 {
                     "level": "high", "title": "Title rule-high", "id": "rule-high", "author": null,
-                    "created": null, "event_time": "1601-01-01T00:00:00.0000300Z", "usn": 4156,
+                    "created": null, "fn_created": null, "event_time": "1601-01-01T00:00:00.0000300Z", "usn": 4156,
                     "path": "\\Old\\b.exe", "path_state": "inferred", "entry": 60,
                     "explain": data["findings"][0]["explain"],
                     "deleted": true, "seen": "usn", "streams": [], "hints": [], "folder": "other"
                 },
                 {
                     "level": "high", "title": "Title rule-high", "id": "rule-high", "author": null,
-                    "created": "1601-01-01T00:00:00.0000100Z", "event_time": null, "usn": null,
+                    "created": "1601-01-01T00:00:00.0000100Z", "fn_created": "1601-01-01T00:00:00.0000000Z",
+                    "event_time": null, "usn": null,
                     "path": "\\a.exe", "path_state": "resolved", "entry": 40,
                     "explain": data["findings"][1]["explain"],
                     "deleted": false, "seen": "mft", "streams": [], "hints": [], "folder": "other"
@@ -898,6 +909,50 @@ mod tests {
     }
 
     #[test]
+    fn findings_and_outside_items_carry_fn_created() -> Result<()> {
+        let vwr = "\"DirectoryName\",\"Name\",\"FullName\"\n\"C:\\\",\"x.txt\",\"C:\\x.txt\"\n";
+        let mut file_bytes = Vec::new();
+        baseline::build(vwr.as_bytes(), &mut file_bytes)?;
+        let baseline = baseline::Baseline::load(file_bytes)?;
+        let rules = rules("fn-created", &[("rule-high", "high", "", ".exe")])?;
+        let mut a = created(file(40, 5, "a.exe"), 100);
+        a.names[0].created = Filetime::from_raw(500);
+        let entries = [root(), a];
+        let records = [usn_event(60, 0x8000_0100, 0x20, "b.exe")];
+        let mut dir = file(6 | (1 << 48), 5, "Dir");
+        dir.is_dir = true;
+        let with_dir = [root(), dir, created(file(40, 5, "a.exe"), 100)];
+
+        let mut report = HtmlReport::new(PROVENANCE, input());
+        for row in analyze::rows(&entries, &[], Some(&baseline), Some(&rules), None) {
+            report.add(&row);
+        }
+        for row in analyze::usn_rows(&with_dir, &records, None, Some(&rules), None) {
+            report.add_usn(&row);
+        }
+        let data = decode(payload(&String::from_utf8(report.finish(Vec::new())?)?)?)?;
+
+        let fn_created = |key: &str| -> Vec<serde_json::Value> {
+            data[key]
+                .as_array()
+                .map(|items| items.iter().map(|i| i["fn_created"].clone()).collect())
+                .unwrap_or_default()
+        };
+        assert_eq!(
+            fn_created("findings"),
+            [
+                serde_json::Value::Null,
+                serde_json::json!("1601-01-01T00:00:00.0000500Z")
+            ] // USN first: newer
+        );
+        assert_eq!(
+            fn_created("outside"),
+            [serde_json::json!("1601-01-01T00:00:00.0000500Z")]
+        );
+        Ok(())
+    }
+
+    #[test]
     fn outside_lists_only_outside_baseline_files_newest_first() -> Result<()> {
         let vwr = "\"DirectoryName\",\"Name\",\"FullName\"\n\"C:\\\",\"x.txt\",\"C:\\x.txt\"\n";
         let mut file_bytes = Vec::new();
@@ -918,10 +973,10 @@ mod tests {
         assert_eq!(
             data["outside"],
             serde_json::json!([
-                {"created": "1601-01-01T00:00:00.0000200Z", "path": r"\u.txt", "entry": 44, "folder": "other"},
-                {"created": "1601-01-01T00:00:00.0000200Z", "path": r"\w.txt", "entry": 42, "folder": "other"},
-                {"created": "1601-01-01T00:00:00.0000100Z", "path": r"\y.txt", "entry": 41, "folder": "other"},
-                {"created": null, "path": r"\v.txt", "entry": 43, "folder": "other"},
+                {"created": "1601-01-01T00:00:00.0000200Z", "fn_created": "1601-01-01T00:00:00.0000000Z", "path": r"\u.txt", "entry": 44, "folder": "other"},
+                {"created": "1601-01-01T00:00:00.0000200Z", "fn_created": "1601-01-01T00:00:00.0000000Z", "path": r"\w.txt", "entry": 42, "folder": "other"},
+                {"created": "1601-01-01T00:00:00.0000100Z", "fn_created": "1601-01-01T00:00:00.0000000Z", "path": r"\y.txt", "entry": 41, "folder": "other"},
+                {"created": null, "fn_created": "1601-01-01T00:00:00.0000000Z", "path": r"\v.txt", "entry": 43, "folder": "other"},
             ])
         );
         assert_eq!(data["summary"]["outside"], 4);
