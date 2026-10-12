@@ -105,10 +105,11 @@ const viewer = (function () {
     return { first, last: Math.min(total, first + fit + 1), top: capped ? scrollTop : first * rowHeight };
   }
 
-  function render(document) {
+  // Draws the report into #app and follows the URL hash. Every value is set with textContent:
+  // evidence never becomes markup.
+  function render(document, window) {
     const data = decode(document.getElementById("data").textContent);
 
-    // Every value is set with textContent: evidence never becomes markup.
     function el(tag, text, className) {
       const node = document.createElement(tag);
       if (text !== undefined && text !== null) node.textContent = String(text);
@@ -116,101 +117,72 @@ const viewer = (function () {
       return node;
     }
 
-    // The explain trace is JSON; show it indented, or as is if it doesn't parse.
-    function pretty(text) {
-      try {
-        return JSON.stringify(JSON.parse(text), null, 2);
-      } catch (e) {
-        return text;
+    const screens = {
+      summary: { label: "Summary" },
+      findings: { label: "Findings (" + data.findings.length + ")" },
+      outside: { label: "Outside-baseline (" + data.outside.length + ")" },
+    };
+    const app = document.getElementById("app");
+    const tabs = app.appendChild(el("nav", undefined, "tabs"));
+    for (const [key, screen] of Object.entries(screens)) {
+      screen.tab = tabs.appendChild(el("button", screen.label, "tab"));
+      screen.tab.setAttribute("data-tab", key);
+      screen.tab.addEventListener("click", () => go({ ...state, tab: key }));
+      screen.node = app.appendChild(el("section", undefined, "screen"));
+      screen.node.setAttribute("data-screen", key);
+    }
+
+    let state = parseHash(window.location.hash);
+    function go(next) {
+      state = next;
+      window.location.hash = formatHash(state);
+      draw();
+    }
+    window.addEventListener("hashchange", () => {
+      state = parseHash(window.location.hash);
+      draw();
+    });
+
+    function draw() {
+      const shown = state.tab in screens ? state.tab : "summary";
+      for (const [key, screen] of Object.entries(screens)) {
+        screen.node.style.display = key === shown ? "" : "none";
+        screen.tab.className = key === shown ? "tab selected" : "tab";
       }
     }
 
-    function table(headers, rows) {
-      if (rows.length === 0) return el("p", "None.", "muted");
-      const t = el("table");
-      const head = el("tr");
-      headers.forEach((h) => head.appendChild(el("th", h)));
-      t.appendChild(el("thead")).appendChild(head);
-      const body = el("tbody");
-      rows.forEach((cells) => {
-        const tr = el("tr");
-        cells.forEach((cell) => tr.appendChild(cell));
-        body.appendChild(tr);
-      });
-      t.appendChild(body);
-      return t;
-    }
+    summary(screens.summary.node);
+    draw();
 
-    const s = data.summary;
-    const levels = Object.keys(s.findings).map((k) => k + " " + s.findings[k]).join(", ");
-    const diagnostics = Object.keys(s.diagnostics).map((k) => k + " " + s.diagnostics[k]).join(", ");
-    const w = s.window;
-    const range = w === null
-      ? "none (all rows listed)"
-      : (w.from === null ? "start" : w.from) + " .. " + (w.to === null ? "end" : w.to) + " (" + w.tz + ")";
-    const summary = document.getElementById("summary");
-    [
-      ["Time window (findings and outside-baseline files listed and counted in it)", range],
-      ...(s.warning === null ? [] : [["Warning", s.warning]]),
-      ["Host", s.host],
-      ["Input", s.input],
-      ["MFT record size", s.record_size],
-      ["MFT entries", s.entries],
-      ["Files (in use)", s.files],
-      ["Paths resolved / unknown", s.resolved + " / " + s.unknown],
-      ["Record diagnostics", diagnostics],
-      ["Baseline", s.baseline === null ? "none" : s.baseline],
-      ["Outside-baseline files", s.baseline === null ? "n/a" : s.outside],
-      ["Sigma rules loaded", s.rules],
-      ["Sigma rules skipped (see the skipped-rules CSV/JSONL)", s.skipped_rules],
-      ["Findings by level", levels],
-    ].forEach(([label, value]) => {
-      const tr = el("tr");
-      tr.appendChild(el("th", label));
-      tr.appendChild(el("td", value));
-      summary.appendChild(tr);
-    });
-
-    // Shown next to a finding, never used to order it. One line per fact and per stream, since a
-    // stream name may contain any separator.
-    function facts(f) {
-      const cell = el("td", undefined, "path");
-      const lines = [
-        ...(f.deleted ? ["deleted"] : []),
-        "seen: " + f.seen,
-        ...f.streams.map((s) => "ADS: " + s),
-        ...f.hints,
+    function summary(node) {
+      const s = data.summary;
+      const w = s.window;
+      const rows = [
+        ["Host", s.host],
+        ["Input", s.input + " (" + s.record_size + "-byte records)"],
+        ["USN coverage", s.usn_first === null ? "no USN journal" : s.usn_first + " .. " + s.usn_last],
+        [
+          "Window",
+          w === null
+            ? "none (all rows listed)"
+            : (w.from === null ? "start" : w.from) + " .. " + (w.to === null ? "end" : w.to) + " (" + w.tz + ")",
+        ],
+        ...(s.warning === null ? [] : [["Warning", s.warning]]),
+        ["Findings by level", Object.keys(s.findings).map((k) => k + " " + s.findings[k]).join(", ")],
+        ["Outside-baseline files" + (w === null ? "" : " in the window"), s.baseline === null ? "n/a" : s.outside],
+        ["Baseline", s.baseline === null ? "none" : s.baseline],
+        ["Sigma rules", s.rules + " loaded, " + s.skipped_rules + " skipped (see the skipped-rules CSV/JSONL)"],
+        ["MFT entries / files in use", s.entries + " / " + s.files],
+        ["Paths resolved / unknown", s.resolved + " / " + s.unknown],
+        ["Record diagnostics", Object.keys(s.diagnostics).map((k) => k + " " + s.diagnostics[k]).join(", ")],
       ];
-      lines.forEach((line) => cell.appendChild(el("div", line)));
-      return cell;
+      const table = node.appendChild(el("table", undefined, "summary"));
+      for (const [label, value] of rows) {
+        const tr = table.appendChild(el("tr"));
+        tr.appendChild(el("th", label));
+        tr.appendChild(el("td", value));
+      }
     }
-
-    document.getElementById("findings").appendChild(table(
-      ["Level", "Time ($SI created / USN)", "USN", "Path", "Facts", "Rule", "Author", "Rule id"],
-      data.findings.map((f) => {
-        const rule = el("td");
-        rule.appendChild(el("div", f.title));
-        const details = el("details");
-        details.appendChild(el("summary", "Why it matched"));
-        details.appendChild(el("pre", pretty(f.explain)));
-        rule.appendChild(details);
-        return [
-          el("td", f.level, "level level-" + f.level),
-          el("td", f.created !== null ? f.created : f.event_time, "mono"),
-          el("td", f.usn, "mono"),
-          el("td", f.path_state === "resolved" ? f.path : f.path + " (" + f.path_state + ")", "path"),
-          facts(f),
-          rule,
-          el("td", f.author === null ? "unknown" : f.author),
-          el("td", f.id, "mono"),
-        ];
-      })
-    ));
-
-    document.getElementById("outside").appendChild(table(
-      ["Created ($SI)", "Path", "MFT entry"],
-      data.outside.map((o) => [el("td", o.created, "mono"), el("td", o.path, "path"), el("td", o.entry, "mono")])
-    ));
 
     const f = data.footer;
     document.getElementById("version").textContent = "tool " + f.version;
@@ -222,4 +194,4 @@ const viewer = (function () {
   return { decode, parseHash, formatHash, validTime, matchFinding, matchOutside, rowRange, render };
 })();
 
-if (typeof document !== "undefined") viewer.render(document);
+if (typeof document !== "undefined") viewer.render(document, window);

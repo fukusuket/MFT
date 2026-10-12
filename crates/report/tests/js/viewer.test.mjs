@@ -136,3 +136,63 @@ test("rowRange maps the scroll position to rows, below and above the spacer cap"
   assert.deepEqual(range(0, 400, 20, 3, 8_000_000), { first: 0, last: 3, top: 0 });
   assert.deepEqual(range(0, 400, 20, 0, 8_000_000), { first: 0, last: 0, top: 0 });
 });
+
+import { page } from "./dom.mjs";
+
+// Report data in the shape the Rust side writes.
+const report = {
+  summary: {
+    input: "MFT",
+    host: "not available ($MFT only)",
+    record_size: 1024,
+    entries: 5,
+    files: 3,
+    resolved: 4,
+    unknown: 1,
+    diagnostics: { bad_signature: 0, fixup_mismatch: 0, malformed: 0, truncated: 0, orphan_extension: 0 },
+    baseline: "w11.fst",
+    outside: 2,
+    rules: 3,
+    skipped_rules: 1,
+    window: null,
+    warning: null,
+    usn_first: "2026-10-01T00:00:00.0000000Z",
+    usn_last: "2026-10-03T00:00:00.0000000Z",
+    findings: { critical: 0, high: 1, medium: 0, low: 1, informational: 0, none: 0 },
+  },
+  findings: [
+    finding({ title: "Tool in Downloads", author: null, explain: "{}", usn: null, path_state: "resolved", entry: 40, deleted: false, seen: "mft", streams: ["Zone.Identifier"], hints: [] }),
+    finding({ level: "low", id: "rule-2", folder: "temp", path: "\\Windows\\Temp\\x.dll", title: "DLL in Temp", author: "a", explain: "{}", usn: 64, path_state: "inferred", entry: 41, deleted: true, seen: "usn", streams: [], hints: [] }),
+  ],
+  outside: [
+    { created: "2026-10-02T12:00:00.0000000Z", fn_created: null, path: "\\Users\\Bob\\Downloads\\Tool.EXE", entry: 40, folder: "downloads" },
+    { created: "2026-10-01T00:00:00.0000000Z", fn_created: null, path: "\\Windows\\Temp\\x.dll", entry: 41, folder: "temp" },
+  ],
+  footer: { version: "1.0.0", commit: "abc", source_url: "https://example.com", license: "AGPL-3.0-only" },
+};
+
+function open(hash) {
+  const { document, window } = page(
+    { app: "", data: base64(report), version: "", commit: "", license: "", source: "" },
+    hash,
+  );
+  load().render(document, window);
+  const app = document.getElementById("app");
+  const shown = () => app.findAll("screen").filter((s) => s.style.display !== "none").map((s) => s.getAttribute("data-screen"));
+  return { document, window, app, shown };
+}
+
+test("the URL hash chooses the tab, and the tabs change the hash", () => {
+  const { window, app, shown } = open("#tab=findings");
+
+  assert.deepEqual(shown(), ["findings"]);
+  window.go("#tab=outside");
+  assert.deepEqual(shown(), ["outside"]);
+  window.go("");
+  assert.deepEqual(shown(), ["summary"]);
+  const tabs = app.findAll("tab");
+  assert.deepEqual(tabs.map((t) => t.textContent), ["Summary", "Findings (2)", "Outside-baseline (2)"]);
+  tabs[1].dispatch("click");
+  assert.equal(window.location.hash, "#tab=findings");
+  assert.deepEqual(shown(), ["findings"]);
+});
