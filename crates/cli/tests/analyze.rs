@@ -1952,3 +1952,34 @@ fn rules_from_every_rules_directory_run() -> TestResult {
     assert_eq!(findings, ["high:rule-a", "low:rule-b"]);
     Ok(())
 }
+
+#[test]
+fn an_id_used_in_two_rules_directories_fails_and_writes_nothing() -> TestResult {
+    let dir = scratch("an_id_used_in_two_rules_directories_fails_and_writes_nothing")?;
+    let rule = "title: A\nid: rule-a\nlogsource:\n  category: file_event\ndetection:\n  sel:\n    TargetFilename: x\n  condition: sel\n";
+    let first = rules_dir(&dir, "first", rule)?;
+    let second = rules_dir(&dir, "second", rule)?;
+    std::fs::write(dir.join("MFT"), small_volume_mft())?;
+
+    let out = tool()
+        .args(["analyze", "-i"])
+        .arg(dir.join("MFT"))
+        .arg("--csv")
+        .arg(dir.join("out.csv"))
+        .arg("--rules")
+        .arg(&first)
+        .arg("--rules")
+        .arg(&second)
+        .output()?;
+
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(1), "{stderr}");
+    assert!(
+        stderr.contains("rule-a") && stderr.contains("second"),
+        "{stderr}"
+    );
+    assert!(!dir.join("out.csv").exists());
+    assert!(!dir.join("out.skipped-rules.csv").exists());
+    assert_no_temporary_outputs(&dir)?;
+    Ok(())
+}
