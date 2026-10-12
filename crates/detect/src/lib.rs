@@ -272,6 +272,44 @@ mod tests {
     }
 
     #[test]
+    fn emitted_lists_every_category_service_and_field_of_the_events() {
+        let exe = name("x.exe");
+        let mut events: Vec<Event> = file_event(
+            &file(1, 1),
+            &Resolution::Resolved(vec![&exe]),
+            Some(Status::Outside),
+        )
+        .into_iter()
+        .collect();
+        let every = 0x100 | 0x200 | 0x2000 | 0x8000 | CLOSE;
+        events.extend(usn_events(
+            &usn(every),
+            r"\x.exe",
+            Some(r"\x.txt"),
+            Some(Status::Outside),
+        ));
+
+        for event in &events {
+            assert_eq!(event.product, EMITTED.product);
+            assert!(EMITTED.categories.contains(&event.category), "{event:?}");
+            assert!(
+                event.service.is_none_or(|s| EMITTED.services.contains(&s)),
+                "{event:?}"
+            );
+            for (field, _) in &event.fields {
+                assert!(EMITTED.fields.contains(field), "{field}");
+            }
+        }
+        let categories: Vec<&str> = events.iter().map(|e| e.category).collect();
+        assert_eq!(categories.len(), 5);
+        assert!(
+            events
+                .iter()
+                .any(|e| e.fields.iter().any(|(f, _)| *f == "SourceFilename"))
+        );
+    }
+
+    #[test]
     fn file_event_has_target_filename_with_drive_and_both_created_times() {
         let (windows, temp, exe) = (name("Windows"), name("Temp"), name("x.exe"));
         let resolution = Resolution::Resolved(vec![&windows, &temp, &exe]);
