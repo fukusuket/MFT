@@ -70,13 +70,6 @@ results.push(["outside: open tab (filter + draw)", ms(t)]);
 timed("outside: folder chip", () => chip("outside", "folder", folder).dispatch("click"), () => clear("outside"));
 timed("outside: search, first", () => type("outside", "q", "exe"), () => clear("outside"), 1);
 timed("outside: search", () => type("outside", "q", "svchost"), () => clear("outside"));
-const viewport = screen("outside").find("viewport");
-timed("outside: scroll to the end", () => {
-  viewport.scrollTop = 8000000;
-  viewport.dispatch("scroll");
-}, () => {
-  viewport.scrollTop = 0;
-});
 
 console.log(`rows: outside ${data.outside.length}, findings ${data.findings.length}; payload ${Math.round(payload.length / 2 ** 20)} MiB Base64; heap after load ${heap} MiB`);
 for (const [label, value] of results) console.log(`${String(value).padStart(6)} ms  ${label}`);

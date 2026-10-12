@@ -318,8 +318,7 @@ const viewer = (function () {
       });
       const pane = node.appendChild(el("div", "Select a row to see its full path.", "detail"));
       screen.redraws.push(() => {
-        const query = { ...state, q: state.q.toLowerCase() };
-        const shown = data.outside.filter((o, i) => matchOutside(o, query, texts[i]));
+        const shown = data.outside.filter((o, i) => matchOutside(o, state, texts[i]));
         count.textContent = shown.length + " of " + data.outside.length;
         show(shown);
       });
@@ -353,8 +352,7 @@ const viewer = (function () {
         );
       }
       screen.redraws.push(() => {
-        const query = { ...state, q: state.q.toLowerCase() };
-        const shown = data.findings.filter((f, i) => matchFinding(f, query, texts[i]));
+        const shown = data.findings.filter((f, i) => matchFinding(f, state, texts[i]));
         count.textContent = shown.length + " of " + data.findings.length;
         show(shown);
       });
