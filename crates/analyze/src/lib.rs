@@ -18,6 +18,8 @@ pub struct Row<'a> {
     pub findings: Vec<Finding>,
     /// Whether the file shows up in the `$MFT`, the USN journal or both.
     pub seen: Seen,
+    /// Timestamp-manipulation hints, in [`Hint`] order.
+    pub hints: Vec<Hint>,
 }
 
 /// Where a file shows up: by (entry, sequence), in the `$MFT`, the USN journal or both.
@@ -26,6 +28,15 @@ pub enum Seen {
     Mft,
     Usn,
     Both,
+}
+
+/// A fact about `$SI` created that timestomping often leaves; shown, never scored.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Hint {
+    /// `$SI` created is before the shown name's `$FN` created.
+    SiBeforeFn,
+    /// `$SI` created has no sub-second part.
+    SiZeroSubseconds,
 }
 
 /// One row per entry, in entry order. Lazy, so only one path is held at a time.
@@ -68,9 +79,28 @@ pub fn rows<'a>(
             } else {
                 Seen::Mft
             },
+            hints: hints(entry),
         }
     })
 }
+
+/// The [`Hint`]s for `entry`'s `$SI` created, compared with its shown name's `$FN` created.
+fn hints(entry: &Entry) -> Vec<Hint> {
+    let Some(si) = entry.si_created else {
+        return Vec::new();
+    };
+    let mut hints = Vec::new();
+    if resolve::chosen_name(&entry.names).is_some_and(|name| si < name.created) {
+        hints.push(Hint::SiBeforeFn);
+    }
+    if si.raw() % TICKS_PER_SECOND == 0 {
+        hints.push(Hint::SiZeroSubseconds);
+    }
+    hints
+}
+
+/// FILETIME counts 100 ns ticks.
+const TICKS_PER_SECOND: u64 = 10_000_000;
 
 /// One USN row: a record from `$J` and the directory its parent reference pointed to when the
 /// record was written (Rewind).
@@ -296,6 +326,36 @@ mod tests {
             .collect();
 
         assert_eq!(seen, [Seen::Mft, Seen::Both, Seen::Mft]);
+    }
+
+    #[test]
+    fn si_created_before_fn_created_or_without_sub_seconds_are_hints() {
+        let times = |si: Option<u64>, fn_created: u64| {
+            let mut e = entry(40, 5, "a.txt");
+            e.si_created = si.map(Filetime::from_raw);
+            e.names[0].created = Filetime::from_raw(fn_created);
+            e
+        };
+        let entries = [
+            times(Some(100_000_000), 200_000_000), // 10 s exactly, before $FN
+            times(Some(123_456_789), 123_456_789), // same time
+            times(Some(123_456_789), 123_456_790), // 100 ns before $FN
+            times(Some(123_456_789), 0),
+            times(None, 200_000_000),
+        ];
+
+        let hints: Vec<Vec<Hint>> = rows(&entries, &[], None, None).map(|r| r.hints).collect();
+
+        assert_eq!(
+            hints,
+            [
+                vec![Hint::SiBeforeFn, Hint::SiZeroSubseconds],
+                vec![],
+                vec![Hint::SiBeforeFn],
+                vec![],
+                vec![],
+            ]
+        );
     }
 
     #[test]
