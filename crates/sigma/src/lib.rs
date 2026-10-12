@@ -155,23 +155,22 @@ impl Rules {
                     )));
                 }
                 ids.push(id.clone());
-                loaded.push((skip(Some(id.clone()), Some(rule.title.clone()), ""), rule));
+                loaded.push((n, shown.clone(), rule));
             }
         }
         // One batch: each separate add rebuilds the engine's rule index, which is quadratic.
         // The engine keeps the rules it can compile and reports the others.
         let mut engine = Engine::new();
-        for (at, e) in engine.add_rules(loaded.iter().map(|(_, rule)| rule)) {
-            if let Some(((n, entry), _)) = loaded.get(at) {
-                let reason = format!("engine: {e}");
-                ids.retain(|id| entry.id.as_ref() != Some(id));
-                skipped.push((
-                    *n,
-                    Skipped {
-                        reason,
-                        ..entry.clone()
-                    },
-                ));
+        for (at, e) in engine.add_rules(loaded.iter().map(|(_, _, rule)| rule)) {
+            if let Some((n, file, rule)) = loaded.get(at) {
+                ids.retain(|id| rule.id.as_ref() != Some(id));
+                let entry = Skipped {
+                    file: file.clone(),
+                    id: rule.id.clone(),
+                    title: Some(rule.title.clone()),
+                    reason: format!("engine: {e}"),
+                };
+                skipped.push((*n, entry));
             }
         }
         skipped.sort_by_key(|&(n, _)| n);
