@@ -1103,12 +1103,8 @@ fn sample_rules_skip_system_binaries_in_winsxs() -> TestResult {
     Ok(())
 }
 
-/// Runs the sample rules on a volume holding `files` (paths like `\Users\x.exe`, directories
-/// created on the way), with a baseline that knows only `C:\Windows\notepad.exe`, and returns
-/// each file's path and `findings` cell, in input order.
-fn sample_findings(test: &str, files: &[&str]) -> Result<Vec<(String, String)>, Box<dyn Error>> {
-    let dir = scratch(test)?;
-    let (input, csv) = (dir.join("MFT"), dir.join("out.csv"));
+/// Writes a `$MFT` holding `files` (paths like `\Users\x.exe`), directories created on the way.
+fn write_volume(input: &std::path::Path, files: &[&str]) -> TestResult {
     let at = |parent: u32| u64::from(parent) | (1 << 48);
     let entry = |flags: u16, entry: u32, parent: u32, name: &str| {
         record_with_flags(
@@ -1145,7 +1141,17 @@ fn sample_findings(test: &str, files: &[&str]) -> Result<Vec<(String, String)>, 
         mft.extend(entry(0x01, next, parent, name));
         next += 1;
     }
-    std::fs::write(&input, mft)?;
+    std::fs::write(input, mft)?;
+    Ok(())
+}
+
+/// Runs the sample rules on a volume holding `files` (see [`write_volume`]), with a baseline
+/// that knows only `C:\Windows\notepad.exe`, and returns each file's path and `findings` cell,
+/// in input order.
+fn sample_findings(test: &str, files: &[&str]) -> Result<Vec<(String, String)>, Box<dyn Error>> {
+    let dir = scratch(test)?;
+    let (input, csv) = (dir.join("MFT"), dir.join("out.csv"));
+    write_volume(&input, files)?;
 
     let out = tool()
         .args(["analyze", "-i"])
@@ -1172,6 +1178,50 @@ fn sample_findings(test: &str, files: &[&str]) -> Result<Vec<(String, String)>, 
             ((*file).to_string(), findings)
         })
         .collect())
+}
+
+#[test]
+fn the_report_names_the_edition_and_warns_when_the_baseline_lacks_it() -> TestResult {
+    let dir = scratch("the_report_names_the_edition_and_warns_when_the_baseline_lacks_it")?;
+    let input = dir.join("MFT");
+    write_volume(
+        &input,
+        &[r"\Windows\System32\spp\tokens\skus\ServerStandardEval\x.xrm-ms"],
+    )?;
+    let summary = |vwr_path: &str| {
+        let (vwr, index, html) = (dir.join("vwr.csv"), dir.join("b.fst"), dir.join("r.html"));
+        std::fs::write(&vwr, format!("\"FullName\"\n\"{vwr_path}\"\n"))?;
+        let built = tool()
+            .args(["baseline", "build", "--vwr"])
+            .arg(&vwr)
+            .arg("-o")
+            .arg(&index)
+            .status()?;
+        let analyzed = tool()
+            .args(["analyze", "-i"])
+            .arg(&input)
+            .arg("-o")
+            .arg(&html)
+            .arg("--baseline")
+            .arg(&index)
+            .status()?;
+        if !(built.success() && analyzed.success()) {
+            return Err::<serde_json::Value, Box<dyn Error>>("tool failed".into());
+        }
+        Ok(report_data(&std::fs::read_to_string(&html)?)?["summary"].clone())
+    };
+
+    let other = summary(r"C:\Windows\System32\spp\tokens\skus\Professional\x.xrm-ms")?;
+    let same = summary(r"C:\Windows\System32\spp\tokens\skus\ServerStandardEval\x.xrm-ms")?;
+
+    assert_eq!(other["edition"], "ServerStandardEval");
+    assert_eq!(
+        other["baseline_warning"],
+        "This host's edition (ServerStandardEval) is not in the baseline b.fst, so its Windows files show as outside-baseline. Use a baseline built from the same edition."
+    );
+    assert_eq!(same["edition"], "ServerStandardEval");
+    assert_eq!(same.get("baseline_warning"), None);
+    Ok(())
 }
 
 /// Whether a `findings` cell lists `level:id`.
