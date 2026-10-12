@@ -127,7 +127,7 @@ Goal: add `$J` to the same end-to-end path: USN events with their paths at the t
 - [x] **P2-6 Load external rule sets** (`sigma`, `cli`)
   - Done when: `--rules` may be repeated. A rule the engine cannot use (correlation, unknown modifier or field, a logsource we never emit, a missing `id`) is skipped with a diagnostic naming the file and the reason. Skipped rules are counted in the HTML summary and listed in a CSV/JSONL side output, never silently dropped. A duplicate `id` across directories is still an error. Tests use small rules written for the test, in the shape of SigmaHQ rules; no third-party rule text is copied. Changes the expectation of `a_rule_without_id_fails_with_a_message_not_a_panic` (H5, approved with this item).
   - Out of scope: shipping or fetching external rules, `tool rules update`, `explain` texts.
-- [ ] **P2-7 Facts** (`analyze`, `report`)
+- [x] **P2-7 Facts** (`analyze`, `report`)
   - Done when: each row carries facts, shown next to findings and never used to order them. The facts are: deleted, seen in MFT/USN/both, ADS names (incl. `Zone.Identifier`), and timestomp hints (`$SI` created < `$FN` created; zero sub-seconds). They appear as CSV and JSONL columns and in HTML finding rows, with an e2e test per fact.
   - Out of scope: owner SID (`$SDS`, Phase 3), `Zone.Identifier` content, new rules on facts.
 - [ ] **P2-8 Time window** (`cli`, `analyze`, `report`)

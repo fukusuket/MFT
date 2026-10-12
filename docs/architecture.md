@@ -60,7 +60,16 @@ USN events come from the record with `CLOSE`, which carries every reason of its 
 Data writes (`DATA_*`) are not events. An operation still open at the end of `$J` has no closing record and gives no event.
 A rule without `category` matches each event of a record, so it can list the same finding twice. USN baseline status uses the path whenever it is known, `inferred` included: those names come from the journal, not guesses.
 
-Facts shown next to findings, never used to rank them: baseline status, timestomp hints (`$SI < $FN`, zero sub-seconds), Zone.Identifier, ADS, deleted, path-resolution state (`resolved`/`inferred`/`unknown`), seen in MFT/USN/both, owner SID.
+Facts shown next to findings, never used to rank them: baseline status, path-resolution state (`resolved`/`inferred`/`unknown`), and:
+
+| Fact | `$MFT` row | USN row |
+|---|---|---|
+| `deleted` | Not in use | The `$MFT` has no in-use entry with the event's entry and sequence |
+| `seen` | `both` if `$J` has an event with its entry and sequence, else `mft` | `both` if the `$MFT` has that entry and sequence, else `usn` |
+| `streams` | Names of named `$DATA` attributes (ADS, `Zone.Identifier` included) | — |
+| `hints` | `si_before_fn` (`$SI` created < shown name's `$FN` created), `si_zero_subseconds` (`$SI` created) | — |
+
+Owner SID (`$SDS`) comes later.
 
 ## Crates
 
