@@ -78,13 +78,13 @@ fn analyze_writes_one_csv_row_per_record_with_paths() -> TestResult {
     assert!(status.success());
     assert_eq!(
         std::fs::read_to_string(&csv).unwrap_or_default(),
-        "entry,sequence,in_use,name,path,path_state,baseline,findings,si_created,fn_created,diagnostics,source,usn,reasons,event_time\n\
-         0,1,true,$MFT,\\$MFT,resolved,,,2019-04-17T18:40:00.0000000Z,1601-01-01T00:00:00.0000000Z,,mft,,,\n\
-         5,1,true,.,\\,resolved,,,2019-04-17T18:40:00.0000000Z,1601-01-01T00:00:00.0000000Z,,mft,,,\n\
-         6,1,true,Users,\\Users,resolved,,,2019-04-17T18:40:00.0000000Z,1601-01-01T00:00:00.0000000Z,,mft,,,\n\
-         7,1,true,a.txt,\\Users\\a.txt,resolved,,,2019-04-17T18:40:00.0000000Z,1601-01-01T00:00:00.0000000Z,,mft,,,\n\
-         8,1,true,old.txt,,unknown,,,2019-04-17T18:40:00.0000000Z,1601-01-01T00:00:00.0000000Z,,mft,,,\n\
-         9,0,false,,,unknown,,,,,bad_signature,mft,,,\n"
+        "entry,sequence,in_use,name,path,path_state,baseline,findings,si_created,fn_created,diagnostics,source,usn,reasons,event_time,deleted,seen,streams,hints\n\
+         0,1,true,$MFT,\\$MFT,resolved,,,2019-04-17T18:40:00.0000000Z,1601-01-01T00:00:00.0000000Z,,mft,,,,false,mft,,si_zero_subseconds\n\
+         5,1,true,.,\\,resolved,,,2019-04-17T18:40:00.0000000Z,1601-01-01T00:00:00.0000000Z,,mft,,,,false,mft,,si_zero_subseconds\n\
+         6,1,true,Users,\\Users,resolved,,,2019-04-17T18:40:00.0000000Z,1601-01-01T00:00:00.0000000Z,,mft,,,,false,mft,,si_zero_subseconds\n\
+         7,1,true,a.txt,\\Users\\a.txt,resolved,,,2019-04-17T18:40:00.0000000Z,1601-01-01T00:00:00.0000000Z,,mft,,,,false,mft,,si_zero_subseconds\n\
+         8,1,true,old.txt,,unknown,,,2019-04-17T18:40:00.0000000Z,1601-01-01T00:00:00.0000000Z,,mft,,,,false,mft,,si_zero_subseconds\n\
+         9,0,false,,,unknown,,,,,bad_signature,mft,,,,true,mft,,\n"
     );
     assert_no_temporary_outputs(&dir)?;
     Ok(())
@@ -1412,7 +1412,7 @@ fn same_input_with_usn_gives_byte_identical_outputs() -> TestResult {
 
     let first = run(1)?;
     assert_eq!(run(2)?, first);
-    assert!(first.0.ends_with(b"unsupported_version,usn,,,\n")); // the V4 row comes last
+    assert!(first.0.ends_with(b"unsupported_version,usn,,,,,,,\n")); // the V4 row comes last
     Ok(())
 }
 
