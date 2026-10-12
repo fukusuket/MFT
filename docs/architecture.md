@@ -71,6 +71,21 @@ Facts shown next to findings, never used to rank them: baseline status, path-res
 
 An entry's file is its entry and sequence number; for a deleted entry, the sequence number before the delete (NTFS bumps it on free, as Rewind assumes). `streams` and `hints` come from the `$MFT` and are empty on USN rows. Owner SID (`$SDS`) comes later.
 
+## Folder
+
+Each row's `folder` says where the file sits, judged by the directories above it (not its own name), comparing whole names case-insensitively (ASCII). The first match wins:
+
+| `folder` | Directories start with |
+|---|---|
+| `public` | `Users\Public` |
+| `downloads`, `desktop`, `documents` | `Users\<name>\` that folder |
+| `temp` | any directory named `Temp` |
+| `appdata` | `Users\<name>\AppData` |
+| `user_profile` | `Users\<name>` |
+| `programdata`, `program_files`, `windows` | `ProgramData`; `Program Files` or `Program Files (x86)`; `Windows` |
+| `other` | anything else with a known path |
+| `no_path` | unknown path (USN: unknown directory) |
+
 ## Time window
 
 `--from`/`--to`/`--tz` give a window `[start, end)` in UTC. A date-only `--to` ends at the end of that day; `--to` with a time, at the end of that second. Detection runs on every row; the window only selects what the HTML lists and counts, and CSV/JSONL mark each row `in_window` (empty without a window).
