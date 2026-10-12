@@ -1104,7 +1104,8 @@ fn sample_rules_skip_system_binaries_in_winsxs() -> TestResult {
 }
 
 /// Runs the sample rules on a volume holding `files` (paths like `\Users\x.exe`, directories
-/// created on the way) and returns each file's path and `findings` cell, in input order.
+/// created on the way), with a baseline that knows only `C:\Windows\notepad.exe`, and returns
+/// each file's path and `findings` cell, in input order.
 fn sample_findings(test: &str, files: &[&str]) -> Result<Vec<(String, String)>, Box<dyn Error>> {
     let dir = scratch(test)?;
     let (input, csv) = (dir.join("MFT"), dir.join("out.csv"));
@@ -1151,6 +1152,8 @@ fn sample_findings(test: &str, files: &[&str]) -> Result<Vec<(String, String)>, 
         .arg(&input)
         .arg("--csv")
         .arg(&csv)
+        .arg("--baseline")
+        .arg(notepad_baseline(&dir)?)
         .arg("--rules")
         .arg(SAMPLE_RULES)
         .output()?;
@@ -1235,6 +1238,32 @@ fn executables_in_temp_are_low() -> TestResult {
     let hit = format!("low:{TEMP}");
     let matched: Vec<bool> = findings.iter().map(|(_, f)| has_finding(f, &hit)).collect();
     assert_eq!(matched, [true, true, false, false, false], "{findings:?}");
+    Ok(())
+}
+
+#[test]
+fn outside_baseline_windows_binaries_skip_temp_and_servicing_folders() -> TestResult {
+    const OUTSIDE: &str = "290fe785-b499-4e25-b00f-70a4ae863c2f";
+    let findings = sample_findings(
+        "outside_baseline_windows_binaries_skip_temp_and_servicing_folders",
+        &[
+            r"\Windows\WinSxS\Temp\InFlight\0a1b\amd64_x\x.dll",
+            r"\Windows\SystemTemp\1184672A\DefenderCSP.dll",
+            r"\Windows\temp\unpack\x.exe",
+            r"\Windows\Installer\MSI65E.tmp-\x.dll",
+            r"\Windows\System32\FontsCache\FontsCache.exe",
+            r"\Windows\WinSxS\amd64_x\x.dll",
+            r"\Windows\Temp2\x.exe",
+        ],
+    )?;
+
+    let hit = format!("high:{OUTSIDE}");
+    let matched: Vec<bool> = findings.iter().map(|(_, f)| has_finding(f, &hit)).collect();
+    assert_eq!(
+        matched,
+        [false, false, false, false, true, true, true],
+        "{findings:?}"
+    );
     Ok(())
 }
 
