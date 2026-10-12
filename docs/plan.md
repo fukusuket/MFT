@@ -124,7 +124,7 @@ Goal: add `$J` to the same end-to-end path: USN events with their paths at the t
 - [x] **P2-5 Own generic USN rules** (`testdata/rules`; ADR 0016, ADR 0019)
   - Done when: 3–5 rules that use only generic facts (no product or tool names). The list and levels are approved at H1; candidates are `.evtx` deleted, a file renamed to an executable extension, and an executable deleted from Temp or Public. Each has one e2e test with a near-miss. A run on the 10 local hosts reports per-rule, per-level counts in the hand-over.
   - Out of scope: external rules, the `tool-rules` repo, correlations.
-- [ ] **P2-6 Load external rule sets** (`sigma`, `cli`)
+- [x] **P2-6 Load external rule sets** (`sigma`, `cli`)
   - Done when: `--rules` may be repeated. A rule the engine cannot use (correlation, unknown modifier or field, a logsource we never emit, a missing `id`) is skipped with a diagnostic naming the file and the reason. Skipped rules are counted in the HTML summary and listed in a CSV/JSONL side output, never silently dropped. A duplicate `id` across directories is still an error. Tests use small rules written for the test, in the shape of SigmaHQ rules; no third-party rule text is copied. Changes the expectation of `a_rule_without_id_fails_with_a_message_not_a_panic` (H5, approved with this item).
   - Out of scope: shipping or fetching external rules, `tool rules update`, `explain` texts.
 - [ ] **P2-7 Facts** (`analyze`, `report`)
