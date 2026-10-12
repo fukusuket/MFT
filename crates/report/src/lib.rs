@@ -184,6 +184,14 @@ fn streams_cell(streams: &[NtfsName]) -> String {
     cell_text(&names.join(";"))
 }
 
+/// Stream names as display text, one each.
+fn stream_names(streams: &[NtfsName]) -> Vec<String> {
+    streams
+        .iter()
+        .map(|s| display_text(&s.to_string()))
+        .collect()
+}
+
 /// A USN event's file is deleted unless the `$MFT` still has it in use.
 fn usn_deleted(row: &UsnRow<'_>) -> bool {
     row.entry.is_none_or(|entry| !entry.in_use)

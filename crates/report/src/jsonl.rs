@@ -9,7 +9,7 @@ use sigma::Finding;
 
 use crate::{
     Error, baseline_name, code, display_text, hint_names, level_name, path_state, reason_names,
-    seen_name, usn_code, usn_deleted, usn_path, usn_seen,
+    seen_name, stream_names, usn_code, usn_deleted, usn_path, usn_seen,
 };
 
 /// JSON Lines with one object per `$MFT` record.
@@ -44,11 +44,7 @@ impl<W: Write> JsonlWriter<W> {
             event_time: None,
             deleted: Some(!entry.in_use),
             seen: Some(seen_name(row.seen)),
-            streams: entry
-                .streams
-                .iter()
-                .map(|s| display_text(&s.to_string()))
-                .collect(),
+            streams: stream_names(&entry.streams),
             hints: hint_names(&row.hints),
         };
         self.line(&record)

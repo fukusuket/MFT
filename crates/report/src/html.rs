@@ -12,8 +12,8 @@ use sigma::Level;
 
 use crate::base64::Encoder;
 use crate::{
-    Error, display_text, hint_names, level_name, path_state, seen_name, usn_deleted, usn_path,
-    usn_seen,
+    Error, display_text, hint_names, level_name, path_state, seen_name, stream_names, usn_deleted,
+    usn_path, usn_seen,
 };
 
 const TEMPLATE: &str = include_str!("template.html");
@@ -148,12 +148,7 @@ impl HtmlReport {
                 explain: display_text(&finding.explain),
                 deleted: !row.entry.in_use,
                 seen: seen_name(row.seen),
-                streams: row
-                    .entry
-                    .streams
-                    .iter()
-                    .map(|s| display_text(&s.to_string()))
-                    .collect(),
+                streams: stream_names(&row.entry.streams),
                 hints: hint_names(&row.hints),
             });
         }
