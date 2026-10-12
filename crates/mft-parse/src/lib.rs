@@ -202,6 +202,16 @@ pub fn merge_extensions(mut entries: Vec<Entry>, record_size: u64) -> Vec<Entry>
             Some(base) => {
                 let names = std::mem::take(&mut entries[ext].names);
                 let diagnostics = std::mem::take(&mut entries[ext].diagnostics);
+                for stream in std::mem::take(&mut entries[ext].streams) {
+                    // A large stream's attribute is split across records under the same name.
+                    if !entries[base]
+                        .streams
+                        .iter()
+                        .any(|s| s.units() == stream.units())
+                    {
+                        entries[base].streams.push(stream);
+                    }
+                }
                 entries[base].names.extend(names);
                 entries[base].diagnostics.extend(diagnostics);
             }

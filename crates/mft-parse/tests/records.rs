@@ -614,3 +614,29 @@ fn named_data_attributes_are_streams_and_other_attributes_are_not() -> TestResul
     assert_eq!(streams, ["Zone.Identifier", "x"]);
     Ok(())
 }
+
+#[test]
+fn extension_streams_move_to_the_base_once() -> TestResult {
+    let mut mft = record(
+        1024,
+        true,
+        0,
+        &[standard_information(), data(&u16s("a"), b"", 1)],
+    );
+    mft.extend(extension(
+        1024,
+        true,
+        1,
+        1 << 48,
+        &[data(&u16s("a"), b"", 1), data(&u16s("b"), b"", 2)],
+    ));
+
+    let merged = mft_parse::merge_extensions(parse(mft)?, 1024);
+
+    let streams: Vec<Vec<String>> = merged
+        .iter()
+        .map(|e| e.streams.iter().map(ToString::to_string).collect())
+        .collect();
+    assert_eq!(streams, [vec!["a".to_string(), "b".to_string()]]);
+    Ok(())
+}
