@@ -18,6 +18,14 @@ use crate::{
 
 const TEMPLATE: &str = include_str!("template.html");
 const PLACEHOLDER: &str = "__REPORT_DATA__";
+const VIEWER: &str = include_str!("viewer.js");
+const VIEWER_PLACEHOLDER: &str = "__VIEWER__";
+
+/// The page before and after the data: the template with the viewer script inlined.
+fn page() -> (&'static str, String) {
+    let (head, tail) = TEMPLATE.split_once(PLACEHOLDER).unwrap_or((TEMPLATE, ""));
+    (head, tail.replacen(VIEWER_PLACEHOLDER, VIEWER, 1))
+}
 
 /// Build facts shown in the footer (AGPL notice, ADR 0001).
 #[derive(Debug, Clone, Copy, Serialize)]
@@ -221,7 +229,7 @@ impl HtmlReport {
                 license: "AGPL-3.0-only",
             },
         };
-        let (head, tail) = TEMPLATE.split_once(PLACEHOLDER).unwrap_or((TEMPLATE, ""));
+        let (head, tail) = page();
         out.write_all(head.as_bytes())?;
         // Streamed: the JSON and its Base64 are each about as large as the report (Phase 1 gate).
         // The buffer hands the encoder large chunks instead of serde's many small writes.
@@ -414,12 +422,12 @@ mod tests {
 
     /// The Base64 payload between the template's halves.
     fn payload(html: &str) -> Result<&str> {
-        let (head, tail) = TEMPLATE.split_once(PLACEHOLDER).ok_or("no placeholder")?;
+        let (head, tail) = page();
         let rest = html
             .strip_prefix(head)
             .ok_or("head differs from the template")?;
         Ok(rest
-            .strip_suffix(tail)
+            .strip_suffix(tail.as_str())
             .ok_or("tail differs from the template")?)
     }
 
