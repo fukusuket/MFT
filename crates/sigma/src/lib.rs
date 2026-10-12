@@ -121,7 +121,11 @@ impl Rules {
                     },
                 )
             };
-            let text = std::fs::read_to_string(&file).map_err(|e| Error::Io(file.clone(), e))?;
+            let bytes = std::fs::read(&file).map_err(|e| Error::Io(file.clone(), e))?;
+            let Ok(text) = String::from_utf8(bytes) else {
+                skipped.push(skip(None, None, "parse: not UTF-8"));
+                continue;
+            };
             let collection = match parse_sigma_yaml(&text) {
                 Ok(collection) => collection,
                 Err(e) => {
@@ -624,6 +628,22 @@ mod tests {
             .collect();
         assert_eq!(rules.ids, ["rule-a"]);
         assert_eq!(skipped, [("broken.yml", true), ("nodetect.yml", true)]);
+        Ok(())
+    }
+
+    #[test]
+    fn a_rule_file_that_is_not_utf8_is_skipped_as_a_parse_problem() -> Result<(), Error> {
+        let dir = rule_dir("latin1", &[("a.yml", &rule("rule-a", "A", ""))]);
+        let _ = std::fs::write(dir.join("b.yml"), b"title: caf\xe9\n");
+
+        let rules = Rules::load(&[dir.as_path()], &EMITTED)?;
+
+        let reasons: Vec<&str> = rules.skipped().iter().map(|s| s.reason.as_str()).collect();
+        assert_eq!(rules.ids, ["rule-a"]);
+        assert!(
+            matches!(reasons.as_slice(), [r] if r.starts_with("parse: ")),
+            "{reasons:?}"
+        );
         Ok(())
     }
 
