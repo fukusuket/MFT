@@ -68,24 +68,27 @@ const viewer = (function () {
     );
   }
 
+  // The filters both lists share: folder and a case-insensitive path search.
+  function matchPlace(row, state) {
+    return (
+      (state.folder === "" || row.folder === state.folder) &&
+      (state.q === "" || row.path.toLowerCase().includes(state.q.toLowerCase()))
+    );
+  }
+
   // Whether a finding passes every filter that is set.
   function matchFinding(f, state) {
     return (
       (state.level === "" || f.level === state.level) &&
       (state.rule === "" || f.id === state.rule) &&
-      (state.folder === "" || f.folder === state.folder) &&
-      (state.q === "" || f.path.toLowerCase().includes(state.q.toLowerCase())) &&
+      matchPlace(f, state) &&
       inRange([f.created, f.fn_created, f.event_time], state)
     );
   }
 
   // Whether an outside-baseline file passes the folder, time and path filters.
   function matchOutside(o, state) {
-    return (
-      (state.folder === "" || o.folder === state.folder) &&
-      (state.q === "" || o.path.toLowerCase().includes(state.q.toLowerCase())) &&
-      inRange([o.created, o.fn_created], state)
-    );
+    return matchPlace(o, state) && inRange([o.created, o.fn_created], state);
   }
 
   function render(document) {
