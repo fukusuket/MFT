@@ -97,27 +97,29 @@ impl Rules {
         let mut skipped = Vec::new();
         for (shown, file) in files {
             let rule_error = |e: &dyn std::fmt::Display| Error::Rule(file.clone(), e.to_string());
+            let skip = |id, title, reason: &str| Skipped {
+                file: shown.clone(),
+                id,
+                title,
+                reason: reason.to_string(),
+            };
             let text = std::fs::read_to_string(&file).map_err(|e| Error::Io(file.clone(), e))?;
             let collection = parse_sigma_yaml(&text).map_err(|e| rule_error(&e))?;
             // The parser keeps going past bad documents and lists them here.
             if let Some(first) = collection.errors.first() {
                 return Err(rule_error(first));
             }
-            // Phase 1 runs detection rules only; refuse what would otherwise be silently ignored.
-            if !collection.correlations.is_empty() || !collection.filters.is_empty() {
-                return Err(rule_error(
-                    &"correlation and filter rules are not supported yet",
-                ));
+            // Detection rules only so far; the others are listed, never silently ignored.
+            let others = (collection.correlations.into_iter())
+                .map(|c| (c.id, c.title, "correlation rule"))
+                .chain((collection.filters.into_iter()).map(|f| (f.id, f.title, "filter rule")));
+            for (id, title, reason) in others {
+                skipped.push(skip(id, Some(title), reason));
             }
             for rule in collection.rules {
                 // Detections link to rules by id only, so a rule without one is unusable (ADR 0003).
                 let Some(id) = &rule.id else {
-                    skipped.push(Skipped {
-                        file: shown.clone(),
-                        id: None,
-                        title: Some(rule.title),
-                        reason: "no id".to_string(),
-                    });
+                    skipped.push(skip(None, Some(rule.title), "no id"));
                     continue;
                 };
                 if authors.insert(id.clone(), rule.author.clone()).is_some() {
@@ -536,19 +538,28 @@ mod tests {
     }
 
     #[test]
-    fn correlation_and_filter_documents_are_errors_until_supported() {
+    fn correlation_and_filter_documents_are_skipped_but_the_rules_beside_them_load()
+    -> Result<(), Error> {
         let correlation = "title: C\nid: c\ncorrelation:\n  type: event_count\n  rules:\n    - rule-a\n  group-by:\n    - TargetFilename\n  timespan: 5m\n  condition:\n    gte: 2\n";
         let filter = "title: F\nid: f\nlogsource:\n  category: file_event\nfilter:\n  rules:\n    - rule-a\n  selection:\n    TargetFilename|endswith: '.tmp'\n  condition: selection\n";
-        for (name, text) in [("corr.yml", correlation), ("filter.yml", filter)] {
-            let doc = format!("{}---\n{text}", rule("rule-a", "A", ""));
-            let dir = rule_dir(name, &[(name, &doc)]);
+        let doc = format!("{}---\n{correlation}---\n{filter}", rule("rule-a", "A", ""));
+        let dir = rule_dir("corr", &[("x.yml", &doc)]);
 
-            let result = Rules::load(&[dir.as_path()]);
+        let rules = Rules::load(&[dir.as_path()])?;
 
-            assert!(
-                matches!(&result, Err(Error::Rule(file, _)) if file.ends_with(name)),
-                "{name}: {result:?}"
-            );
-        }
+        let skipped: Vec<(Option<&str>, Option<&str>, &str)> = rules
+            .skipped()
+            .iter()
+            .map(|s| (s.id.as_deref(), s.title.as_deref(), s.reason.as_str()))
+            .collect();
+        assert_eq!(rules.ids, ["rule-a"]);
+        assert_eq!(
+            skipped,
+            [
+                (Some("c"), Some("C"), "correlation rule"),
+                (Some("f"), Some("F"), "filter rule")
+            ]
+        );
+        Ok(())
     }
 }
