@@ -98,6 +98,14 @@ fn analyze(
     baseline: Option<&Path>,
     rules: &[PathBuf],
 ) -> anyhow::Result<()> {
+    // Skipped rules are listed beside the CSV and JSONL outputs, or beside the HTML report when
+    // it is the only output.
+    let listed = |path: Option<&Path>, extension| {
+        path.filter(|_| !rules.is_empty())
+            .map(|path| skipped_path(path, extension))
+    };
+    let skipped_csv = listed(csv.or(output.filter(|_| jsonl.is_none())), "csv");
+    let skipped_jsonl = listed(jsonl, "jsonl");
     let outputs = [
         (csv, "CSV output"),
         (output, "HTML output"),
@@ -113,14 +121,16 @@ fn analyze(
             refuse_same_file(path, later, name, later_name)?;
         }
     }
-    // Skipped rules are listed beside the CSV and JSONL outputs, or beside the HTML report when
-    // it is the only output.
-    let listed = |path: Option<&Path>, extension| {
-        path.filter(|_| !rules.is_empty())
-            .map(|path| skipped_path(path, extension))
-    };
-    let skipped_csv = listed(csv.or(output.filter(|_| jsonl.is_none())), "csv");
-    let skipped_jsonl = listed(jsonl, "jsonl");
+    let name = "skipped-rules list";
+    for list in [&skipped_csv, &skipped_jsonl].into_iter().flatten() {
+        refuse_same_file(input, Some(list), "input", name)?;
+        if let Some(usn) = usn {
+            refuse_same_file(usn, Some(list), "USN input", name)?;
+        }
+        for &(path, output_name) in &outputs {
+            refuse_same_file(list, path, name, output_name)?;
+        }
+    }
     let rules = if rules.is_empty() {
         None
     } else {

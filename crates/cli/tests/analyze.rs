@@ -2010,3 +2010,52 @@ fn with_only_an_html_report_the_skipped_rules_are_listed_beside_it() -> TestResu
     );
     Ok(())
 }
+
+#[test]
+fn analyze_refuses_a_skipped_rules_list_that_is_its_input_or_another_output() -> TestResult {
+    let dir = scratch("analyze_refuses_a_skipped_rules_list_that_is_its_input_or_another_output")?;
+    let rules = rules_dir(
+        &dir,
+        "rules",
+        "title: A\nid: rule-a\nlogsource:\n  category: file_event\ndetection:\n  sel:\n    TargetFilename: x\n  condition: sel\n",
+    )?;
+    let evidence = dir.join("out.skipped-rules.csv");
+    std::fs::write(&evidence, small_volume_mft())?;
+    let cases: [(&[&str], &str); 2] = [
+        (
+            &["-i", "out.skipped-rules.csv", "--csv", "out.csv"],
+            "input",
+        ),
+        (
+            &[
+                "-i",
+                "MFT",
+                "--csv",
+                "out.csv",
+                "-o",
+                "out.skipped-rules.csv",
+            ],
+            "HTML output",
+        ),
+    ];
+    std::fs::write(dir.join("MFT"), small_volume_mft())?;
+
+    for (args, named) in cases {
+        let out = tool()
+            .current_dir(&dir)
+            .arg("analyze")
+            .args(args)
+            .arg("--rules")
+            .arg(&rules)
+            .output()?;
+
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(out.status.code(), Some(1), "{args:?}: {stderr}");
+        assert!(
+            stderr.contains(named) && stderr.contains("skipped-rules"),
+            "{stderr}"
+        );
+        assert_eq!(std::fs::read(&evidence)?, small_volume_mft());
+    }
+    Ok(())
+}
