@@ -14,7 +14,7 @@ mod base64;
 mod html;
 mod jsonl;
 
-pub use html::{HtmlReport, Input, Provenance};
+pub use html::{HtmlReport, Input, Provenance, WindowText};
 pub use jsonl::JsonlWriter;
 
 #[derive(Debug, thiserror::Error)]

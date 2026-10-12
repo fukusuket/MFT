@@ -39,6 +39,17 @@ pub struct Input {
     pub rules: usize,
     /// Rules found but not loaded (`sigma::Rules::skipped`).
     pub skipped_rules: usize,
+    /// The time window as given; the report then lists only rows in it.
+    pub window: Option<WindowText>,
+}
+
+/// A time window as the analyst gave it.
+#[derive(Debug, Serialize)]
+pub struct WindowText {
+    pub from: Option<String>,
+    pub to: Option<String>,
+    /// `±HH:MM`.
+    pub tz: String,
 }
 
 /// Collects rows, then writes one HTML file.
@@ -65,6 +76,7 @@ impl HtmlReport {
             outside: 0,
             rules: input.rules,
             skipped_rules: input.skipped_rules,
+            window: input.window,
             findings: Levels::default(),
         };
         Self {
@@ -80,6 +92,9 @@ impl HtmlReport {
         let usn_parse::Record::Event(event) = row.record else {
             return; // diagnostics have no findings
         };
+        if row.in_window == Some(false) {
+            return;
+        }
         for finding in &row.findings {
             self.summary.findings.count(finding.level);
             self.findings.push(FindingItem {
@@ -123,6 +138,9 @@ impl HtmlReport {
                 DiagCode::Truncated => &mut d.truncated,
                 DiagCode::OrphanExtension => &mut d.orphan_extension,
             } += 1;
+        }
+        if row.in_window == Some(false) {
+            return; // counted above, listed only in the window
         }
         if row.baseline == Some(Status::Outside) {
             s.outside += 1;
@@ -273,6 +291,7 @@ struct Summary {
     outside: u64,
     rules: usize,
     skipped_rules: usize,
+    window: Option<WindowText>,
     findings: Levels,
 }
 
@@ -331,6 +350,7 @@ mod tests {
             baseline: None,
             rules: 0,
             skipped_rules: 0,
+            window: None,
         }
     }
 
@@ -635,6 +655,80 @@ mod tests {
     }
 
     #[test]
+    fn with_a_window_only_rows_in_it_are_listed_and_counted() -> Result<()> {
+        let vwr = "\"DirectoryName\",\"Name\",\"FullName\"\n\"C:\\\",\"x.txt\",\"C:\\x.txt\"\n";
+        let mut file_bytes = Vec::new();
+        baseline::build(vwr.as_bytes(), &mut file_bytes)?;
+        let baseline = baseline::Baseline::load(file_bytes)?;
+        let rules = rules("window", &[("rule-high", "high", "", ".exe")])?;
+        let mut dir = file(6 | (1 << 48), 5, "Dir");
+        dir.is_dir = true;
+        let entries = [
+            root(),
+            dir,
+            created(file(40, 5, "in.exe"), 100),
+            created(file(41, 5, "out.exe"), 5000),
+        ];
+        let mut early = usn_event(60, 0x8000_0100, 0x20, "early.exe");
+        if let usn_parse::Record::Event(e) = &mut early {
+            e.time = Filetime::from_raw(100);
+        }
+        let records = [early, usn_event(61, 0x8000_0100, 0x20, "late.exe")]; // late: 300
+        let window = analyze::Window {
+            start: Some(Filetime::from_raw(50)),
+            end: Some(Filetime::from_raw(250)),
+        };
+        let mut input = input();
+        input.window = Some(WindowText {
+            from: Some("2026-10-01".to_string()),
+            to: None,
+            tz: "+09:00".to_string(),
+        });
+
+        let mut report = HtmlReport::new(PROVENANCE, input);
+        for row in analyze::rows(
+            &entries,
+            &records,
+            Some(&baseline),
+            Some(&rules),
+            Some(&window),
+        ) {
+            report.add(&row);
+        }
+        for row in analyze::usn_rows(
+            &entries,
+            &records,
+            Some(&baseline),
+            Some(&rules),
+            Some(&window),
+        ) {
+            report.add_usn(&row);
+        }
+        let data = decode(payload(&String::from_utf8(report.finish(Vec::new())?)?)?)?;
+
+        let listed = |key: &str| -> Vec<String> {
+            data[key]
+                .as_array()
+                .map(|items| items.iter().map(|i| i["path"].to_string()).collect())
+                .unwrap_or_default()
+        };
+        assert_eq!(
+            listed("findings"),
+            [r#""\\Dir\\early.exe""#, r#""\\in.exe""#]
+        ); // same time: by path
+        assert_eq!(listed("outside"), [r#""\\in.exe""#]);
+        let summary = &data["summary"];
+        assert_eq!(summary["findings"]["high"], 2);
+        assert_eq!(summary["outside"], 1);
+        assert_eq!(summary["entries"], 4);
+        assert_eq!(
+            summary["window"],
+            serde_json::json!({"from": "2026-10-01", "to": null, "tz": "+09:00"})
+        );
+        Ok(())
+    }
+
+    #[test]
     fn outside_lists_only_outside_baseline_files_newest_first() -> Result<()> {
         let vwr = "\"DirectoryName\",\"Name\",\"FullName\"\n\"C:\\\",\"x.txt\",\"C:\\x.txt\"\n";
         let mut file_bytes = Vec::new();
@@ -778,6 +872,7 @@ mod tests {
             baseline: Some("b\u{202E}tsf.fst".to_string()),
             rules: 0,
             skipped_rules: 0,
+            window: None,
         };
 
         let summary = &decode(payload(&html_of(&[root()], input)?)?)?["summary"];
@@ -791,6 +886,7 @@ mod tests {
     fn summary_counts_the_skipped_rules() -> Result<()> {
         let input = Input {
             skipped_rules: 3,
+            window: None,
             ..input()
         };
 
@@ -823,6 +919,7 @@ mod tests {
             baseline: Some("win11.fst".to_string()),
             rules: 3,
             skipped_rules: 0,
+            window: None,
         };
 
         let html = html_of(&[root(), file(40, 5, "a.txt"), deleted, dir, broken], input)?;
@@ -848,6 +945,7 @@ mod tests {
                 "outside": 0,
                 "rules": 3,
                 "skipped_rules": 0,
+                "window": null,
                 "findings": {
                     "critical": 0,
                     "high": 0,
