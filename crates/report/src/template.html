@@ -86,6 +86,7 @@ footer { margin-top: 3em; border-top: 1px solid var(--line); padding-top: 8px; }
   const summary = document.getElementById("summary");
   [
     ["Time window (findings and outside-baseline files listed and counted in it)", range],
+    ...(s.warning === null ? [] : [["Warning", s.warning]]),
     ["Host", s.host],
     ["Input", s.input],
     ["MFT record size", s.record_size],

@@ -50,6 +50,9 @@ pub struct WindowText {
     pub to: Option<String>,
     /// `±HH:MM`.
     pub tz: String,
+    /// `from` in UTC, to compare with the first USN event.
+    #[serde(skip)]
+    pub start: Option<Filetime>,
 }
 
 /// Collects rows, then writes one HTML file.
@@ -59,6 +62,8 @@ pub struct HtmlReport {
     summary: Summary,
     findings: Vec<FindingItem>,
     outside: Vec<OutsideItem>,
+    /// The earliest USN event time seen.
+    first_usn: Option<Filetime>,
 }
 
 impl HtmlReport {
@@ -77,6 +82,7 @@ impl HtmlReport {
             rules: input.rules,
             skipped_rules: input.skipped_rules,
             window: input.window,
+            warning: None,
             findings: Levels::default(),
         };
         Self {
@@ -84,6 +90,7 @@ impl HtmlReport {
             summary,
             findings: Vec::new(),
             outside: Vec::new(),
+            first_usn: None,
         }
     }
 
@@ -92,6 +99,10 @@ impl HtmlReport {
         let usn_parse::Record::Event(event) = row.record else {
             return; // diagnostics have no findings
         };
+        self.first_usn = Some(
+            self.first_usn
+                .map_or(event.time, |first| first.min(event.time)),
+        );
         if row.in_window == Some(false) {
             return;
         }
@@ -174,6 +185,14 @@ impl HtmlReport {
 
     /// Writes the report and returns the writer.
     pub fn finish<W: Write>(mut self, mut out: W) -> Result<W, Error> {
+        if let (Some(window), Some(first)) = (&self.summary.window, self.first_usn)
+            && window.start.is_none_or(|start| start < first)
+        {
+            self.summary.warning = Some(format!(
+                "No USN data before {}; absence of findings before then does not mean nothing happened.",
+                first.iso8601()
+            ));
+        }
         // Level, then newest first (no time last), then a total order for byte-identical output.
         self.findings.sort_by(|a, b| {
             (b.level, b.created.or(b.event_time))
@@ -292,6 +311,7 @@ struct Summary {
     rules: usize,
     skipped_rules: usize,
     window: Option<WindowText>,
+    warning: Option<String>,
     findings: Levels,
 }
 
@@ -683,6 +703,7 @@ mod tests {
             from: Some("2026-10-01".to_string()),
             to: None,
             tz: "+09:00".to_string(),
+            start: Some(Filetime::from_raw(50)),
         });
 
         let mut report = HtmlReport::new(PROVENANCE, input);
@@ -725,6 +746,52 @@ mod tests {
             summary["window"],
             serde_json::json!({"from": "2026-10-01", "to": null, "tz": "+09:00"})
         );
+        Ok(())
+    }
+
+    #[test]
+    fn a_window_starting_before_the_first_usn_event_is_warned_about() -> Result<()> {
+        let entries = [root()];
+        let at = |raw: u64| {
+            let mut record = usn_event(60, 0x8000_0100, 0x20, "a.txt");
+            if let usn_parse::Record::Event(e) = &mut record {
+                e.time = Filetime::from_raw(raw);
+            }
+            record
+        };
+        let records = [at(300), at(200), at(400)]; // the first USN time is not the first record's
+        let warning = |records: &[usn_parse::Record], start: Option<u64>, windowed: bool| {
+            let mut input = input();
+            input.window = windowed.then(|| WindowText {
+                from: start.map(|s| s.to_string()),
+                to: None,
+                tz: "+00:00".to_string(),
+                start: start.map(Filetime::from_raw),
+            });
+            let window = analyze::Window {
+                start: start.map(Filetime::from_raw),
+                end: None,
+            };
+            let window = windowed.then_some(&window);
+            let mut report = HtmlReport::new(PROVENANCE, input);
+            for row in analyze::rows(&entries, records, None, None, window) {
+                report.add(&row);
+            }
+            for row in analyze::usn_rows(&entries, records, None, None, window) {
+                report.add_usn(&row);
+            }
+            let data = decode(payload(&String::from_utf8(report.finish(Vec::new())?)?)?)?;
+            Ok::<_, Box<dyn std::error::Error>>(data["summary"]["warning"].clone())
+        };
+        let warned = serde_json::json!(
+            "No USN data before 1601-01-01T00:00:00.0000200Z; absence of findings before then does not mean nothing happened."
+        );
+
+        assert_eq!(warning(&records, Some(199), true)?, warned);
+        assert_eq!(warning(&records, None, true)?, warned);
+        assert_eq!(warning(&records, Some(200), true)?, serde_json::Value::Null);
+        assert_eq!(warning(&[], Some(199), true)?, serde_json::Value::Null);
+        assert_eq!(warning(&records, None, false)?, serde_json::Value::Null);
         Ok(())
     }
 
@@ -946,6 +1013,7 @@ mod tests {
                 "rules": 3,
                 "skipped_rules": 0,
                 "window": null,
+                "warning": null,
                 "findings": {
                     "critical": 0,
                     "high": 0,
