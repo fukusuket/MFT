@@ -3,13 +3,13 @@
 //! Rules decide; this crate only loads them, routes events by logsource and reports matches.
 
 use std::borrow::Cow;
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 
 use rsigma_eval::Engine;
 use rsigma_eval::event::EventValue;
 use rsigma_eval::explain::explain_rule;
-use rsigma_parser::{LogSource, SigmaRule, parse_sigma_yaml};
+use rsigma_parser::{Detection, LogSource, SigmaRule, parse_sigma_yaml};
 
 /// Fatal problems loading rules.
 #[derive(Debug, thiserror::Error)]
@@ -233,10 +233,45 @@ fn not_emitted(rule: &SigmaRule, emitted: &Emitted) -> Option<String> {
         ("category", &source.category, emitted.categories),
         ("service", &source.service, emitted.services),
     ];
-    checks.into_iter().find_map(|(name, value, known)| {
-        let value = value.as_deref()?;
-        (!known.contains(&value)).then(|| format!("logsource not emitted: {name}={value}"))
+    for (name, value, known) in checks {
+        if let Some(value) = value.as_deref()
+            && !known.contains(&value)
+        {
+            return Some(format!("logsource not emitted: {name}={value}"));
+        }
+    }
+    let mut fields = BTreeSet::new();
+    for detection in rule.detection.named.values() {
+        detection_fields(detection, &mut fields);
+    }
+    fields.retain(|field| !emitted.fields.contains(&field.as_str()));
+    (!fields.is_empty()).then(|| {
+        let names: Vec<String> = fields.into_iter().collect();
+        format!("field not emitted: {}", names.join(", "))
     })
+}
+
+/// Adds the field names `detection` reads to `fields`; keywords read none.
+fn detection_fields(detection: &Detection, fields: &mut BTreeSet<String>) {
+    match detection {
+        Detection::AllOf(items) => {
+            fields.extend(items.iter().filter_map(|item| item.field.name.clone()));
+        }
+        Detection::AnyOf(detections) | Detection::And(detections) => {
+            for detection in detections {
+                detection_fields(detection, fields);
+            }
+        }
+        Detection::Keywords(_) => {}
+        Detection::ArrayMatch { field, .. } => {
+            fields.insert(field.clone());
+        }
+        Detection::Conditional { named, .. } => {
+            for detection in named.values() {
+                detection_fields(detection, fields);
+            }
+        }
+    }
 }
 
 /// How a rule file is named in output: the rule directory's name, then the path below it, joined
@@ -356,6 +391,23 @@ mod tests {
             ]
         );
         assert_eq!(rules.ids, ["rule-d", "rule-e"]);
+        Ok(())
+    }
+
+    #[test]
+    fn a_rule_on_a_field_never_emitted_is_skipped_but_keywords_load() -> Result<(), Error> {
+        let image = rule("rule-image", "Image", "").replace(
+            "  condition: selection\n",
+            "  filter:\n    - Image|endswith: '\\x.exe'\n    - CommandLine: y\n  condition: selection and not filter\n",
+        );
+        let keywords = "title: K\nid: rule-k\nlogsource:\n  product: windows\ndetection:\n  words:\n    - 'evil'\n  condition: words\n";
+        let dir = rule_dir("fields", &[("a.yml", &image), ("b.yml", keywords)]);
+
+        let rules = Rules::load(&[dir.as_path()], &EMITTED)?;
+
+        let reasons: Vec<&str> = rules.skipped().iter().map(|s| s.reason.as_str()).collect();
+        assert_eq!(reasons, ["field not emitted: CommandLine, Image"]);
+        assert_eq!(rules.ids, ["rule-k"]);
         Ok(())
     }
 
