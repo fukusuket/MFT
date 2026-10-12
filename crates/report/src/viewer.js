@@ -73,41 +73,34 @@ const viewer = (function () {
     return [...(f.deleted ? ["deleted"] : []), ...f.streams.map((s) => "ADS: " + s), "seen: " + f.seen, ...f.hints];
   }
 
-  // The lowercased text of every column a row shows, built once per row for the search.
-  const searchable = new WeakMap();
-  function text(row, columns) {
-    if (!searchable.has(row)) {
-      searchable.set(row, columns.filter((c) => c !== null && c !== undefined).join("\n").toLowerCase());
-    }
-    return searchable.get(row);
+  // The lowercased text of every column a row shows, for the search.
+  function joined(columns) {
+    return columns.filter((c) => c !== null && c !== undefined).join("\n").toLowerCase();
+  }
+  function findingText(f) {
+    return joined([f.level, f.created, f.fn_created, f.event_time, f.path, f.folder, f.title, f.id, f.author, ...facts(f)]);
+  }
+  function outsideText(o) {
+    return joined([o.created, o.fn_created, o.path, String(o.entry), o.folder]);
   }
 
-  // The filters both lists share: folder and a case-insensitive search over the shown columns.
-  function matchPlace(row, columns, state) {
-    return (
-      (state.folder === "" || row.folder === state.folder) &&
-      (state.q === "" || text(row, columns).includes(state.q.toLowerCase()))
-    );
-  }
-
-  // Whether a finding passes every filter that is set.
-  function matchFinding(f, state) {
+  // Whether a finding passes every filter that is set. The search is case-insensitive over the
+  // shown columns; `text` is the row's search text when the caller keeps it (lists do).
+  function matchFinding(f, state, text) {
     return (
       (state.level === "" || f.level === state.level) &&
       (state.rule === "" || f.id === state.rule) &&
-      matchPlace(
-        f,
-        [f.level, f.created, f.fn_created, f.event_time, f.path, f.folder, f.title, f.id, f.author, ...facts(f)],
-        state,
-      ) &&
+      (state.folder === "" || f.folder === state.folder) &&
+      (state.q === "" || (text ?? findingText(f)).includes(state.q.toLowerCase())) &&
       inRange([f.created, f.fn_created, f.event_time], state)
     );
   }
 
-  // Whether an outside-baseline file passes the folder, time and path filters.
-  function matchOutside(o, state) {
+  // Whether an outside-baseline file passes the folder, time and search filters.
+  function matchOutside(o, state, text) {
     return (
-      matchPlace(o, [o.created, o.fn_created, o.path, String(o.entry), o.folder], state) &&
+      (state.folder === "" || o.folder === state.folder) &&
+      (state.q === "" || (text ?? outsideText(o)).includes(state.q.toLowerCase())) &&
       inRange([o.created, o.fn_created], state)
     );
   }
@@ -311,6 +304,7 @@ const viewer = (function () {
     function outside(screen) {
       const node = screen.node;
       filters(screen, data.outside, ["folder", "from", "to", "q"]);
+      const texts = data.outside.map(outsideText); // built at load, so no search pays for it
       const count = node.appendChild(el("p", undefined, "count"));
       const show = list(node, ["Created ($SI, UTC)", "Path", "MFT entry"], (row, o) => {
         row.appendChild(line([[o.created, "mono"], [o.path, "path"], [o.entry, "mono"]]));
@@ -324,7 +318,8 @@ const viewer = (function () {
       });
       const pane = node.appendChild(el("div", "Select a row to see its full path.", "detail"));
       screen.redraws.push(() => {
-        const shown = data.outside.filter((o) => matchOutside(o, state));
+        const query = { ...state, q: state.q.toLowerCase() };
+        const shown = data.outside.filter((o, i) => matchOutside(o, query, texts[i]));
         count.textContent = shown.length + " of " + data.outside.length;
         show(shown);
       });
@@ -333,6 +328,7 @@ const viewer = (function () {
     function findings(screen) {
       const node = screen.node;
       filters(screen, data.findings, ["level", "rule", "folder", "from", "to", "q"]);
+      const texts = data.findings.map(findingText); // built at load, so no search pays for it
       const count = node.appendChild(el("p", undefined, "count"));
       const show = list(node, ["Level", "Time (UTC)", "Path", "Folder", "Rule"], (row, f) => {
         row.appendChild(
@@ -357,7 +353,8 @@ const viewer = (function () {
         );
       }
       screen.redraws.push(() => {
-        const shown = data.findings.filter((f) => matchFinding(f, state));
+        const query = { ...state, q: state.q.toLowerCase() };
+        const shown = data.findings.filter((f, i) => matchFinding(f, query, texts[i]));
         count.textContent = shown.length + " of " + data.findings.length;
         show(shown);
       });
