@@ -91,6 +91,20 @@ const viewer = (function () {
     return matchPlace(o, state) && inRange([o.created, o.fn_created], state);
   }
 
+  // The rows to draw for a scroll position (ADR 0020). Below the spacer cap a row sits at its
+  // own offset; above it (browsers ignore taller elements), the scroll position is mapped onto
+  // the rows and the drawn rows follow the viewport. `last` is exclusive.
+  function rowRange(scrollTop, viewport, rowHeight, total, cap) {
+    const fit = Math.floor(viewport / rowHeight);
+    const maxFirst = Math.max(0, total - fit);
+    const capped = total * rowHeight > cap;
+    const wanted = capped
+      ? Math.round((scrollTop / Math.max(1, cap - viewport)) * maxFirst)
+      : Math.floor(scrollTop / rowHeight);
+    const first = Math.min(Math.max(wanted, 0), maxFirst);
+    return { first, last: Math.min(total, first + fit + 1), top: capped ? scrollTop : first * rowHeight };
+  }
+
   function render(document) {
     const data = decode(document.getElementById("data").textContent);
 
@@ -205,7 +219,7 @@ const viewer = (function () {
     document.getElementById("source").textContent = f.source_url;
   }
 
-  return { decode, parseHash, formatHash, validTime, matchFinding, matchOutside, render };
+  return { decode, parseHash, formatHash, validTime, matchFinding, matchOutside, rowRange, render };
 })();
 
 if (typeof document !== "undefined") viewer.render(document);

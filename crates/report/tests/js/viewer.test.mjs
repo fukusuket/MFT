@@ -113,3 +113,26 @@ test("outside-baseline files match the folder, the time range and the path searc
   assert.equal(matchOutside(o, { ...none, from: "2026-09-01", to: "2026-09-01" }), true); // by $FN
   assert.equal(matchOutside(o, { ...none, from: "2026-10-03" }), false);
 });
+
+test("rowRange maps the scroll position to rows, below and above the spacer cap", () => {
+  const { rowRange } = load();
+  const range = (...args) => ({ ...rowRange(...args) });
+
+  // 100 rows of 20 px in a 200 px viewport: no cap, rows sit at their own offset.
+  assert.deepEqual(range(0, 200, 20, 100, 8_000_000), { first: 0, last: 11, top: 0 });
+  assert.deepEqual(range(205, 200, 20, 100, 8_000_000), { first: 10, last: 21, top: 200 });
+  assert.deepEqual(range(1800, 200, 20, 100, 8_000_000), { first: 90, last: 100, top: 1800 });
+
+  // 1 M rows need 20 M px; the spacer stops at 8 M px and the rows follow the viewport.
+  const top = range(0, 400, 20, 1_000_000, 8_000_000);
+  assert.deepEqual(top, { first: 0, last: 21, top: 0 });
+  const end = range(8_000_000 - 400, 400, 20, 1_000_000, 8_000_000);
+  assert.deepEqual(end, { first: 999_980, last: 1_000_000, top: 8_000_000 - 400 });
+  const middle = range(4_000_000, 400, 20, 1_000_000, 8_000_000);
+  assert.ok(middle.first > 400_000 && middle.first < 600_000, JSON.stringify(middle));
+  assert.equal(middle.top, 4_000_000);
+
+  // Fewer rows than fit.
+  assert.deepEqual(range(0, 400, 20, 3, 8_000_000), { first: 0, last: 3, top: 0 });
+  assert.deepEqual(range(0, 400, 20, 0, 8_000_000), { first: 0, last: 0, top: 0 });
+});
