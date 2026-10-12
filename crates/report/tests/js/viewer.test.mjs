@@ -274,3 +274,14 @@ test("rowRange covers the whole viewport when it is not a multiple of the row he
     assert.ok(r.top + (r.last - r.first) * 44 >= scrollTop + 500, `${scrollTop}: ${JSON.stringify(r)}`);
   }
 });
+
+test("a filter value from the hash that the report lacks stays visible in its select", () => {
+  const { app } = open("#tab=findings&rule=old-id");
+  const screen = app.findAll("screen").find((s) => s.getAttribute("data-screen") === "findings");
+  const select = screen.find("filter-rule");
+
+  assert.equal(screen.find("count").textContent, "0 of 2");
+  const options = select.children.map((o) => [o.value, o.textContent]);
+  assert.deepEqual(options.at(-1), ["old-id", "old-id (not in this report)"]);
+  assert.equal(select.value, "old-id");
+});

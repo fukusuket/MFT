@@ -184,6 +184,11 @@ const viewer = (function () {
       });
       drawn.push(() => {
         for (const [key, control] of controls) {
+          // A value from a shared link that this report lacks is offered, so the filter shows.
+          if (control.tagName === "SELECT" && !Array.from(control.children).some((o) => o.value === state[key])) {
+            const option = control.appendChild(el("option", state[key] + " (not in this report)"));
+            option.value = state[key];
+          }
           if (control.value !== state[key]) control.value = state[key];
           if (key === "from" || key === "to") {
             control.className = "filter-" + key + (validTime(state[key]) ? "" : " invalid");
