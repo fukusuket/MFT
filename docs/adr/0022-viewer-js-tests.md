@@ -1,6 +1,6 @@
 # ADR 0022: Test the viewer's JS under Node, without npm
 
-Status: proposed
+Status: accepted (2026-10-12, approved by the maintainer)
 
 ## Context
 P2-9b turns `crates/report/src/template.html` into the viewer (ADR 0020): filters, an inclusive `to` in the time range, a URL-hash round trip and the row mapping of a capped virtual scroll. These are easy to get wrong, and nothing runs them today: the Rust tests only check that the template uses no `innerHTML`, loads nothing, and embeds the right JSON. The JS has to run somewhere to be tested, and every option adds a tool. Adding a CI tool is an H2 decision.
