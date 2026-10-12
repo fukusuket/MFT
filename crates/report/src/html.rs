@@ -62,8 +62,6 @@ pub struct HtmlReport {
     summary: Summary,
     findings: Vec<FindingItem>,
     outside: Vec<OutsideItem>,
-    /// The earliest USN event time seen.
-    first_usn: Option<Filetime>,
 }
 
 impl HtmlReport {
@@ -92,7 +90,6 @@ impl HtmlReport {
             summary,
             findings: Vec::new(),
             outside: Vec::new(),
-            first_usn: None,
         }
     }
 
@@ -101,10 +98,6 @@ impl HtmlReport {
         let usn_parse::Record::Event(event) = row.record else {
             return; // diagnostics have no findings
         };
-        self.first_usn = Some(
-            self.first_usn
-                .map_or(event.time, |first| first.min(event.time)),
-        );
         let s = &mut self.summary;
         s.usn_first = Some(
             s.usn_first
@@ -196,7 +189,7 @@ impl HtmlReport {
 
     /// Writes the report and returns the writer.
     pub fn finish<W: Write>(mut self, mut out: W) -> Result<W, Error> {
-        if let (Some(window), Some(first)) = (&self.summary.window, self.first_usn)
+        if let (Some(window), Some(first)) = (&self.summary.window, self.summary.usn_first)
             && window.start.is_none_or(|start| start < first)
         {
             self.summary.warning = Some(format!(
