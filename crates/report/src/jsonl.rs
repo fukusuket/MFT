@@ -262,7 +262,7 @@ mod tests {
                 ),
             )?;
         }
-        Ok(sigma::Rules::load(&dir)?)
+        Ok(sigma::Rules::load(&[dir.as_path()], &detect::EMITTED)?)
     }
 
     #[test]

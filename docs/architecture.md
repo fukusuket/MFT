@@ -36,6 +36,18 @@ all USN events + all MFT entries
 
 Rules use only standard Sigma fields (`TargetFilename`, `SourceFilename`, `CreationUtcTime`, `UtcTime`), so SigmaHQ rules work unchanged. "Outside baseline" is a logsource, not a custom field.
 
+A rule loads only if it can match what `detect` emits (`detect::EMITTED`). Otherwise it is skipped with one of these reasons; only an id used twice or an I/O error stops the run.
+
+| Reason | When |
+|---|---|
+| `parse: …` | The parser rejects the document (not UTF-8, invalid YAML, no detection, unknown modifier) |
+| `symbolic link not followed` | A link under a rules directory; links are listed, never followed |
+| `correlation rule`, `filter rule` | Not supported yet |
+| `no id` | Findings link to rules by id (ADR 0003) |
+| `logsource not emitted: …` | `product`, `category` or `service` is set to a value never emitted; an unset one matches anything |
+| `field not emitted: …` | The detection reads a field never emitted (e.g. `Image`); keyword detections read none |
+| `engine: …` | The engine cannot compile the rule (e.g. an invalid regex) |
+
 USN events come from the record with `CLOSE`, which carries every reason of its handle, so one operation is one event. Directories give none.
 
 | Reason on the closing record | Category | Fields |

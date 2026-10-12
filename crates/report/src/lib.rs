@@ -126,6 +126,46 @@ impl<W: Write> CsvWriter<W> {
     }
 }
 
+/// Rules that were not loaded, as CSV: `file,id,title,reason`, one row each. Rule text comes
+/// from rule files, so it is escaped like evidence.
+pub fn write_skipped_csv<W: Write>(out: W, skipped: &[sigma::Skipped]) -> Result<W, Error> {
+    let mut csv = csv::Writer::from_writer(out);
+    csv.write_record(["file", "id", "title", "reason"])?;
+    for rule in skipped {
+        let cell = |text: Option<&str>| text.map(cell_text).unwrap_or_default();
+        csv.write_record([
+            cell(Some(&rule.file)),
+            cell(rule.id.as_deref()),
+            cell(rule.title.as_deref()),
+            cell(Some(&rule.reason)),
+        ])?;
+    }
+    csv.into_inner()
+        .map_err(|e| Error::Csv(csv::Error::from(e.into_error())))
+}
+
+/// Rules that were not loaded, as JSON Lines with the CSV columns as fields.
+pub fn write_skipped_jsonl<W: Write>(mut out: W, skipped: &[sigma::Skipped]) -> Result<W, Error> {
+    #[derive(serde::Serialize)]
+    struct Line {
+        file: String,
+        id: Option<String>,
+        title: Option<String>,
+        reason: String,
+    }
+    for rule in skipped {
+        let line = Line {
+            file: display_text(&rule.file),
+            id: rule.id.as_deref().map(display_text),
+            title: rule.title.as_deref().map(display_text),
+            reason: display_text(&rule.reason),
+        };
+        serde_json::to_writer(&mut out, &line)?;
+        out.write_all(b"\n").map_err(serde_json::Error::io)?;
+    }
+    Ok(out)
+}
+
 /// `\` plus the escaped names joined by `\` (a `\` inside a name shows as `\\`); empty if unknown.
 fn path_cell(resolution: &Resolution<'_>) -> String {
     resolution
@@ -483,7 +523,7 @@ mod tests {
         };
         std::fs::write(dir.join("a.yml"), rule("rule-low", "low"))?;
         std::fs::write(dir.join("b.yml"), rule("rule-high", "high"))?;
-        let rules = sigma::Rules::load(&dir)?;
+        let rules = sigma::Rules::load(&[dir.as_path()], &detect::EMITTED)?;
         let mut root = named(".");
         root.file_ref = FileRef::from_raw(5);
         root.is_dir = true;
@@ -508,7 +548,7 @@ mod tests {
             dir.join("a.yml"),
             "title: T\nid: \"evil\\e[2J\"\nlevel: high\nlogsource:\n  product: windows\n  category: file_event\ndetection:\n  sel:\n    TargetFilename|endswith: '.exe'\n  condition: sel\n",
         )?;
-        let rules = sigma::Rules::load(&dir)?;
+        let rules = sigma::Rules::load(&[dir.as_path()], &detect::EMITTED)?;
         let mut root = named(".");
         root.file_ref = FileRef::from_raw(5);
         root.is_dir = true;
@@ -718,7 +758,7 @@ mod tests {
             dir.join("a.yml"),
             "title: T\nid: rule-usn\nlevel: high\nlogsource:\n  product: windows\n  category: file_event\ndetection:\n  sel:\n    TargetFilename|endswith: 'b.txt'\n  condition: sel\n",
         )?;
-        let rules = sigma::Rules::load(&dir)?;
+        let rules = sigma::Rules::load(&[dir.as_path()], &detect::EMITTED)?;
         let entries = usn_tree();
         let records = vec![
             usn_event(60 | (1 << 48), 6 | (1 << 48), 0, 0x8000_0100, "a.txt"),
@@ -759,6 +799,41 @@ mod tests {
                     serde_json::json!([{"level": "high", "id": "rule-usn"}])
                 ),
             ]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn skipped_rules_are_listed_in_csv_and_jsonl_as_display_text()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let skipped = [
+            sigma::Skipped {
+                file: "rules/a.yml".to_string(),
+                id: None,
+                title: Some("=cmd|' /C calc'!A0".to_string()),
+                reason: "no id".to_string(),
+            },
+            sigma::Skipped {
+                file: "rules/sub/b.yml".to_string(),
+                id: Some("rule-b".to_string()),
+                title: None,
+                reason: "engine: bad\nregex".to_string(),
+            },
+        ];
+
+        let csv = String::from_utf8(write_skipped_csv(Vec::new(), &skipped)?)?;
+        let jsonl = String::from_utf8(write_skipped_jsonl(Vec::new(), &skipped)?)?;
+
+        assert_eq!(
+            csv,
+            "file,id,title,reason\n\
+             rules/a.yml,,'=cmd|' /C calc'!A0,no id\n\
+             rules/sub/b.yml,rule-b,,engine: bad\\u{0A}regex\n"
+        );
+        assert_eq!(
+            jsonl,
+            "{\"file\":\"rules/a.yml\",\"id\":null,\"title\":\"=cmd|' /C calc'!A0\",\"reason\":\"no id\"}\n\
+             {\"file\":\"rules/sub/b.yml\",\"id\":\"rule-b\",\"title\":null,\"reason\":\"engine: bad\\\\u{0A}regex\"}\n"
         );
         Ok(())
     }

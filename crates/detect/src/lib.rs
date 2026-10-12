@@ -6,6 +6,20 @@ use resolve::Resolution;
 use sigma::Event;
 use usn_parse::UsnEvent;
 
+/// Every logsource and field the events below can carry: rules needing anything else are skipped.
+pub const EMITTED: sigma::Emitted = sigma::Emitted {
+    product: "windows",
+    categories: &["file_event", "file_delete", "file_rename", "file_change"],
+    services: &["baseline_outside"],
+    fields: &[
+        "TargetFilename",
+        "SourceFilename",
+        "CreationUtcTime",
+        "FnCreationUtcTime",
+        "UtcTime",
+    ],
+};
+
 /// The `file_event` for a file, or `None` when there is nothing to match on.
 pub fn file_event(
     entry: &Entry,
@@ -255,6 +269,44 @@ mod tests {
         );
         assert_eq!(services(Some(Status::Standard)), [None; 2]);
         assert_eq!(services(None), [None; 2]);
+    }
+
+    #[test]
+    fn emitted_lists_every_category_service_and_field_of_the_events() {
+        let exe = name("x.exe");
+        let mut events: Vec<Event> = file_event(
+            &file(1, 1),
+            &Resolution::Resolved(vec![&exe]),
+            Some(Status::Outside),
+        )
+        .into_iter()
+        .collect();
+        let every = 0x100 | 0x200 | 0x2000 | 0x8000 | CLOSE;
+        events.extend(usn_events(
+            &usn(every),
+            r"\x.exe",
+            Some(r"\x.txt"),
+            Some(Status::Outside),
+        ));
+
+        for event in &events {
+            assert_eq!(event.product, EMITTED.product);
+            assert!(EMITTED.categories.contains(&event.category), "{event:?}");
+            assert!(
+                event.service.is_none_or(|s| EMITTED.services.contains(&s)),
+                "{event:?}"
+            );
+            for (field, _) in &event.fields {
+                assert!(EMITTED.fields.contains(field), "{field}");
+            }
+        }
+        let categories: Vec<&str> = events.iter().map(|e| e.category).collect();
+        assert_eq!(categories.len(), 5);
+        assert!(
+            events
+                .iter()
+                .any(|e| e.fields.iter().any(|(f, _)| *f == "SourceFilename"))
+        );
     }
 
     #[test]

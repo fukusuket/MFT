@@ -1,4 +1,4 @@
-//! `tool analyze -i <$MFT> [--usn <$J>] [--csv <out>] [-o <report.html>] [--jsonl <out>] [--baseline <file>] [--rules <dir>]`
+//! `tool analyze -i <$MFT> [--usn <$J>] [--csv <out>] [-o <report.html>] [--jsonl <out>] [--baseline <file>] [--rules <dir>]...`
 //! and `tool baseline build`.
 
 use std::ffi::OsString;
@@ -42,9 +42,10 @@ enum Command {
         /// Baseline file from `tool baseline build`; without it the `baseline` column is empty.
         #[arg(long)]
         baseline: Option<PathBuf>,
-        /// Directory of Sigma rules (`.yml`/`.yaml`); without it no rules run.
+        /// Directory of Sigma rules (`.yml`/`.yaml`, subdirectories included); may be repeated.
+        /// Without it no rules run.
         #[arg(long)]
-        rules: Option<PathBuf>,
+        rules: Vec<PathBuf>,
     },
     /// Windows baselines.
     #[command(subcommand)]
@@ -82,7 +83,7 @@ fn main() -> anyhow::Result<()> {
             output.as_deref(),
             jsonl.as_deref(),
             baseline.as_deref(),
-            rules.as_deref(),
+            &rules,
         ),
         Command::Baseline(BaselineCommand::Build { vwr, o }) => build_baseline(&vwr, &o),
     }
@@ -95,8 +96,16 @@ fn analyze(
     output: Option<&Path>,
     jsonl: Option<&Path>,
     baseline: Option<&Path>,
-    rules: Option<&Path>,
+    rules: &[PathBuf],
 ) -> anyhow::Result<()> {
+    // Skipped rules are listed beside the CSV and JSONL outputs, or beside the HTML report when
+    // it is the only output.
+    let listed = |path: Option<&Path>, extension| {
+        path.filter(|_| !rules.is_empty())
+            .map(|path| skipped_path(path, extension))
+    };
+    let skipped_csv = listed(csv.or(output.filter(|_| jsonl.is_none())), "csv");
+    let skipped_jsonl = listed(jsonl, "jsonl");
     let outputs = [
         (csv, "CSV output"),
         (output, "HTML output"),
@@ -112,11 +121,22 @@ fn analyze(
             refuse_same_file(path, later, name, later_name)?;
         }
     }
-    let rules = rules
-        .map(|dir| {
-            Rules::load(dir).with_context(|| format!("loading rules from {}", dir.display()))
-        })
-        .transpose()?;
+    let name = "skipped-rules list";
+    for list in [&skipped_csv, &skipped_jsonl].into_iter().flatten() {
+        refuse_same_file(input, Some(list), "input", name)?;
+        if let Some(usn) = usn {
+            refuse_same_file(usn, Some(list), "USN input", name)?;
+        }
+        for &(path, output_name) in &outputs {
+            refuse_same_file(list, path, name, output_name)?;
+        }
+    }
+    let rules = if rules.is_empty() {
+        None
+    } else {
+        let dirs: Vec<&Path> = rules.iter().map(PathBuf::as_path).collect();
+        Some(Rules::load(&dirs, &detect::EMITTED).context("loading rules")?)
+    };
     let baseline_name = baseline.map(file_name);
     let baseline = baseline
         .map(|path| {
@@ -151,6 +171,7 @@ fn analyze(
             record_size,
             baseline: baseline_name,
             rules: rules.as_ref().map_or(0, Rules::count),
+            skipped_rules: rules.as_ref().map_or(0, |r| r.skipped().len()),
         };
         (pending, file, HtmlReport::new(PROVENANCE, input))
     });
@@ -183,6 +204,23 @@ fn analyze(
             }
         }
     }
+    let mut skipped = Vec::new();
+    if let Some(rules) = &rules {
+        if let Some(path) = &skipped_csv {
+            let (pending, file) = AtomicOutput::create(path)?;
+            report::write_skipped_csv(BufWriter::new(file), rules.skipped())?.flush()?;
+            skipped.push(pending);
+        }
+        if let Some(path) = &skipped_jsonl {
+            let (pending, file) = AtomicOutput::create(path)?;
+            report::write_skipped_jsonl(BufWriter::new(file), rules.skipped())?.flush()?;
+            skipped.push(pending);
+        }
+    }
+    // The lists first: a report is never left without the list of rules it did not run.
+    for pending in skipped {
+        pending.commit()?;
+    }
     if let Some((pending, writer)) = jsonl_writer {
         writer.finish()?.flush()?;
         pending.commit()?;
@@ -196,6 +234,13 @@ fn analyze(
         pending.commit()?;
     }
     Ok(())
+}
+
+/// `out.csv` → `out.skipped-rules.csv`: the list of rules that were not loaded, beside `output`.
+fn skipped_path(output: &Path, extension: &str) -> PathBuf {
+    let mut name = output.file_stem().unwrap_or_default().to_os_string();
+    name.push(format!(".skipped-rules.{extension}"));
+    output.with_file_name(name)
 }
 
 #[derive(Debug)]

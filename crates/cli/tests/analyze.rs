@@ -576,8 +576,8 @@ fn sample_rules_find_what_they_describe() -> TestResult {
 }
 
 #[test]
-fn a_rule_without_id_fails_with_a_message_not_a_panic() -> TestResult {
-    let dir = scratch("a_rule_without_id_fails_with_a_message_not_a_panic")?;
+fn a_rule_without_id_is_skipped_and_the_run_succeeds() -> TestResult {
+    let dir = scratch("a_rule_without_id_is_skipped_and_the_run_succeeds")?;
     let rules = dir.join("rules");
     std::fs::create_dir_all(&rules)?;
     std::fs::write(
@@ -591,17 +591,24 @@ fn a_rule_without_id_fails_with_a_message_not_a_panic() -> TestResult {
         .arg(dir.join("MFT"))
         .arg("--csv")
         .arg(dir.join("out.csv"))
+        .arg("--jsonl")
+        .arg(dir.join("out.jsonl"))
         .arg("--rules")
         .arg(&rules)
         .output()?;
 
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert_eq!(out.status.code(), Some(1), "{stderr}");
-    assert!(
-        stderr.contains("no_id.yml") && stderr.contains("no id"),
-        "{stderr}"
+    assert!(out.status.success(), "{stderr}");
+    assert!(dir.join("out.csv").exists());
+    assert_eq!(
+        std::fs::read_to_string(dir.join("out.skipped-rules.csv"))?,
+        "file,id,title,reason\nrules/no_id.yml,,No id,no id\n"
     );
-    assert!(!stderr.contains("panicked"), "{stderr}");
+    assert_eq!(
+        std::fs::read_to_string(dir.join("out.skipped-rules.jsonl"))?,
+        "{\"file\":\"rules/no_id.yml\",\"id\":null,\"title\":\"No id\",\"reason\":\"no id\"}\n"
+    );
+    assert_no_temporary_outputs(&dir)?;
     Ok(())
 }
 
@@ -1884,5 +1891,171 @@ fn sample_rules_flag_an_executable_deleted_from_public_but_not_a_document() -> T
         .map(|c| has_finding(c, EXECUTABLE_DELETED))
         .collect();
     assert_eq!(flagged, [true, false], "{hits:?}");
+    Ok(())
+}
+
+/// A rules directory `name` under `dir` holding one rule file.
+fn rules_dir(dir: &std::path::Path, name: &str, rule: &str) -> Result<PathBuf, Box<dyn Error>> {
+    let rules = dir.join(name);
+    std::fs::create_dir_all(&rules)?;
+    std::fs::write(rules.join("rule.yml"), rule)?;
+    Ok(rules)
+}
+
+#[test]
+fn rules_from_every_rules_directory_run() -> TestResult {
+    use usn_support::{Fields, v2};
+    let dir = scratch("rules_from_every_rules_directory_run")?;
+    let (mft, j, csv) = (dir.join("MFT"), dir.join("J"), dir.join("out.csv"));
+    std::fs::write(&mft, usn_volume_mft())?;
+    let mut journal = Vec::new();
+    for (file, reason, name) in [(40, 0x8000_0100, "x.exe"), (41, 0x8000_0200, "y.evtx")] {
+        journal.extend(v2(&Fields {
+            file: file | (1 << 48),
+            parent: 6 | (1 << 48),
+            reason,
+            name: u16s(name),
+            ..Fields::default()
+        }));
+    }
+    std::fs::write(&j, journal)?;
+    let first = rules_dir(
+        &dir,
+        "first",
+        "title: A\nid: rule-a\nlevel: high\nlogsource:\n  product: windows\n  category: file_event\ndetection:\n  sel:\n    TargetFilename|endswith: '.exe'\n  condition: sel\n",
+    )?;
+    let second = rules_dir(
+        &dir,
+        "second",
+        "title: B\nid: rule-b\nlevel: low\nlogsource:\n  product: windows\n  category: file_delete\ndetection:\n  sel:\n    TargetFilename|endswith: '.evtx'\n  condition: sel\n",
+    )?;
+
+    let status = tool()
+        .args(["analyze", "-i"])
+        .arg(&mft)
+        .arg("--usn")
+        .arg(&j)
+        .arg("--csv")
+        .arg(&csv)
+        .arg("--rules")
+        .arg(&first)
+        .arg("--rules")
+        .arg(&second)
+        .status()?;
+
+    assert!(status.success());
+    let findings: Vec<String> = csv_rows(&std::fs::read_to_string(&csv)?)
+        .into_iter()
+        .filter(|r| r[11] == "usn")
+        .map(|r| r[7].clone())
+        .collect();
+    assert_eq!(findings, ["high:rule-a", "low:rule-b"]);
+    Ok(())
+}
+
+#[test]
+fn an_id_used_in_two_rules_directories_fails_and_writes_nothing() -> TestResult {
+    let dir = scratch("an_id_used_in_two_rules_directories_fails_and_writes_nothing")?;
+    let rule = "title: A\nid: rule-a\nlogsource:\n  category: file_event\ndetection:\n  sel:\n    TargetFilename: x\n  condition: sel\n";
+    let first = rules_dir(&dir, "first", rule)?;
+    let second = rules_dir(&dir, "second", rule)?;
+    std::fs::write(dir.join("MFT"), small_volume_mft())?;
+
+    let out = tool()
+        .args(["analyze", "-i"])
+        .arg(dir.join("MFT"))
+        .arg("--csv")
+        .arg(dir.join("out.csv"))
+        .arg("--rules")
+        .arg(&first)
+        .arg("--rules")
+        .arg(&second)
+        .output()?;
+
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(1), "{stderr}");
+    assert!(
+        stderr.contains("rule-a") && stderr.contains("second"),
+        "{stderr}"
+    );
+    assert!(!dir.join("out.csv").exists());
+    assert!(!dir.join("out.skipped-rules.csv").exists());
+    assert_no_temporary_outputs(&dir)?;
+    Ok(())
+}
+
+#[test]
+fn with_only_an_html_report_the_skipped_rules_are_listed_beside_it() -> TestResult {
+    let dir = scratch("with_only_an_html_report_the_skipped_rules_are_listed_beside_it")?;
+    let rules = rules_dir(
+        &dir,
+        "rules",
+        "title: No id\nlogsource:\n  category: file_event\ndetection:\n  sel:\n    TargetFilename: x\n  condition: sel\n",
+    )?;
+    std::fs::write(dir.join("MFT"), small_volume_mft())?;
+
+    let status = tool()
+        .args(["analyze", "-i"])
+        .arg(dir.join("MFT"))
+        .arg("-o")
+        .arg(dir.join("report.html"))
+        .arg("--rules")
+        .arg(&rules)
+        .status()?;
+
+    assert!(status.success());
+    assert_eq!(
+        std::fs::read_to_string(dir.join("report.skipped-rules.csv"))?,
+        "file,id,title,reason\nrules/rule.yml,,No id,no id\n"
+    );
+    Ok(())
+}
+
+#[test]
+fn analyze_refuses_a_skipped_rules_list_that_is_its_input_or_another_output() -> TestResult {
+    let dir = scratch("analyze_refuses_a_skipped_rules_list_that_is_its_input_or_another_output")?;
+    let rules = rules_dir(
+        &dir,
+        "rules",
+        "title: A\nid: rule-a\nlogsource:\n  category: file_event\ndetection:\n  sel:\n    TargetFilename: x\n  condition: sel\n",
+    )?;
+    let evidence = dir.join("out.skipped-rules.csv");
+    std::fs::write(&evidence, small_volume_mft())?;
+    let cases: [(&[&str], &str); 2] = [
+        (
+            &["-i", "out.skipped-rules.csv", "--csv", "out.csv"],
+            "input",
+        ),
+        (
+            &[
+                "-i",
+                "MFT",
+                "--csv",
+                "out.csv",
+                "-o",
+                "out.skipped-rules.csv",
+            ],
+            "HTML output",
+        ),
+    ];
+    std::fs::write(dir.join("MFT"), small_volume_mft())?;
+
+    for (args, named) in cases {
+        let out = tool()
+            .current_dir(&dir)
+            .arg("analyze")
+            .args(args)
+            .arg("--rules")
+            .arg(&rules)
+            .output()?;
+
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(out.status.code(), Some(1), "{args:?}: {stderr}");
+        assert!(
+            stderr.contains(named) && stderr.contains("skipped-rules"),
+            "{stderr}"
+        );
+        assert_eq!(std::fs::read(&evidence)?, small_volume_mft());
+    }
     Ok(())
 }

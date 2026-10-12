@@ -91,6 +91,7 @@ footer { margin-top: 3em; border-top: 1px solid var(--line); padding-top: 8px; }
     ["Baseline", s.baseline === null ? "none" : s.baseline],
     ["Outside-baseline files", s.baseline === null ? "n/a" : s.outside],
     ["Sigma rules loaded", s.rules],
+    ["Sigma rules skipped (see the skipped-rules CSV/JSONL)", s.skipped_rules],
     ["Findings by level", levels],
   ].forEach(([label, value]) => {
     const tr = el("tr");
