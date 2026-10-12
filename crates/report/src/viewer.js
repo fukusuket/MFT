@@ -219,7 +219,36 @@ const viewer = (function () {
 
     summary(screens.summary.node);
     findings(screens.findings.node);
+    outside(screens.outside.node);
     draw();
+
+    function outside(node) {
+      const per = new Map();
+      data.outside.forEach((o) => per.set(o.folder, (per.get(o.folder) || 0) + 1));
+      const folders = node.appendChild(el("p", undefined, "folders"));
+      FOLDERS.filter((f) => per.has(f)).forEach((folder) => {
+        const link = folders.appendChild(el("button", folder + " " + per.get(folder), "folder-link"));
+        link.addEventListener("click", () => go({ ...state, folder }));
+      });
+      filters(node, [
+        ["folder", "Folder", [["", "all"], ...FOLDERS.map((f) => [f, f])]],
+        ["from", "From"],
+        ["to", "To"],
+        ["q", "Search"],
+      ]);
+      const count = node.appendChild(el("p", undefined, "count"));
+      const show = list(node, ["Created ($SI, UTC)", "Path", "Folder", "MFT entry"], (o) => {
+        const row = el("div", undefined, "row");
+        row.style.height = ROW_HEIGHT + "px";
+        row.appendChild(line([[o.created, "mono"], [o.path, "path"], [o.folder], [o.entry, "mono"]]));
+        return row;
+      });
+      drawn.push(() => {
+        const shown = data.outside.filter((o) => matchOutside(o, state));
+        count.textContent = shown.length + " of " + data.outside.length;
+        show(shown);
+      });
+    }
 
     function findings(node) {
       const rules = new Map(data.findings.map((f) => [f.id, f.title]));

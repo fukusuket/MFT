@@ -241,3 +241,28 @@ test("Summary: the critical and high counts open Findings filtered to that level
   assert.equal(window.location.hash, "#tab=findings&level=high");
   assert.deepEqual(shown(), ["findings"]);
 });
+
+test("Outside-baseline: per-folder counts filter the list, with time and path filters", () => {
+  const { window, app } = open("#tab=outside");
+  const screen = app.findAll("screen").find((s) => s.getAttribute("data-screen") === "outside");
+  const count = () => screen.find("count").textContent;
+  const rows = () => screen.findAll("row");
+  const links = screen.findAll("folder-link");
+
+  assert.equal(count(), "2 of 2");
+  assert.deepEqual(links.map((l) => l.textContent), ["downloads 1", "temp 1"]);
+  assert.equal(screen.find("filter-level"), null); // levels and rules are for findings
+  links[1].dispatch("click");
+  assert.equal(window.location.hash, "#tab=outside&folder=temp");
+  assert.equal(count(), "1 of 2");
+  for (const text of ["2026-10-01T00:00:00.0000000Z", "\\Windows\\Temp\\x.dll", "41"]) {
+    assert.ok(rows()[0].textContent.includes(text), text);
+  }
+
+  screen.find("filter-folder").value = "";
+  screen.find("filter-folder").dispatch("change");
+  screen.find("filter-to").value = "2026-10-01";
+  screen.find("filter-to").dispatch("input");
+  assert.equal(count(), "1 of 2");
+  assert.equal(window.location.hash, "#tab=outside&to=2026-10-01");
+});
