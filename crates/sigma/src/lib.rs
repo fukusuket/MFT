@@ -97,7 +97,7 @@ impl Rules {
             let mut under = Vec::new();
             rule_files(dir, &mut under)?;
             under.sort();
-            files.extend(under.into_iter().map(|file| (shown(dir, &file), file)));
+            files.extend((under.into_iter()).map(|(file, link)| (shown(dir, &file), file, link)));
         }
 
         let mut ids = Vec::new();
@@ -107,7 +107,7 @@ impl Rules {
         let mut loaded = Vec::new();
         // Each with its file's position, so engine errors found later still list in file order.
         let mut skipped = Vec::new();
-        for (n, (shown, file)) in files.into_iter().enumerate() {
+        for (n, (shown, file, link)) in files.into_iter().enumerate() {
             let skip = |id, title, reason: &str| {
                 let file = shown.clone();
                 let reason = reason.to_string();
@@ -121,6 +121,10 @@ impl Rules {
                     },
                 )
             };
+            if link {
+                skipped.push(skip(None, None, "symbolic link not followed"));
+                continue;
+            }
             let bytes = std::fs::read(&file).map_err(|e| Error::Io(file.clone(), e))?;
             let Ok(text) = String::from_utf8(bytes) else {
                 skipped.push(skip(None, None, "parse: not UTF-8"));
@@ -314,17 +318,20 @@ fn shown(dir: &Path, file: &Path) -> String {
         .join("/")
 }
 
-/// Adds the `.yml`/`.yaml` files under `dir` to `files`. Symbolic links to directories are not
-/// followed, so a link loop cannot recurse forever.
-fn rule_files(dir: &Path, files: &mut Vec<PathBuf>) -> Result<(), Error> {
+/// Adds the `.yml`/`.yaml` files under `dir` to `files`, and every symbolic link, flagged: links
+/// are listed, never followed, so a link loop cannot recurse forever.
+fn rule_files(dir: &Path, files: &mut Vec<(PathBuf, bool)>) -> Result<(), Error> {
     let io = |e| Error::Io(dir.to_path_buf(), e);
     for entry in std::fs::read_dir(dir).map_err(io)? {
         let entry = entry.map_err(io)?;
         let path = entry.path();
-        if entry.file_type().map_err(io)?.is_dir() {
+        let kind = entry.file_type().map_err(io)?;
+        if kind.is_symlink() {
+            files.push((path, true));
+        } else if kind.is_dir() {
             rule_files(&path, files)?;
         } else if path.extension().is_some_and(|x| x == "yml" || x == "yaml") {
-            files.push(path);
+            files.push((path, false));
         }
     }
     Ok(())
@@ -643,6 +650,40 @@ mod tests {
         assert!(
             matches!(reasons.as_slice(), [r] if r.starts_with("parse: ")),
             "{reasons:?}"
+        );
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symbolic_links_are_listed_as_skipped_not_followed() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let target = rule_dir("link-target", &[("t.yml", &rule("rule-t", "T", ""))]);
+        let dir = rule_dir("links", &[("a.yml", &rule("rule-a", "A", ""))]);
+        std::os::unix::fs::symlink(&target, dir.join("linked"))?;
+        std::os::unix::fs::symlink(&target, dir.join("dir.yml"))?;
+        std::os::unix::fs::symlink(target.join("t.yml"), dir.join("file.yml"))?;
+
+        let rules = Rules::load(&[dir.as_path()], &EMITTED)?;
+
+        let skipped: Vec<(&str, &str)> = rules
+            .skipped()
+            .iter()
+            .map(|s| {
+                (
+                    s.file.rsplit('/').next().unwrap_or_default(),
+                    s.reason.as_str(),
+                )
+            })
+            .collect();
+        assert_eq!(rules.ids, ["rule-a"]);
+        assert_eq!(
+            skipped,
+            [
+                ("dir.yml", "symbolic link not followed"),
+                ("file.yml", "symbolic link not followed"),
+                ("linked", "symbolic link not followed"),
+            ]
         );
         Ok(())
     }
