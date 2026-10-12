@@ -132,13 +132,46 @@ Goal: add `$J` to the same end-to-end path: USN events with their paths at the t
   - Out of scope: owner SID (`$SDS`, Phase 3), `Zone.Identifier` content, new rules on facts.
 - [x] **P2-8 Time window** (`cli`, `analyze`, `report`)
   - Done when: `--from`, `--to` and `--tz` select a window on either created time (ADR 0011) or the USN time. Detection still runs on everything; the HTML lists only in-window rows, and CSV/JSONL gain `in_window`. The report warns when the window starts before the first USN event. Bad dates fail with a message. Output is byte-identical across runs.
-  - Out of scope: per-screen filters in the viewer (P2-9).
+  - Out of scope: per-screen filters in the viewer (P2-9b).
 - [x] **ADR: viewer build** ([ADR 0020](adr/0020-viewer-build.md): plain JS on the current template, DOM virtual scroll; research in [research/viewer.md](research/viewer.md))
   - Done when: ADR accepted, including its dependency and supply-chain controls (H2).
   - Out of scope: the viewer code.
-- [ ] **P2-9 Viewer: Summary, Findings, Outside-baseline** (`report`; per the viewer ADR)
-  - Done when: one self-contained HTML file with three screens. Summary shows the host, input, window, USN coverage, critical/high counts and the outside-baseline count in the window. Findings are ordered level → time and filterable by level and rule. Each row carries a `folder` category computed in Rust and written to CSV/JSONL too: the first match in a fixed list (Public, Downloads, Desktop, Documents, Temp, AppData, User profile, ProgramData, Program Files, Windows, Other, no path), with `\Users\Public\` checked before the per-user folders; unit tests cover each category and that order. The outside-baseline list is grouped by this category, and the viewer filters by it. The viewer also filters by a time range (from/to, UTC, `to` inclusive) on `$SI` created, `$FN` created or the USN time, inside the rows the HTML holds. Filter state is kept in the URL hash. Performance: with 1 M synthetic rows, a filter or search finishes in ≤ 200 ms, and scrolling to the last row shows it in Chrome and Firefox (element height cap, ADR 0020). All P1-5 attacker-name tests still pass, there is no `innerHTML`, and output is byte-identical across runs.
-  - Out of scope: Timeline and File detail screens, en/ja (Phase 3), the privilege grouping (product.md §6).
+- [ ] **P2-9a Folder category** (`analyze`, `report`)
+  - Done when: each `$MFT` and USN row carries a `folder` category, written to CSV/JSONL (last column) and to HTML finding and outside-baseline items. It is the first match, comparing whole path segments case-insensitively (ASCII), in this order:
+
+    | Folder | Path |
+    |---|---|
+    | Public | under `\Users\Public\` |
+    | Downloads, Desktop, Documents | under `\Users\<name>\<that folder>\` |
+    | Temp | any segment named `Temp` (`\Windows\Temp`, `AppData\Local\Temp`, `\Temp`) |
+    | AppData | under `\Users\<name>\AppData\` |
+    | User profile | elsewhere under `\Users\<name>\` |
+    | ProgramData | under `\ProgramData\` |
+    | Program Files | under `\Program Files\` or `\Program Files (x86)\` |
+    | Windows | under `\Windows\` |
+    | Other | any other known path |
+    | no path | path unknown |
+
+    Unit tests cover each category and the order (Public before the per-user folders, Temp before AppData and Windows).
+  - Out of scope: the viewer, the privilege grouping (product.md §6).
+- [ ] **ADR: JS tests for the viewer** (H2)
+  - Proposal: run the viewer's JS logic (filters, time range, URL hash, row mapping of the capped virtual scroll) as tests under Node with a small DOM stub, from `cargo nextest` or a separate CI step. Node becomes a CI tool, so this is an H2 decision; no npm packages.
+  - Done when: ADR accepted; CI runs the JS tests.
+  - Out of scope: the viewer code.
+- [ ] **P2-9b Viewer: Summary, Findings, Outside-baseline** (`report`; per ADR 0020 and the JS-test ADR)
+  - Done when: one self-contained HTML file with three tabs; the tab and filter state are kept in the URL hash. All times are UTC.
+
+    | Screen | Content |
+    |---|---|
+    | Summary | Host, input, USN coverage (first .. last USN time), window and its warning, findings by level, outside-baseline count in the window, baseline and rule counts, record counts. The critical and high counts open Findings filtered to that level |
+    | Findings | Columns level (as text), time, path, folder, rule; the facts on a small line under each row (`deleted` and ADS first, then `seen` and hints); "Why it matched" opens on demand. Fixed order level → time. Filters: level, rule, folder, time range (from/to, `to` inclusive) on `$SI` created, `$FN` created or the USN time, and a path substring search. Shows "N of M" |
+    | Outside-baseline | Counts per folder on one line (click to filter); columns `$SI` created, path, MFT entry; filters folder, time range and path search |
+
+    The payload is decoded with `Uint8Array.fromBase64` and a plain-loop fallback. Tables use the DOM virtual scroll of ADR 0020 (fixed row height, capped spacer). JS tests cover each filter, the inclusive `to`, URL hash round trip and the scroll row mapping. All P1-5 attacker-name tests still pass, there is no `innerHTML`, and output is byte-identical across runs.
+  - Out of scope: sorting by other columns, filters on facts, grouped tables, a time zone switch, Timeline and File detail screens, en/ja (Phase 3), the privilege grouping (product.md §6).
+- [ ] **P2-9c Viewer performance** (`report`)
+  - Done when: with 1 M synthetic rows, a filter or search finishes in ≤ 200 ms (measured by the agent under Node), and scrolling to the last row shows it in Chrome and Firefox (checked by the human). Results recorded in [research/viewer.md](research/viewer.md).
+  - Out of scope: gzip and the other escalation steps of ADR 0020 unless the measurement requires them (each by its own ADR).
 - [ ] **P2-10 Gate material**
   - Done when: the Rewind comparison (P2-3) is summarized, and a report from Simulated-Case-1 is ready for a non-expert session. The human runs the session and ticks the gate.
   - Out of scope: optimization beyond the gate.
