@@ -176,6 +176,7 @@ mod tests {
                 namespace: Namespace::Win32,
                 created: Filetime::from_raw(0),
             }],
+            streams: Vec::new(),
             diagnostics: vec![],
         }
     }
@@ -196,6 +197,7 @@ mod tests {
             base: None,
             si_created: None,
             names: vec![],
+            streams: Vec::new(),
             diagnostics: vec![
                 Diagnostic {
                     code: DiagCode::BadSignature,

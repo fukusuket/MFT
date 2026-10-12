@@ -8,7 +8,7 @@ use std::io::Read;
 use mft::MftEntry;
 use mft::attribute::header::ResidentialHeader;
 use mft::attribute::x30::{FileNameAttr, FileNamespace};
-use mft::attribute::{MftAttribute, MftAttributeContent};
+use mft::attribute::{MftAttribute, MftAttributeContent, MftAttributeType};
 use ntfs_types::{FileRef, Filetime, NtfsName};
 
 /// Fatal problems: the input cannot be read as a `$MFT` at all.
@@ -31,6 +31,8 @@ pub struct Entry {
     pub si_created: Option<Filetime>,
     /// Every `$FILE_NAME`, in attribute order.
     pub names: Vec<FileName>,
+    /// Names of the named `$DATA` attributes (alternate data streams), in attribute order.
+    pub streams: Vec<NtfsName>,
     /// Problems found in this record; the fields above hold what could still be read.
     pub diagnostics: Vec<Diagnostic>,
 }
@@ -237,6 +239,7 @@ fn unreadable(entry: u64, offset: u64, code: DiagCode) -> Entry {
         base: None,
         si_created: None,
         names: Vec::new(),
+        streams: Vec::new(),
         diagnostics: vec![Diagnostic { code, offset }],
     }
 }
@@ -252,6 +255,7 @@ fn parse_record(entry: u64, offset: u64, buf: Vec<u8>) -> Entry {
         base: base_reference(&buf),
         si_created: None,
         names: Vec::new(),
+        streams: Vec::new(),
         diagnostics: Vec::new(),
     };
     let diagnostic = |code| Diagnostic { code, offset };
@@ -276,6 +280,10 @@ fn read_attributes(
             parsed.diagnostics.push(diagnostic(DiagCode::Malformed));
             continue; // `mft` moves past a bad attribute value; it ends the walk on a bad header
         };
+        let name = attr.header.name.as_utf16le_bytes();
+        if attr.header.type_code == MftAttributeType::DATA && !name.is_empty() {
+            parsed.streams.push(ntfs_name(name));
+        }
         match &attr.data {
             MftAttributeContent::AttrX10(_) => {
                 parsed.si_created = resident_u64(record, &attr, 0).map(Filetime::from_raw);
@@ -302,16 +310,8 @@ fn file_ref(entry: u64, sequence: u16) -> FileRef {
 
 fn file_name(entry: &MftEntry, attr: &MftAttribute<'_>, f: &FileNameAttr<'_>) -> Option<FileName> {
     let created = resident_u64(entry, attr, 8)?;
-    let units: Vec<u16> = f
-        .name
-        .as_utf16le_bytes()
-        .as_chunks::<2>()
-        .0
-        .iter()
-        .map(|&c| u16::from_le_bytes(c))
-        .collect();
     Some(FileName {
-        name: NtfsName::from_units(&units),
+        name: ntfs_name(f.name.as_utf16le_bytes()),
         parent: file_ref(f.parent.entry, f.parent.sequence),
         namespace: match f.namespace {
             FileNamespace::POSIX => Namespace::Posix,
@@ -321,6 +321,17 @@ fn file_name(entry: &MftEntry, attr: &MftAttribute<'_>, f: &FileNameAttr<'_>) ->
         },
         created: Filetime::from_raw(created),
     })
+}
+
+/// A name from its UTF-16LE bytes, unpaired surrogates included.
+fn ntfs_name(bytes: &[u8]) -> NtfsName {
+    let units: Vec<u16> = bytes
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|&c| u16::from_le_bytes(c))
+        .collect();
+    NtfsName::from_units(&units)
 }
 
 /// Reads a `u64` at `at` within a resident attribute's value, straight from the record.

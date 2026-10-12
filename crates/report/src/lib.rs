@@ -351,6 +351,7 @@ mod tests {
                     created: Filetime::from_raw(133_536_836_961_234_567),
                 },
             ],
+            streams: Vec::new(),
             diagnostics: vec![Diagnostic {
                 code: DiagCode::FixupMismatch,
                 offset: 43_008,
@@ -368,6 +369,7 @@ mod tests {
                 namespace: Namespace::Win32AndDos,
                 created: Filetime::from_raw(0),
             }],
+            streams: Vec::new(),
             diagnostics: vec![],
         };
         let empty = Entry {
@@ -377,6 +379,7 @@ mod tests {
             base: None,
             si_created: None,
             names: vec![],
+            streams: Vec::new(),
             diagnostics: vec![
                 Diagnostic {
                     code: DiagCode::BadSignature,
@@ -412,6 +415,7 @@ mod tests {
                 namespace: Namespace::Win32,
                 created: Filetime::from_raw(0),
             }],
+            streams: Vec::new(),
             diagnostics: vec![],
         }
     }
