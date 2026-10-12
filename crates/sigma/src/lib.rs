@@ -294,14 +294,10 @@ fn detection_fields(detection: &Detection, fields: &mut BTreeSet<String>) {
                 detection_fields(detection, fields);
             }
         }
-        Detection::Keywords(_) => {}
+        // `Conditional` only occurs as an array block's body, and the array field is counted.
+        Detection::Keywords(_) | Detection::Conditional { .. } => {}
         Detection::ArrayMatch { field, .. } => {
             fields.insert(field.clone());
-        }
-        Detection::Conditional { named, .. } => {
-            for detection in named.values() {
-                detection_fields(detection, fields);
-            }
         }
     }
 }
