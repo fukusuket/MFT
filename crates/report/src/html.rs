@@ -953,7 +953,6 @@ mod tests {
     fn summary_counts_the_skipped_rules() -> Result<()> {
         let input = Input {
             skipped_rules: 3,
-            window: None,
             ..input()
         };
 
