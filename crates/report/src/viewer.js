@@ -68,11 +68,25 @@ const viewer = (function () {
     );
   }
 
-  // The filters both lists share: folder and a case-insensitive path search.
-  function matchPlace(row, state) {
+  // A finding's facts as shown under its row.
+  function facts(f) {
+    return [...(f.deleted ? ["deleted"] : []), ...f.streams.map((s) => "ADS: " + s), "seen: " + f.seen, ...f.hints];
+  }
+
+  // The lowercased text of every column a row shows, built once per row for the search.
+  const searchable = new WeakMap();
+  function text(row, columns) {
+    if (!searchable.has(row)) {
+      searchable.set(row, columns.filter((c) => c !== null && c !== undefined).join("\n").toLowerCase());
+    }
+    return searchable.get(row);
+  }
+
+  // The filters both lists share: folder and a case-insensitive search over the shown columns.
+  function matchPlace(row, columns, state) {
     return (
       (state.folder === "" || row.folder === state.folder) &&
-      (state.q === "" || row.path.toLowerCase().includes(state.q.toLowerCase()))
+      (state.q === "" || text(row, columns).includes(state.q.toLowerCase()))
     );
   }
 
@@ -81,14 +95,21 @@ const viewer = (function () {
     return (
       (state.level === "" || f.level === state.level) &&
       (state.rule === "" || f.id === state.rule) &&
-      matchPlace(f, state) &&
+      matchPlace(
+        f,
+        [f.level, f.created, f.fn_created, f.event_time, f.path, f.folder, f.title, f.id, f.author, ...facts(f)],
+        state,
+      ) &&
       inRange([f.created, f.fn_created, f.event_time], state)
     );
   }
 
   // Whether an outside-baseline file passes the folder, time and path filters.
   function matchOutside(o, state) {
-    return matchPlace(o, state) && inRange([o.created, o.fn_created], state);
+    return (
+      matchPlace(o, [o.created, o.fn_created, o.path, String(o.entry), o.folder], state) &&
+      inRange([o.created, o.fn_created], state)
+    );
   }
 
   // The rows to draw for a scroll position (ADR 0020). Below the spacer cap a row sits at its
@@ -306,13 +327,7 @@ const viewer = (function () {
             [f.title + (f.author === null ? " (author unknown)" : " (by " + f.author + ")")], // DRL 1.1
           ]),
         );
-        const facts = [
-          ...(f.deleted ? ["deleted"] : []),
-          ...f.streams.map((s) => "ADS: " + s),
-          "seen: " + f.seen,
-          ...f.hints,
-        ];
-        row.appendChild(el("div", facts.join(" · "), "facts"));
+        row.appendChild(el("div", facts(f).join(" · "), "facts"));
         row.addEventListener("click", () => detail(f));
       });
       const pane = node.appendChild(el("div", "Select a row to see why it matched.", "detail"));

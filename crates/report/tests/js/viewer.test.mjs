@@ -51,6 +51,12 @@ const finding = (over) => ({
   created: "2026-10-02T12:00:00.5000000Z",
   fn_created: "2026-09-01T00:00:00.0000000Z",
   event_time: null,
+  title: "Title",
+  author: null,
+  deleted: false,
+  seen: "mft",
+  streams: [],
+  hints: [],
   ...over,
 });
 
@@ -332,4 +338,21 @@ test("a cut path shows in full as a tooltip and in the detail pane of findings a
   for (const text of ["\\Windows\\Temp\\x.dll", "2026-10-01T00:00:00.0000000Z", "41", "temp"]) {
     assert.ok(detail.includes(text), `${text} in ${detail}`);
   }
+});
+
+test("the search matches any column a row shows, ignoring case", () => {
+  const { matchFinding, matchOutside } = load();
+  const f = finding({ title: "Tool in Downloads", author: "Alice", seen: "both", streams: ["Zone.Identifier"], hints: ["si_before_fn"], deleted: true });
+  const search = (q) => matchFinding(f, { ...none, q });
+
+  for (const q of ["tool.exe", "tool in downloads", "RULE-1", "alice", "DOWNLOADS", "high", "zone.identifier", "si_before_fn", "deleted", "2026-10-02t12"]) {
+    assert.equal(search(q), true, q);
+  }
+  assert.equal(search("prefetch"), false);
+
+  const o = { created: "2026-10-01T00:00:00.0000000Z", fn_created: null, path: "\\Windows\\Temp\\x.dll", entry: 41, folder: "temp" };
+  for (const q of ["X.DLL", "temp", "41", "2026-10-01"]) {
+    assert.equal(matchOutside(o, { ...none, q }), true, q);
+  }
+  assert.equal(matchOutside(o, { ...none, q: "downloads" }), false);
 });
