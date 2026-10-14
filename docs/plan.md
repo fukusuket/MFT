@@ -181,6 +181,9 @@ Goal: add `$J` to the same end-to-end path: USN events with their paths at the t
 - [x] **P2-P Prune the report and viewer** (`report`, `cli`; [research/viewer-review.md](research/viewer-review.md); the phase's prune item, AGENTS.md)
   - Done when: every Summary row, viewer control and HTML data field is listed in the hand-over with the `product.md` need, plan item or test that justifies it; those without one are removed after human approval at H1 (H5 for each test expectation that changes). Lines of `viewer.js` and `html.rs` and the desktop6 HTML size before/after are in the hand-over. CSV/JSONL unchanged; output byte-identical across runs.
   - Out of scope: adding or changing behavior, CSV/JSONL columns, the other fixes in research/viewer-review.md.
+- [x] **P2-11 Viewer defects** (`report`; [research/viewer-review.md](research/viewer-review.md) U5, U6, U7, part of U8)
+  - Done when: a filter or search change replaces the current history entry (`history.replaceState`) and only a tab change adds one; the rule drop-down is ordered by level, then title; a cut rule title shows in full as a tooltip; the clicked row stays highlighted while the list scrolls or repaints and the detail pane is scrolled into view; the from/to inputs show their whole placeholder. One JS test per behavior (the placeholder is checked by the human); Back and the hash work from a `file://` report in Chrome and Firefox (checked by the human). CSV/JSONL unchanged; output byte-identical across runs.
+  - Out of scope: layout changes (e.g. a side pane), keyboard navigation, new data, the other fixes in research/viewer-review.md.
 - [ ] **P2-10 Gate material**
   - Done when: the Rewind comparison (P2-3) is summarized, and a report from Simulated-Case-1 is ready for a non-expert session. The human runs the session and ticks the gate.
   - Out of scope: optimization beyond the gate.

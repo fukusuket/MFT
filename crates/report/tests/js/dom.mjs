@@ -58,6 +58,10 @@ class Node {
     return name in this.attributes ? this.attributes[name] : null;
   }
 
+  scrollIntoView(options) {
+    this.scrolledIntoView = options;
+  }
+
   addEventListener(type, listener) {
     (this.listeners[type] ||= []).push(listener);
   }
@@ -103,7 +107,23 @@ export function page(ids, hash = "") {
     },
   };
   const window = new Node("window");
-  window.location = { hash };
+  // As in a browser, setting a different hash adds a history entry; `replaceState` does not.
+  let current = hash;
+  window.history = {
+    length: 1,
+    replaceState(_state, _title, url) {
+      current = url;
+    },
+  };
+  window.location = {
+    get hash() {
+      return current;
+    },
+    set hash(value) {
+      if (value !== current) window.history.length += 1;
+      current = value;
+    },
+  };
   // As in a browser, a hash change fires `hashchange` (here at once).
   window.go = (newHash) => {
     window.location.hash = newHash;

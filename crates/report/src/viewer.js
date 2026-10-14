@@ -158,9 +158,13 @@ const viewer = (function () {
     }
 
     let state = parseHash(window.location.hash);
+    // A tab change is a history entry, so Back returns to the last screen; a filter change
+    // only replaces it, so typing a search does not fill the history.
     function go(next) {
+      const tabChanged = next.tab !== state.tab;
       state = next;
-      window.location.hash = formatHash(state);
+      if (tabChanged) window.location.hash = formatHash(state);
+      else window.history.replaceState(null, "", formatHash(state));
       draw();
     }
     window.addEventListener("hashchange", () => {
@@ -216,10 +220,17 @@ const viewer = (function () {
 
       let rule = null;
       if (keys.includes("rule")) {
-        const counts = new Map();
-        rows.forEach((r) => counts.set(r.id, [r.title, ((counts.get(r.id) || [])[1] || 0) + 1]));
+        const rules = new Map(); // id → its level, title and row count
+        rows.forEach((r) => {
+          const seen = rules.get(r.id) || { level: r.level, title: r.title, n: 0 };
+          rules.set(r.id, { ...seen, n: seen.n + 1 });
+        });
+        // Level as in LEVELS, then title, then id, so the order is total.
+        const compare = (x, y) => (x < y ? -1 : x > y ? 1 : 0);
+        const order = ([ia, a], [ib, b]) =>
+          LEVELS.indexOf(a.level) - LEVELS.indexOf(b.level) || compare(a.title, b.title) || compare(ia, ib);
         rule = screen.node.appendChild(el("label", "Rule ")).appendChild(el("select", undefined, "filter-rule"));
-        const options = [["", "all rules"], ...[...counts].sort((a, b) => (a[0] < b[0] ? -1 : 1)).map(([id, [t, n]]) => [id, t + " (" + n + ")"])];
+        const options = [["", "all rules"], ...[...rules].sort(order).map(([id, r]) => [id, r.title + " (" + r.n + ")"])];
         for (const [value, label] of options) rule.appendChild(el("option", label)).value = value;
         rule.addEventListener("change", () => go({ ...state, rule: rule.value }));
       }
@@ -241,22 +252,32 @@ const viewer = (function () {
     }
 
     // A virtual-scroll list: only the rows in view exist in the DOM (ADR 0020). `fill` puts
-    // one item's content into its fixed-height row.
-    function list(node, columns, fill) {
+    // one item's content into its fixed-height row. A click selects a row, which stays
+    // highlighted while the list repaints, and shows `detail(item)` in the pane below it,
+    // scrolled into view; `hint` fills the pane until then.
+    function list(node, columns, fill, detail, hint) {
       const head = node.appendChild(el("div", undefined, "list-head"));
       columns.forEach((c) => head.appendChild(el("span", c)));
       const viewport = node.appendChild(el("div", undefined, "viewport"));
       const spacer = viewport.appendChild(el("div", undefined, "spacer"));
       const block = spacer.appendChild(el("div", undefined, "block"));
+      const pane = node.appendChild(el("div", hint, "detail"));
       let rows = [];
+      let selected = null;
       function paint() {
         const r = rowRange(viewport.scrollTop, viewport.clientHeight, ROW_HEIGHT, rows.length, SPACER_CAP);
         block.style.top = r.top + "px";
         block.replaceChildren(
           ...rows.slice(r.first, r.last).map((item) => {
-            const row = el("div", undefined, "row");
+            const row = el("div", undefined, item === selected ? "row selected" : "row");
             row.style.height = ROW_HEIGHT + "px";
             fill(row, item);
+            row.addEventListener("click", () => {
+              selected = item;
+              paint();
+              pane.replaceChildren(...detail(item));
+              pane.scrollIntoView({ block: "nearest" });
+            });
             return row;
           }),
         );
@@ -269,18 +290,15 @@ const viewer = (function () {
       };
     }
 
-    // One row's cells. A path that does not fit loses its start, so the file name stays; the
-    // full path is the cell's tooltip.
+    // One row's cells, each with its full text as a tooltip, since a cell that does not fit is
+    // cut. A path loses its start, so the file name stays.
     function line(cells) {
       const div = el("div", undefined, "line");
       cells.forEach(([text, className]) => {
-        if (className !== "path") {
-          div.appendChild(el("span", text, className));
-          return;
-        }
-        const cell = div.appendChild(el("span", undefined, "path"));
-        cell.setAttribute("title", text);
-        cell.appendChild(el("span", text)).setAttribute("dir", "ltr");
+        const path = className === "path";
+        const cell = div.appendChild(el("span", path ? undefined : text, className));
+        cell.setAttribute("title", text ?? ""); // as shown: `el` leaves a missing value empty
+        if (path) cell.appendChild(el("span", text)).setAttribute("dir", "ltr");
       });
       return div;
     }
@@ -295,17 +313,17 @@ const viewer = (function () {
       filters(screen, data.outside, ["folder"]);
       const texts = data.outside.map(outsideText); // built at load, so no search pays for it
       const count = node.appendChild(el("p", undefined, "count"));
-      const show = list(node, ["Created ($SI, UTC)", "Path", "MFT entry"], (row, o) => {
-        row.appendChild(line([[o.created, "mono"], [o.path, "path"], [o.entry, "mono"]]));
-        row.addEventListener("click", () =>
-          pane.replaceChildren(
-            el("p", o.path, "path"),
-            el("p", "$SI created " + (o.created ?? "unknown") + " · $FN created " + (o.fn_created ?? "unknown"), "mono"),
-            el("p", "MFT entry " + o.entry + " · folder " + o.folder),
-          ),
-        );
-      });
-      const pane = node.appendChild(el("div", "Select a row to see its full path.", "detail"));
+      const show = list(
+        node,
+        ["Created ($SI, UTC)", "Path", "MFT entry"],
+        (row, o) => row.appendChild(line([[o.created, "mono"], [o.path, "path"], [o.entry, "mono"]])),
+        (o) => [
+          el("p", o.path, "path"),
+          el("p", "$SI created " + (o.created ?? "unknown") + " · $FN created " + (o.fn_created ?? "unknown"), "mono"),
+          el("p", "MFT entry " + o.entry + " · folder " + o.folder),
+        ],
+        "Select a row to see its full path.",
+      );
       screen.redraws.push(() => {
         const shown = data.outside.filter((o, i) => matchOutside(o, state, texts[i]));
         count.textContent = shown.length + " of " + data.outside.length;
@@ -329,17 +347,12 @@ const viewer = (function () {
           ]),
         );
         row.appendChild(el("div", facts(f).join(" · "), "facts"));
-        row.addEventListener("click", () => detail(f));
-      });
-      const pane = node.appendChild(el("div", "Select a row to see why it matched.", "detail"));
-      function detail(f) {
-        pane.replaceChildren(
-          el("h3", f.title),
-          el("p", f.path_state === "resolved" ? f.path : f.path + " (" + f.path_state + ")", "path"),
-          el("p", "Rule " + f.id + " · level " + f.level + " · author " + (f.author === null ? "unknown" : f.author)),
-          el("pre", pretty(f.explain)),
-        );
-      }
+      }, (f) => [
+        el("h3", f.title),
+        el("p", f.path_state === "resolved" ? f.path : f.path + " (" + f.path_state + ")", "path"),
+        el("p", "Rule " + f.id + " · level " + f.level + " · author " + (f.author === null ? "unknown" : f.author)),
+        el("pre", pretty(f.explain)),
+      ], "Select a row to see why it matched.");
       screen.redraws.push(() => {
         const shown = data.findings.filter((f, i) => matchFinding(f, state, texts[i]));
         count.textContent = shown.length + " of " + data.findings.length;

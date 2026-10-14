@@ -401,3 +401,65 @@ test("Summary: the input row names the input only", () => {
 
   assert.equal(rows["Input"], "MFT");
 });
+
+test("a filter change replaces the history entry; only a tab change adds one", () => {
+  const { window, app } = open("#tab=findings");
+  const screen = app.findAll("screen").find((s) => s.getAttribute("data-screen") === "findings");
+  const entries = () => window.history.length;
+
+  screen.find("filter-q").value = "tool";
+  screen.find("filter-q").dispatch("input");
+  screen.findAll("chip")[0].dispatch("click");
+  assert.equal(window.location.hash, "#tab=findings&level=high&q=tool");
+  screen.find("clear").dispatch("click");
+  assert.equal(window.location.hash, "#tab=findings");
+  assert.equal(entries(), 1);
+
+  app.findAll("tab")[2].dispatch("click");
+  assert.equal(entries(), 2);
+  app.findAll("tab")[0].dispatch("click");
+  app.find("level-link").dispatch("click");
+  assert.equal(window.location.hash, "#tab=findings&level=critical");
+  assert.equal(entries(), 4);
+});
+
+test("the rule drop-down lists rules by level, then title", () => {
+  const rule = (id, level, title) => finding({ id, level, title, author: null, explain: "{}", path_state: "resolved", deleted: false, seen: "mft", streams: [], hints: [] });
+  const data = { ...report, findings: [rule("a", "low", "Zeta"), rule("b", "high", "Beta"), rule("c", "high", "Alpha"), rule("d", "critical", "Omega")] };
+  const { app } = open("#tab=findings", data);
+  const select = app.findAll("screen").find((s) => s.getAttribute("data-screen") === "findings").find("filter-rule");
+
+  assert.deepEqual(
+    select.children.map((o) => o.textContent),
+    ["all rules", "Omega (1)", "Alpha (1)", "Beta (1)", "Zeta (1)"],
+  );
+});
+
+test("every cell shows its full text as a tooltip, so a cut rule title can be read", () => {
+  const { app } = open("#tab=findings");
+  const row = app.findAll("screen").find((s) => s.getAttribute("data-screen") === "findings").findAll("row")[0];
+  const cells = row.find("line").children;
+
+  assert.deepEqual(cells.map((c) => c.getAttribute("title")), cells.map((c) => c.textContent));
+  assert.equal(cells.at(-1).getAttribute("title"), "Tool in Downloads (author unknown)");
+
+  const unknown = { ...report, outside: [{ ...report.outside[0], created: null }] }; // no $SI time
+  const file = open("#tab=outside", unknown).app.findAll("screen").find((s) => s.getAttribute("data-screen") === "outside").findAll("row")[0];
+  assert.equal(file.find("line").children[0].getAttribute("title"), "");
+});
+
+test("a clicked row stays highlighted through repaints, and its detail is scrolled into view", () => {
+  const { app } = open("#tab=findings");
+  for (const [tab, name] of [[1, "findings"], [2, "outside"]]) {
+    app.findAll("tab")[tab].dispatch("click");
+    const screen = app.findAll("screen").find((s) => s.getAttribute("data-screen") === name);
+    const selected = () => screen.findAll("row").map((r) => r.className.includes("selected"));
+
+    assert.deepEqual(selected(), [false, false], name);
+    screen.findAll("row")[1].dispatch("click");
+    assert.deepEqual(selected(), [false, true], name);
+    screen.find("viewport").dispatch("scroll");
+    assert.deepEqual(selected(), [false, true], name);
+    assert.equal(screen.find("detail").scrolledIntoView?.block, "nearest", name); // the viewer's own realm
+  }
+});
