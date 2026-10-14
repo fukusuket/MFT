@@ -150,7 +150,6 @@ const report = {
   summary: {
     input: "MFT",
     host: "not available ($MFT only)",
-    record_size: 1024,
     entries: 5,
     files: 3,
     resolved: 4,
@@ -167,8 +166,8 @@ const report = {
     findings: { critical: 0, high: 1, medium: 0, low: 1, informational: 0, none: 0 },
   },
   findings: [
-    finding({ title: "Tool in Downloads", author: null, explain: "{}", usn: null, path_state: "resolved", entry: 40, deleted: false, seen: "mft", streams: ["Zone.Identifier"], hints: [] }),
-    finding({ level: "low", id: "rule-2", folder: "temp", path: "\\Windows\\Temp\\x.dll", title: "DLL in Temp", author: "a", explain: "{}", usn: 64, path_state: "inferred", entry: 41, deleted: true, seen: "usn", streams: [], hints: [] }),
+    finding({ title: "Tool in Downloads", author: null, explain: "{}", path_state: "resolved", deleted: false, seen: "mft", streams: ["Zone.Identifier"], hints: [] }),
+    finding({ level: "low", id: "rule-2", folder: "temp", path: "\\Windows\\Temp\\x.dll", title: "DLL in Temp", author: "a", explain: "{}", path_state: "inferred", deleted: true, seen: "usn", streams: [], hints: [] }),
   ],
   outside: [
     { created: "2026-10-02T12:00:00.0000000Z", fn_created: null, path: "\\Users\\Bob\\Downloads\\Tool.EXE", entry: 40, folder: "downloads" },
@@ -374,17 +373,13 @@ test("Findings: level and folder chips with counts toggle their filter; rules li
   assert.equal(window.location.hash, "#tab=findings");
 });
 
-test("the active filters are listed with a remove button each, and Clear removes them all", () => {
+test("Clear removes every filter; the filters show only in their own controls", () => {
   const { window, app } = open("#tab=findings&level=high&from=2026-10-01&q=tool");
   const screen = app.findAll("screen").find((s) => s.getAttribute("data-screen") === "findings");
-  const active = () => screen.findAll("active-filter").map((a) => a.textContent);
 
-  assert.deepEqual(active(), ["level: high ✕", "from: 2026-10-01 ✕", "search: tool ✕"]);
-  screen.findAll("active-filter")[2].dispatch("click");
-  assert.equal(window.location.hash, "#tab=findings&level=high&from=2026-10-01");
+  assert.deepEqual(screen.findAll("active-filter"), []);
   screen.find("clear").dispatch("click");
   assert.equal(window.location.hash, "#tab=findings");
-  assert.deepEqual(active(), []);
 });
 
 test("Summary: the edition is shown, and a baseline warning only when there is one", () => {
@@ -399,4 +394,10 @@ test("Summary: the edition is shown, and a baseline warning only when there is o
   assert.equal("Baseline warning" in without, false);
   assert.equal(withEdition["Edition"], "ServerStandardEval");
   assert.equal(withEdition["Baseline warning"], warning);
+});
+
+test("Summary: the input row names the input only", () => {
+  const rows = Object.fromEntries(open("").app.find("summary").children.map((tr) => tr.children.map((c) => c.textContent)));
+
+  assert.equal(rows["Input"], "MFT");
 });

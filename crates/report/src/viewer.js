@@ -181,9 +181,8 @@ const viewer = (function () {
     }
 
     // A list screen's filters, most used first: search and time range, the level and folder
-    // chips with their counts in `rows`, the rule, then what is active, each removable. Each
-    // control writes its key of the state and reads it back on every draw.
-    const LABELS = { level: "level", rule: "rule", folder: "folder", from: "from", to: "to", q: "search" };
+    // chips with their counts in `rows`, then the rule. Each control writes its key of the state
+    // and reads it back on every draw.
     function filters(screen, rows, keys) {
       const bar = screen.node.appendChild(el("div", undefined, "filters"));
       const inputs = [
@@ -225,7 +224,6 @@ const viewer = (function () {
         rule.addEventListener("change", () => go({ ...state, rule: rule.value }));
       }
 
-      const active = screen.node.appendChild(el("div", undefined, "active"));
       screen.redraws.push(() => {
         for (const [key, input] of inputs) {
           if (input.value !== state[key]) input.value = state[key];
@@ -239,15 +237,6 @@ const viewer = (function () {
           }
           if (rule.value !== state.rule) rule.value = state.rule;
         }
-        active.replaceChildren(
-          ...keys
-            .filter((key) => state[key] !== "")
-            .map((key) => {
-              const remove = el("button", LABELS[key] + ": " + state[key] + " ✕", "active-filter");
-              remove.addEventListener("click", () => go({ ...state, [key]: "" }));
-              return remove;
-            }),
-        );
       });
     }
 
@@ -303,7 +292,7 @@ const viewer = (function () {
 
     function outside(screen) {
       const node = screen.node;
-      filters(screen, data.outside, ["folder", "from", "to", "q"]);
+      filters(screen, data.outside, ["folder"]);
       const texts = data.outside.map(outsideText); // built at load, so no search pays for it
       const count = node.appendChild(el("p", undefined, "count"));
       const show = list(node, ["Created ($SI, UTC)", "Path", "MFT entry"], (row, o) => {
@@ -326,7 +315,7 @@ const viewer = (function () {
 
     function findings(screen) {
       const node = screen.node;
-      filters(screen, data.findings, ["level", "rule", "folder", "from", "to", "q"]);
+      filters(screen, data.findings, ["level", "rule", "folder"]);
       const texts = data.findings.map(findingText); // built at load, so no search pays for it
       const count = node.appendChild(el("p", undefined, "count"));
       const show = list(node, ["Level", "Time (UTC)", "Path", "Folder", "Rule"], (row, f) => {
@@ -374,7 +363,7 @@ const viewer = (function () {
         ["Host", s.host],
         ["Edition", s.edition === undefined ? "not found" : s.edition],
         ...(s.baseline_warning === undefined ? [] : [["Baseline warning", s.baseline_warning]]),
-        ["Input", s.input + " (" + s.record_size + "-byte records)"],
+        ["Input", s.input],
         ["USN coverage", s.usn_first === null ? "no USN journal" : s.usn_first + " .. " + s.usn_last],
         [
           "Window",

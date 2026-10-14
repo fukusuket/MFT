@@ -1730,7 +1730,7 @@ fn an_outside_baseline_usn_event_matches_a_baseline_outside_rule() -> TestResult
 }
 
 #[test]
-fn a_usn_finding_carries_its_usn_and_inferred_path_in_every_output() -> TestResult {
+fn a_usn_finding_carries_its_inferred_path_everywhere_and_its_usn_in_csv_and_jsonl() -> TestResult {
     use usn_support::{Fields, v2};
     let dir = scratch("a_usn_finding_carries_its_usn_and_inferred_path_in_every_output")?;
     let (mft, j, rules) = (dir.join("MFT"), dir.join("J"), dir.join("rules"));
@@ -1806,16 +1806,10 @@ fn a_usn_finding_carries_its_usn_and_inferred_path_in_every_output() -> TestResu
     let data = report_data(&std::fs::read_to_string(&html)?)?;
     let finding = &data["findings"][0];
     assert_eq!(
-        [
-            &finding["path"],
-            &finding["path_state"],
-            &finding["usn"],
-            &finding["id"]
-        ],
+        [&finding["path"], &finding["path_state"], &finding["id"]],
         [
             &serde_json::json!(r"\Profiles\x.exe"),
             &serde_json::json!("inferred"),
-            &serde_json::json!(64),
             &serde_json::json!("usn-rule")
         ]
     );

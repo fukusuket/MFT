@@ -183,7 +183,6 @@ fn analyze(
     let mut html = html_file.map(|(pending, file)| {
         let input = Input {
             name: file_name(input),
-            record_size,
             baseline: baseline_name,
             rules: rules.as_ref().map_or(0, Rules::count),
             skipped_rules: rules.as_ref().map_or(0, |r| r.skipped().len()),
