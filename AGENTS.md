@@ -20,6 +20,13 @@ Rust CLI that triages Windows NTFS (`$MFT`, `$UsnJrnl:$J`): subtract a Windows b
 - Validate only at trust boundaries (evidence bytes, CLI args); don't re-check what types guarantee.
 - Prefer deleting code to adding it. A smaller correct diff wins.
 
+## Simplicity (UNIX philosophy)
+- **Do one thing well.** The tool turns NTFS metadata into facts and rule matches. Further sorting, counting, joining and pivoting belong to CSV/JSONL and the user's tools (`jq`, `sort`, Timeline Explorer, Takajo). Keep those outputs plain and stable instead of growing the viewer.
+- **Every feature traces to a need.** An item that adds something user-visible names the problem in `docs/product.md` §1 or the measurement that needs it. "Might be useful" is not a need.
+- **One way to do a thing.** No second control, option or screen for what an existing one already does (e.g. a toggle that a search already covers).
+- **Deleting is work.** Removing unused code, options and features is a valid plan item. In the H3 report, list what the item made unnecessary and any removal candidates you noticed; remove them only within an item.
+- **Every phase ends with a prune item** before its gate: features, `pub` items, flags and report rows that no `product.md` need or test justifies are listed, and those a human approves are removed.
+
 ## Verify before you say done
 ```sh
 cargo fmt --all
