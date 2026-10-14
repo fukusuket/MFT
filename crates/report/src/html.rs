@@ -42,7 +42,6 @@ pub struct Provenance {
 pub struct Input {
     /// Input file name, without its directory.
     pub name: String,
-    pub record_size: u64,
     /// Baseline file name, if one was used.
     pub baseline: Option<String>,
     pub rules: usize,
@@ -80,7 +79,6 @@ impl HtmlReport {
         let summary = Summary {
             input: display_text(&input.name),
             host: "not available ($MFT only)",
-            record_size: input.record_size,
             entries: 0,
             files: 0,
             resolved: 0,
@@ -147,7 +145,6 @@ impl HtmlReport {
                 created: None,
                 fn_created: None,
                 event_time: Some(event.time),
-                usn: Some(event.usn),
                 path: usn_path(row, event)
                     .map(|p| display_text(&p))
                     .unwrap_or_default(),
@@ -213,7 +210,6 @@ impl HtmlReport {
                 created: row.entry.si_created,
                 fn_created,
                 event_time: None,
-                usn: None,
                 path: path_text(&row.resolution),
                 path_state: path_state(&row.resolution),
                 entry: row.entry.file_ref.entry(),
@@ -346,9 +342,10 @@ struct FindingItem {
     /// USN time, for a finding on a USN record.
     #[serde(serialize_with = "iso8601")]
     event_time: Option<Filetime>,
-    usn: Option<u64>,
     path: String,
     path_state: &'static str,
+    /// Breaks ties in the order only; the viewer does not show it.
+    #[serde(skip)]
     entry: u64,
     explain: String,
     deleted: bool,
@@ -362,7 +359,6 @@ struct FindingItem {
 struct Summary {
     input: String,
     host: &'static str,
-    record_size: u64,
     entries: u64,
     /// In-use, non-directory entries.
     files: u64,
@@ -440,7 +436,6 @@ mod tests {
     fn input() -> Input {
         Input {
             name: "MFT".to_string(),
-            record_size: 1024,
             baseline: None,
             rules: 0,
             skipped_rules: 0,
@@ -626,7 +621,7 @@ mod tests {
         assert_eq!(first["id"], "rule-high");
         assert_eq!(first["author"], "alice");
         assert_eq!(first["created"], "1601-01-01T00:00:00.0000200Z");
-        assert_eq!(first["entry"], 42);
+        assert_eq!((first.get("entry"), first.get("usn")), (None, None));
         assert!(
             first["explain"]
                 .as_str()
@@ -682,16 +677,16 @@ mod tests {
             serde_json::json!([
                 {
                     "level": "high", "title": "Title rule-high", "id": "rule-high", "author": null,
-                    "created": null, "fn_created": null, "event_time": "1601-01-01T00:00:00.0000300Z", "usn": 4156,
-                    "path": "\\Old\\b.exe", "path_state": "inferred", "entry": 60,
+                    "created": null, "fn_created": null, "event_time": "1601-01-01T00:00:00.0000300Z",
+                    "path": "\\Old\\b.exe", "path_state": "inferred",
                     "explain": data["findings"][0]["explain"],
                     "deleted": true, "seen": "usn", "streams": [], "hints": [], "folder": "other"
                 },
                 {
                     "level": "high", "title": "Title rule-high", "id": "rule-high", "author": null,
                     "created": "1601-01-01T00:00:00.0000100Z", "fn_created": "1601-01-01T00:00:00.0000000Z",
-                    "event_time": null, "usn": null,
-                    "path": "\\a.exe", "path_state": "resolved", "entry": 40,
+                    "event_time": null,
+                    "path": "\\a.exe", "path_state": "resolved",
                     "explain": data["findings"][1]["explain"],
                     "deleted": false, "seen": "mft", "streams": [], "hints": [], "folder": "other"
                 }
@@ -1213,7 +1208,6 @@ mod tests {
     fn input_and_baseline_names_are_display_text() -> Result<()> {
         let input = Input {
             name: "M\u{1b}[2JFT".to_string(),
-            record_size: 1024,
             baseline: Some("b\u{202E}tsf.fst".to_string()),
             rules: 0,
             skipped_rules: 0,
@@ -1259,7 +1253,6 @@ mod tests {
         ];
         let input = Input {
             name: "MFT".to_string(),
-            record_size: 4096,
             baseline: Some("win11.fst".to_string()),
             rules: 3,
             skipped_rules: 0,
@@ -1273,7 +1266,6 @@ mod tests {
             serde_json::json!({
                 "input": "MFT",
                 "host": "not available ($MFT only)",
-                "record_size": 4096,
                 "entries": 5,
                 "files": 2,
                 "resolved": 4,
