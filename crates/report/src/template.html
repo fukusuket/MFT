@@ -29,7 +29,7 @@ button { font: inherit; color: inherit; background: none; border: 1px solid var(
 .count { margin: 4px 0; font-weight: 600; }
 .chips { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 6px 0; }
 .chip.selected { background: var(--head); border-color: var(--fg); font-weight: 600; }
-.filters input.filter-q { width: 24em; }
+.filters input.filter-q { width: 24em; } .filters input.filter-from, .filters input.filter-to { width: 24ch; }
 [data-screen="findings"] { --cols: 7em 17em minmax(12em, 1fr) 8em minmax(10em, 18em); }
 [data-screen="outside"] { --cols: 17em minmax(12em, 1fr) 6em; }
 .list-head, .line { display: grid; grid-template-columns: var(--cols); gap: 8px; }
@@ -37,6 +37,7 @@ button { font: inherit; color: inherit; background: none; border: 1px solid var(
 .viewport { height: 60vh; overflow: auto; border: 1px solid var(--line); }
 .spacer { position: relative; } .block { position: absolute; left: 0; right: 0; }
 .row { box-sizing: border-box; overflow: hidden; padding: 2px 8px; border-bottom: 1px solid var(--line); cursor: pointer; }
+.row.selected { background: var(--head); }
 .line span, .facts { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 /* A long path loses its start, not its file name: the cell runs right to left, the text inside left to right. */
 .line .path { direction: rtl; text-align: left; } .line .path > span { direction: ltr; unicode-bidi: isolate; }
