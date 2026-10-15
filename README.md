@@ -1,33 +1,39 @@
 # tool (working name)
 
-Fast forensic triage of Windows NTFS from `$MFT` and `$UsnJrnl:$J`. It compares paths with a Windows baseline, applies Sigma rules and writes a self-contained HTML report. Early development.
+Forensic triage of Windows NTFS from `$MFT` and `$UsnJrnl:$J`, for when event logs are gone. It marks files outside a Windows baseline, runs Sigma rules and writes one self-contained HTML report. Pre-alpha (Phase 2 of [plan](docs/plan.md)).
 
-## Features
+## What it does
 
-- Parses `$MFT` and `$UsnJrnl:$J`, including corrupt-record diagnostics and historical path reconstruction
-- Marks paths as standard or outside a VanillaWindowsReference baseline
-- Applies Sigma rules with fixed levels and no computed scores
-- Filters report content by time window while running detection on all records
-- Writes deterministic, atomic HTML, CSV and JSONL outputs
+- Parses `$MFT` and `$J` (V2/V3), rebuilds paths of deleted and renamed files (Rewind)
+- Marks each path `standard` or `outside` a baseline built from VanillaWindowsReference
+- Runs Sigma rules on MFT entries and USN events; findings are listed by level, never scored
+- Focuses the report on a time window; detection still runs on everything
+- Writes HTML (Summary, Findings, Outside-baseline), CSV and JSONL; same input → same bytes; no network
 
-See [product](docs/product.md), [architecture](docs/architecture.md) and the current [plan](docs/plan.md) for details.
+## Quick start
 
-## Usage
 ```sh
-cargo build --release   # binary: target/release/tool
+cargo build --release                      # binary: target/release/tool
 
-# Build a baseline from a VanillaWindowsReference CSV
 tool baseline build --vwr <vwr.csv> -o win11-24h2.fst
 
-# Analyze an $MFT and optional $J
-tool analyze -i <$MFT> -o report.html --csv out.csv --jsonl out.jsonl \
-  --usn <$J> --baseline win11-24h2.fst --rules testdata/rules
-
-# Focus the report on a time window
-tool analyze -i <$MFT> --usn <$J> -o report.html --from 2026-09-28 --to 2026-10-02 --tz +09:00
+tool analyze -i '$MFT' --usn '$J' \
+  --baseline win11-24h2.fst --rules testdata/rules \
+  --from 2026-09-28 --to 2026-10-02 --tz +09:00 \
+  -o report.html --csv timeline.csv --jsonl timeline.jsonl
 ```
 
-Development and contribution guidance: [AGENTS.md](AGENTS.md).
+Open `report.html` in any browser. Rules that could not load are listed in `*.skipped-rules.csv` / `.jsonl`.
+
+## Docs
+
+| | |
+|---|---|
+| [Use cases](docs/usecases.md) | Who uses it and how, step by step |
+| [Product](docs/product.md) | Problems, users, MVP |
+| [Architecture](docs/architecture.md) | Pipeline, crates, outputs |
+| [Plan](docs/plan.md) | Current phase and next items |
+| [AGENTS.md](AGENTS.md) | Development rules |
 
 ## License
 - Code: [AGPL-3.0-only](LICENSE)

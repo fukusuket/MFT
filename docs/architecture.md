@@ -10,9 +10,20 @@ How the tool is built. Decisions behind it: [adr/](adr/). Library choices: [rese
 - No network access.
 - Baselines and rules are versioned data, released separately from the binary.
 
-## Target pipeline
+## Pipeline
 
-The current CLI accepts raw `$MFT` and optional `$J` files. Collection and collection-directory/zip input arrive in Phase 3.
+Today `tool analyze` reads a raw `$MFT` and an optional raw `$J`:
+
+```
+--rules dirs ─► load rules (skip what cannot match)        --baseline .fst ─► load baseline
+$MFT ─► parse records ─► merge extension records ─► entries
+$J   ─► parse records (V2/V3; V4 reported) ─────────► USN records
+entries + USN ─► resolve (paths, Rewind) ─► baseline lookup, facts, folder, window
+              ─► detect (Sigma) ─► rows: every $MFT entry, then every USN record in $J order
+rows ─► CSV / JSONL / HTML (+ skipped-rules lists), each written atomically
+```
+
+Target (Phase 3): collection and collection-directory/zip input.
 
 ```
 [collect] raw volume → $MFT, $J, $Boot, $SDS, meta.json → collection.zip
@@ -100,9 +111,22 @@ Each row's `folder` says where the file sits, judged by the directories above it
 
 The report warns when the window starts before the earliest USN event (or has no start): findings cannot cover that part. Without `$J` there is no USN coverage to compare, so no warning.
 
+## Outputs
+
+At least one of `-o`, `--csv`, `--jsonl` is required. Each file is written to a temporary name and renamed when complete; the skipped-rules lists are committed first, so a report never exists without them. An output that is the same file as an input or another output is refused.
+
+| Output | Content |
+|---|---|
+| `--csv` | One row per `$MFT` entry, then one per USN record. Columns: `entry`, `sequence`, `in_use`, `name`, `path`, `path_state`, `baseline`, `findings`, `si_created`, `fn_created`, `diagnostics`, `source` (`mft`/`usn`), `usn`, `reasons`, `event_time`, `deleted`, `seen`, `streams`, `hints`, `in_window`, `folder`. Cells are formula-neutralized |
+| `--jsonl` | The same rows and fields, typed; `findings` is a list of `{level, title, id, author}` |
+| `-o` | One HTML file, data embedded, no external resources (CSP `default-src 'none'`). Tabs Summary, Findings, Outside-baseline; filters and tab kept in the URL hash. Lists only rows in the window. Summary shows the `Edition` (from `\Windows\System32\spp\tokens\skus\`) and warns when the baseline is of another edition |
+| `<out>.skipped-rules.csv` / `.jsonl` | Rules not loaded and why (see the table above); written beside the CSV/JSONL, or beside the HTML when it is the only output, whenever `--rules` is given |
+
+All times are UTC (ISO 8601). Paths and names are attacker input: control and bidi characters are shown as `\u{XX}` in every output; HTML is built without `innerHTML`.
+
 ## Crates
 
-Implemented: `ntfs-types`, `mft-parse`, `usn-parse`, `resolve` (MFT paths and USN Rewind, [research](research/rewind.md)), `baseline`, `sigma`, `detect`, `analyze`, `report` (CSV, JSONL timeline and an HTML viewer: tabs, filters, virtual scroll in `viewer.js`, tested under Node per ADR 0022), `cli`, and `xtask` (synthetic `$MFT` for the gate). `fuzz/` is a separate workspace (ADR 0013).
+All crates below are implemented. `report`'s viewer (`viewer.js`) is plain JS tested under Node (ADR 0020, ADR 0022); `resolve`'s Rewind is compared in [research/rewind.md](research/rewind.md). `fuzz/` is a separate workspace (ADR 0013).
 
 | Crate | Role | Depends on | Built on |
 |---|---|---|---|
@@ -114,9 +138,9 @@ Implemented: `ntfs-types`, `mft-parse`, `usn-parse`, `resolve` (MFT paths and US
 | `sigma` | Thin adapter over the Sigma engine; NTFS-agnostic | — | `rsigma-eval` `=0.23.0`, no default features (ADR 0003) |
 | `detect` | NTFS events → Sigma events, logsource mapping | sigma, resolve, baseline, mft-parse, usn-parse | — |
 | `analyze` | Pipeline, facts, findings, sorting | detect, sigma, baseline, resolve, mft-parse, ntfs-types, usn-parse | — |
-| `report` | HTML, JSONL, CSV | analyze, baseline, mft-parse, ntfs-types, resolve, sigma, usn-parse | `csv`, `serde`; viewer in plain JS (ADR 0020) |
-| `cli` | `analyze`, `baseline build` | analyze, baseline, detect, mft-parse, ntfs-types, report, sigma, usn-parse | `clap` |
-| `xtask` | Deterministic synthetic `$MFT` generation | — | — |
+| `report` | HTML, JSONL, CSV | analyze, baseline, mft-parse, ntfs-types, resolve, sigma, usn-parse | `csv`, `serde`, `serde_json`; viewer in plain JS (ADR 0020) |
+| `cli` | `analyze`, `baseline build`; time-window parsing, atomic outputs | analyze, baseline, detect, mft-parse, ntfs-types, report, sigma, usn-parse | `clap`, `anyhow` |
+| `xtask` | Deterministic synthetic `$MFT` for gate measurements | — | — |
 
 Phase 3 adds `collector`, built on Windows with `ntfs-reader =0.6.0` (ADR 0005), and the `collect`, `baseline update`, and `rules` CLI surfaces.
 
