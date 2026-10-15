@@ -43,6 +43,7 @@ Setup once: `cargo install --locked cargo-nextest cargo-deny cargo-llvm-cov carg
 | Need | Read |
 |---|---|
 | What we build, MVP, CLI/UI | `docs/product.md` |
+| How users run it, step by step | `docs/usecases.md` |
 | Pipeline, crates, dependency direction | `docs/architecture.md` |
 | Current phase, next tasks, done criteria | `docs/plan.md` |
 | Why a decision was made | `docs/adr/` |
