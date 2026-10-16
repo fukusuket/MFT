@@ -29,10 +29,10 @@ const viewer = (function () {
   }
 
   // The tab and filters, kept in the URL hash so a reload or a shared link shows the same view.
-  const KEYS = ["tab", "level", "rule", "folder", "from", "to", "q"];
+  const KEYS = ["tab", "level", "rule", "folder", "state", "from", "to", "q"];
 
   function parseHash(hash) {
-    const state = { tab: "summary", level: "", rule: "", folder: "", from: "", to: "", q: "" };
+    const state = { tab: "summary", level: "", rule: "", folder: "", state: "", from: "", to: "", q: "" };
     for (const part of hash.replace(/^#/, "").split("&")) {
       const at = part.indexOf("=");
       const key = part.slice(0, at);
@@ -73,15 +73,16 @@ const viewer = (function () {
     return [...f.streams.map((s) => "ADS: " + s), "seen: " + f.seen, ...f.hints];
   }
 
-  // The lowercased text of every column a row shows, for the search.
+  // The lowercased text of every column a row shows, for the search. The state is left out:
+  // its chips filter it.
   function joined(columns) {
     return columns.filter((c) => c !== null && c !== undefined).join("\n").toLowerCase();
   }
   function findingText(f) {
-    return joined([f.level, fileState(f)[0], f.created, f.fn_created, f.event_time, f.path, f.folder, f.title, f.id, f.author, ...facts(f)]);
+    return joined([f.level, f.created, f.fn_created, f.event_time, f.path, f.folder, f.title, f.id, f.author, ...facts(f)]);
   }
   function outsideText(o) {
-    return joined([o.created, fileState(o)[0], o.fn_created, o.path, String(o.entry), o.folder]);
+    return joined([o.created, o.fn_created, o.path, String(o.entry), o.folder]);
   }
 
   // A file's state cell, text and class: deleted or present.
@@ -96,15 +97,17 @@ const viewer = (function () {
       (state.level === "" || f.level === state.level) &&
       (state.rule === "" || f.id === state.rule) &&
       (state.folder === "" || f.folder === state.folder) &&
+      (state.state === "" || fileState(f)[0] === state.state) &&
       (state.q === "" || (text ?? findingText(f)).includes(state.q.toLowerCase())) &&
       inRange([f.created, f.fn_created, f.event_time], state)
     );
   }
 
-  // Whether an outside-baseline file passes the folder, time and search filters.
+  // Whether an outside-baseline file passes the folder, state, time and search filters.
   function matchOutside(o, state, text) {
     return (
       (state.folder === "" || o.folder === state.folder) &&
+      (state.state === "" || fileState(o)[0] === state.state) &&
       (state.q === "" || (text ?? outsideText(o)).includes(state.q.toLowerCase())) &&
       inRange([o.created, o.fn_created], state)
     );
@@ -131,6 +134,7 @@ const viewer = (function () {
     "public", "downloads", "desktop", "documents", "temp", "appdata", "user_profile",
     "programdata", "program_files", "windows", "other", "no_path",
   ];
+  const STATES = ["present", "deleted"];
   const ROW_HEIGHT = 44; // two lines: the row and its facts
   const SPACER_CAP = 8000000; // below Firefox's element height limit (ADR 0020)
 
@@ -189,8 +193,8 @@ const viewer = (function () {
       screens[shown].redraws.forEach((redraw) => redraw());
     }
 
-    // A list screen's filters, most used first: search and time range, the level and folder
-    // chips with their counts in `rows`, then the rule. Each control writes its key of the state
+    // A list screen's filters, most used first: search and time range, the level, folder and
+    // state chips with their counts in `rows`, then the rule. Each control writes its key of the state
     // and reads it back on every draw.
     function filters(screen, rows, keys) {
       const bar = screen.node.appendChild(el("div", undefined, "filters"));
@@ -209,10 +213,14 @@ const viewer = (function () {
       );
 
       const chips = [];
-      for (const [key, values, title] of [["level", LEVELS, "Level"], ["folder", FOLDERS, "Folder"]]) {
+      for (const [key, values, title, of] of [
+        ["level", LEVELS, "Level", (r) => r.level],
+        ["folder", FOLDERS, "Folder", (r) => r.folder],
+        ["state", STATES, "State", (r) => fileState(r)[0]],
+      ]) {
         if (!keys.includes(key)) continue;
         const counts = new Map();
-        rows.forEach((r) => counts.set(r[key], (counts.get(r[key]) || 0) + 1));
+        rows.map(of).forEach((v) => counts.set(v, (counts.get(v) || 0) + 1));
         const line = screen.node.appendChild(el("div", title + ": ", "chips"));
         for (const value of values.filter((v) => counts.has(v))) {
           const chip = line.appendChild(el("button", value + " " + counts.get(value), "chip"));
@@ -315,7 +323,7 @@ const viewer = (function () {
 
     function outside(screen) {
       const node = screen.node;
-      filters(screen, data.outside, ["folder"]);
+      filters(screen, data.outside, ["folder", "state"]);
       const texts = data.outside.map(outsideText); // built at load, so no search pays for it
       const count = node.appendChild(el("p", undefined, "count"));
       const show = list(
@@ -338,7 +346,7 @@ const viewer = (function () {
 
     function findings(screen) {
       const node = screen.node;
-      filters(screen, data.findings, ["level", "rule", "folder"]);
+      filters(screen, data.findings, ["level", "rule", "folder", "state"]);
       const texts = data.findings.map(findingText); // built at load, so no search pays for it
       const count = node.appendChild(el("p", undefined, "count"));
       const show = list(node, ["Level", "State", "Time (UTC)", "Path", "Folder", "Rule"], (row, f) => {
