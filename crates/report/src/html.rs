@@ -197,6 +197,7 @@ impl HtmlReport {
                 fn_created,
                 path: path_text(&row.resolution),
                 entry: row.entry.file_ref.entry(),
+                deleted: !row.entry.in_use,
                 folder: folder_name(row.folder),
             });
         }
@@ -282,6 +283,7 @@ struct OutsideItem {
     fn_created: Option<Filetime>,
     path: String,
     entry: u64,
+    deleted: bool,
     folder: &'static str,
 }
 
@@ -1083,13 +1085,42 @@ mod tests {
         assert_eq!(
             data["outside"],
             serde_json::json!([
-                {"created": "1601-01-01T00:00:00.0000200Z", "fn_created": "1601-01-01T00:00:00.0000000Z", "path": r"\u.txt", "entry": 44, "folder": "other"},
-                {"created": "1601-01-01T00:00:00.0000200Z", "fn_created": "1601-01-01T00:00:00.0000000Z", "path": r"\w.txt", "entry": 42, "folder": "other"},
-                {"created": "1601-01-01T00:00:00.0000100Z", "fn_created": "1601-01-01T00:00:00.0000000Z", "path": r"\y.txt", "entry": 41, "folder": "other"},
-                {"created": null, "fn_created": "1601-01-01T00:00:00.0000000Z", "path": r"\v.txt", "entry": 43, "folder": "other"},
+                {"created": "1601-01-01T00:00:00.0000200Z", "fn_created": "1601-01-01T00:00:00.0000000Z", "path": r"\u.txt", "entry": 44, "deleted": false, "folder": "other"},
+                {"created": "1601-01-01T00:00:00.0000200Z", "fn_created": "1601-01-01T00:00:00.0000000Z", "path": r"\w.txt", "entry": 42, "deleted": false, "folder": "other"},
+                {"created": "1601-01-01T00:00:00.0000100Z", "fn_created": "1601-01-01T00:00:00.0000000Z", "path": r"\y.txt", "entry": 41, "deleted": false, "folder": "other"},
+                {"created": null, "fn_created": "1601-01-01T00:00:00.0000000Z", "path": r"\v.txt", "entry": 43, "deleted": false, "folder": "other"},
             ])
         );
         assert_eq!(data["summary"]["outside"], 4);
+        Ok(())
+    }
+
+    #[test]
+    fn outside_files_carry_whether_they_are_deleted() -> Result<()> {
+        let vwr = "\"DirectoryName\",\"Name\",\"FullName\"\n\"C:\\\",\"x.txt\",\"C:\\x.txt\"\n";
+        let mut file_bytes = Vec::new();
+        baseline::build(vwr.as_bytes(), &mut file_bytes)?;
+        let baseline = baseline::Baseline::load(file_bytes)?;
+        let mut deleted = created(file(40, 5, "a.txt"), 200);
+        deleted.in_use = false;
+        let entries = [root(), deleted, created(file(41, 5, "b.txt"), 100)];
+
+        let html = html_with(&entries, Some(&baseline), None, input())?;
+
+        let data = decode(payload(&html)?)?;
+        let states: Vec<serde_json::Value> = data["outside"]
+            .as_array()
+            .ok_or("no outside")?
+            .iter()
+            .map(|o| serde_json::json!([o["path"], o["deleted"]]))
+            .collect();
+        assert_eq!(
+            states,
+            [
+                serde_json::json!([r"\a.txt", true]),
+                serde_json::json!([r"\b.txt", false])
+            ]
+        );
         Ok(())
     }
 

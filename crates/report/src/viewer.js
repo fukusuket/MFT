@@ -70,7 +70,7 @@ const viewer = (function () {
 
   // A finding's facts as shown under its row.
   function facts(f) {
-    return [...(f.deleted ? ["deleted"] : []), ...f.streams.map((s) => "ADS: " + s), "seen: " + f.seen, ...f.hints];
+    return [...f.streams.map((s) => "ADS: " + s), "seen: " + f.seen, ...f.hints];
   }
 
   // The lowercased text of every column a row shows, for the search.
@@ -78,10 +78,15 @@ const viewer = (function () {
     return columns.filter((c) => c !== null && c !== undefined).join("\n").toLowerCase();
   }
   function findingText(f) {
-    return joined([f.level, f.created, f.fn_created, f.event_time, f.path, f.folder, f.title, f.id, f.author, ...facts(f)]);
+    return joined([f.level, fileState(f)[0], f.created, f.fn_created, f.event_time, f.path, f.folder, f.title, f.id, f.author, ...facts(f)]);
   }
   function outsideText(o) {
-    return joined([o.created, o.fn_created, o.path, String(o.entry), o.folder]);
+    return joined([o.created, fileState(o)[0], o.fn_created, o.path, String(o.entry), o.folder]);
+  }
+
+  // A file's state cell, text and class: deleted or present.
+  function fileState(file) {
+    return file.deleted ? ["deleted", "state state-deleted"] : ["present", "state"];
   }
 
   // Whether a finding passes every filter that is set. The search is case-insensitive over the
@@ -315,8 +320,8 @@ const viewer = (function () {
       const count = node.appendChild(el("p", undefined, "count"));
       const show = list(
         node,
-        ["Created ($SI, UTC)", "Path", "MFT entry"],
-        (row, o) => row.appendChild(line([[o.created, "mono"], [o.path, "path"], [o.entry, "mono"]])),
+        ["Created ($SI, UTC)", "State", "Path"],
+        (row, o) => row.appendChild(line([[o.created, "mono"], fileState(o), [o.path, "path"]])),
         (o) => [
           el("p", o.path, "path"),
           el("p", "$SI created " + (o.created ?? "unknown") + " · $FN created " + (o.fn_created ?? "unknown"), "mono"),
@@ -336,10 +341,11 @@ const viewer = (function () {
       filters(screen, data.findings, ["level", "rule", "folder"]);
       const texts = data.findings.map(findingText); // built at load, so no search pays for it
       const count = node.appendChild(el("p", undefined, "count"));
-      const show = list(node, ["Level", "Time (UTC)", "Path", "Folder", "Rule"], (row, f) => {
+      const show = list(node, ["Level", "State", "Time (UTC)", "Path", "Folder", "Rule"], (row, f) => {
         row.appendChild(
           line([
             [f.level, "level level-" + f.level],
+            fileState(f),
             [f.created !== null ? f.created : f.event_time, "mono"],
             [f.path_state === "resolved" ? f.path : f.path + " (" + f.path_state + ")", "path"],
             [f.folder],

@@ -170,8 +170,8 @@ const report = {
     finding({ level: "low", id: "rule-2", folder: "temp", path: "\\Windows\\Temp\\x.dll", title: "DLL in Temp", author: "a", explain: "{}", path_state: "inferred", deleted: true, seen: "usn", streams: [], hints: [] }),
   ],
   outside: [
-    { created: "2026-10-02T12:00:00.0000000Z", fn_created: null, path: "\\Users\\Bob\\Downloads\\Tool.EXE", entry: 40, folder: "downloads" },
-    { created: "2026-10-01T00:00:00.0000000Z", fn_created: null, path: "\\Windows\\Temp\\x.dll", entry: 41, folder: "temp" },
+    { created: "2026-10-02T12:00:00.0000000Z", fn_created: null, path: "\\Users\\Bob\\Downloads\\Tool.EXE", entry: 40, deleted: false, folder: "downloads" },
+    { created: "2026-10-01T00:00:00.0000000Z", fn_created: null, path: "\\Windows\\Temp\\x.dll", entry: 41, deleted: true, folder: "temp" },
   ],
   footer: { version: "1.0.0", commit: "abc", source_url: "https://example.com", license: "AGPL-3.0-only" },
 };
@@ -237,6 +237,28 @@ test("Findings: filters change the hash, the N of M count and the rows; a row op
   assert.ok(screen.find("detail").textContent.includes("DLL in Temp"));
 });
 
+test("Findings and Outside-baseline show whether each file is deleted in a state column", () => {
+  const { window, app } = open("#tab=findings");
+  const screen = (name) => app.findAll("screen").find((s) => s.getAttribute("data-screen") === name);
+  const heads = (name) => screen(name).find("list-head").children.map((c) => c.textContent);
+  const states = (name) => screen(name).findAll("row").map((r) => r.find("state").textContent);
+  const findings = states("findings");
+  window.go("#tab=outside");
+
+  assert.deepEqual(heads("findings"), ["Level", "State", "Time (UTC)", "Path", "Folder", "Rule"]);
+  assert.deepEqual(heads("outside"), ["Created ($SI, UTC)", "State", "Path"]);
+  assert.deepEqual(findings, ["present", "deleted"]);
+  assert.deepEqual(states("outside"), ["present", "deleted"]);
+  assert.ok(screen("findings").findAll("row")[1].find("state").className.includes("state-deleted"));
+  assert.ok(!screen("findings").findAll("row")[1].find("facts").textContent.includes("deleted"));
+  const { matchFinding, matchOutside } = load();
+  assert.equal(matchFinding(report.findings[0], { ...none, q: "PRESENT" }), true);
+  assert.equal(matchFinding(report.findings[0], { ...none, q: "deleted" }), false);
+  const deleted = report.outside[1];
+  assert.equal(matchOutside(deleted, { ...none, q: "DELETED" }), true);
+  assert.equal(matchOutside(deleted, { ...none, q: "present" }), false);
+});
+
 test("Summary: the critical and high counts open Findings filtered to that level", () => {
   const { window, app, shown } = open("");
   const links = app.findAll("level-link");
@@ -260,7 +282,7 @@ test("Outside-baseline: per-folder counts filter the list, with time and path fi
   links[1].dispatch("click");
   assert.equal(window.location.hash, "#tab=outside&folder=temp");
   assert.equal(count(), "1 of 2");
-  for (const text of ["2026-10-01T00:00:00.0000000Z", "\\Windows\\Temp\\x.dll", "41"]) {
+  for (const text of ["2026-10-01T00:00:00.0000000Z", "\\Windows\\Temp\\x.dll", "deleted"]) {
     assert.ok(rows()[0].textContent.includes(text), text);
   }
 
