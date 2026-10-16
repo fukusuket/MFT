@@ -25,6 +25,7 @@ test("the URL hash round-trips the tab and filters, and ignores what it does not
     level: "high",
     rule: "rule-1",
     folder: "downloads",
+    state: "deleted",
     from: "2026-10-01",
     to: "2026-10-02T12:00:00",
     q: "a#b&c=d %e\\f",
@@ -36,13 +37,13 @@ test("the URL hash round-trips the tab and filters, and ignores what it does not
   assert.deepEqual({ ...parseHash(hash) }, state);
   assert.deepEqual(
     { ...parseHash("#tab=outside&bogus=1&q=%E0%A4%A&folder=temp") },
-    { tab: "outside", level: "", rule: "", folder: "temp", from: "", to: "", q: "" },
+    { tab: "outside", level: "", rule: "", folder: "temp", state: "", from: "", to: "", q: "" },
   );
-  assert.deepEqual({ ...parseHash("") }, { tab: "summary", level: "", rule: "", folder: "", from: "", to: "", q: "" });
+  assert.deepEqual({ ...parseHash("") }, { tab: "summary", level: "", rule: "", folder: "", state: "", from: "", to: "", q: "" });
   assert.equal(formatHash({ ...parseHash(""), tab: "findings" }), "#tab=findings");
 });
 
-const none = { tab: "findings", level: "", rule: "", folder: "", from: "", to: "", q: "" };
+const none = { tab: "findings", level: "", rule: "", folder: "", state: "", from: "", to: "", q: "" };
 const finding = (over) => ({
   level: "high",
   id: "rule-1",
@@ -75,6 +76,18 @@ test("findings match the level, rule, folder and a case-insensitive path search"
     assert.equal(matchFinding(f, { ...none, [key]: miss }), false, `${key}=${miss}`);
   }
   assert.equal(matchFinding(f, { ...none, level: "high", folder: "temp" }), false);
+});
+
+test("the state filter keeps only present or only deleted files, in both lists", () => {
+  const { matchFinding, matchOutside } = load();
+  const present = finding({ deleted: false });
+  const deleted = finding({ deleted: true });
+  const o = (d) => ({ created: null, fn_created: null, path: "\\x.dll", entry: 41, deleted: d, folder: "temp" });
+
+  assert.deepEqual([present, deleted].map((f) => matchFinding(f, { ...none, state: "present" })), [true, false]);
+  assert.deepEqual([present, deleted].map((f) => matchFinding(f, { ...none, state: "deleted" })), [false, true]);
+  assert.deepEqual([o(false), o(true)].map((r) => matchOutside(r, { ...none, state: "deleted" })), [false, true]);
+  assert.equal(matchFinding(deleted, { ...none, state: "deleted", folder: "temp" }), false); // combines
 });
 
 test("the time range holds from, the whole to-day or to-second, on any of the row's times", () => {
@@ -170,8 +183,8 @@ const report = {
     finding({ level: "low", id: "rule-2", folder: "temp", path: "\\Windows\\Temp\\x.dll", title: "DLL in Temp", author: "a", explain: "{}", path_state: "inferred", deleted: true, seen: "usn", streams: [], hints: [] }),
   ],
   outside: [
-    { created: "2026-10-02T12:00:00.0000000Z", fn_created: null, path: "\\Users\\Bob\\Downloads\\Tool.EXE", entry: 40, folder: "downloads" },
-    { created: "2026-10-01T00:00:00.0000000Z", fn_created: null, path: "\\Windows\\Temp\\x.dll", entry: 41, folder: "temp" },
+    { created: "2026-10-02T12:00:00.0000000Z", fn_created: null, path: "\\Users\\Bob\\Downloads\\Tool.EXE", entry: 40, deleted: false, folder: "downloads" },
+    { created: "2026-10-01T00:00:00.0000000Z", fn_created: null, path: "\\Windows\\Temp\\x.dll", entry: 41, deleted: true, folder: "temp" },
   ],
   footer: { version: "1.0.0", commit: "abc", source_url: "https://example.com", license: "AGPL-3.0-only" },
 };
@@ -237,6 +250,48 @@ test("Findings: filters change the hash, the N of M count and the rows; a row op
   assert.ok(screen.find("detail").textContent.includes("DLL in Temp"));
 });
 
+test("Findings and Outside-baseline show whether each file is deleted in a state column", () => {
+  const { window, app } = open("#tab=findings");
+  const screen = (name) => app.findAll("screen").find((s) => s.getAttribute("data-screen") === name);
+  const heads = (name) => screen(name).find("list-head").children.map((c) => c.textContent);
+  const states = (name) => screen(name).findAll("row").map((r) => r.find("state").textContent);
+  const findings = states("findings");
+  window.go("#tab=outside");
+
+  assert.deepEqual(heads("findings"), ["Level", "State", "Time (UTC)", "Path", "Folder", "Rule"]);
+  assert.deepEqual(heads("outside"), ["Created ($SI, UTC)", "State", "Path"]);
+  assert.deepEqual(findings, ["present", "deleted"]);
+  assert.deepEqual(states("outside"), ["present", "deleted"]);
+  assert.ok(screen("findings").findAll("row")[1].find("state").className.includes("state-deleted"));
+  assert.ok(!screen("findings").findAll("row")[1].find("facts").textContent.includes("deleted"));
+  // The State chips filter on the state; the search does not, so there is one way to do it.
+  const { matchFinding, matchOutside } = load();
+  assert.equal(matchFinding(report.findings[1], { ...none, q: "deleted" }), false);
+  assert.equal(matchFinding(report.findings[0], { ...none, q: "present" }), false);
+  assert.equal(matchOutside(report.outside[1], { ...none, q: "deleted" }), false);
+});
+
+test("State chips with counts filter both lists and keep the state in the hash", () => {
+  const { window, app } = open("#tab=findings&folder=temp");
+  const screen = (name) => app.findAll("screen").find((s) => s.getAttribute("data-screen") === name);
+  const chips = (name) => screen(name).findAll("chip").filter((c) => c.getAttribute("data-key") === "state");
+  const count = (name) => screen(name).find("count").textContent;
+
+  assert.deepEqual(chips("findings").map((c) => c.textContent), ["present 1", "deleted 1"]);
+  chips("findings")[1].dispatch("click");
+  assert.equal(window.location.hash, "#tab=findings&folder=temp&state=deleted");
+  assert.equal(count("findings"), "1 of 2");
+  assert.ok(chips("findings")[1].className.includes("selected"));
+  chips("findings")[0].dispatch("click"); // with folder=temp, no present file is left
+  assert.equal(count("findings"), "0 of 2");
+
+  window.go("#tab=outside&state=present");
+  assert.deepEqual(chips("outside").map((c) => c.textContent), ["present 1", "deleted 1"]);
+  assert.equal(count("outside"), "1 of 2");
+  chips("outside")[0].dispatch("click"); // a selected chip clears its filter
+  assert.equal(count("outside"), "2 of 2");
+});
+
 test("Summary: the critical and high counts open Findings filtered to that level", () => {
   const { window, app, shown } = open("");
   const links = app.findAll("level-link");
@@ -252,7 +307,7 @@ test("Outside-baseline: per-folder counts filter the list, with time and path fi
   const screen = app.findAll("screen").find((s) => s.getAttribute("data-screen") === "outside");
   const count = () => screen.find("count").textContent;
   const rows = () => screen.findAll("row");
-  const links = screen.findAll("chip");
+  const links = screen.findAll("chip").filter((c) => c.getAttribute("data-key") === "folder");
 
   assert.equal(count(), "2 of 2");
   assert.deepEqual(links.map((l) => l.textContent), ["downloads 1", "temp 1"]);
@@ -260,7 +315,7 @@ test("Outside-baseline: per-folder counts filter the list, with time and path fi
   links[1].dispatch("click");
   assert.equal(window.location.hash, "#tab=outside&folder=temp");
   assert.equal(count(), "1 of 2");
-  for (const text of ["2026-10-01T00:00:00.0000000Z", "\\Windows\\Temp\\x.dll", "41"]) {
+  for (const text of ["2026-10-01T00:00:00.0000000Z", "\\Windows\\Temp\\x.dll", "deleted"]) {
     assert.ok(rows()[0].textContent.includes(text), text);
   }
 
@@ -343,7 +398,7 @@ test("the search matches any column a row shows, ignoring case", () => {
   const f = finding({ title: "Tool in Downloads", author: "Alice", seen: "both", streams: ["Zone.Identifier"], hints: ["si_before_fn"], deleted: true });
   const search = (q) => matchFinding(f, { ...none, q });
 
-  for (const q of ["tool.exe", "tool in downloads", "RULE-1", "alice", "DOWNLOADS", "high", "zone.identifier", "si_before_fn", "deleted", "2026-10-02t12"]) {
+  for (const q of ["tool.exe", "tool in downloads", "RULE-1", "alice", "DOWNLOADS", "high", "zone.identifier", "si_before_fn", "2026-10-02t12"]) {
     assert.equal(search(q), true, q);
   }
   assert.equal(search("prefetch"), false);

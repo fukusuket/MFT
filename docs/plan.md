@@ -184,6 +184,12 @@ Goal: add `$J` to the same end-to-end path: USN events with their paths at the t
 - [x] **P2-11 Viewer defects** (`report`; [research/viewer-review.md](research/viewer-review.md) U5, U6, U7, part of U8)
   - Done when: a filter or search change replaces the current history entry (`history.replaceState`) and only a tab change adds one; the rule drop-down is ordered by level, then title; a cut rule title shows in full as a tooltip; the clicked row stays highlighted while the list scrolls or repaints and the detail pane is scrolled into view; the from/to inputs show their whole placeholder. One JS test per behavior (the placeholder is checked by the human); Back and the hash work from a `file://` report in Chrome and Firefox (checked by the human). CSV/JSONL unchanged; output byte-identical across runs.
   - Out of scope: layout changes (e.g. a side pane), keyboard navigation, new data, the other fixes in research/viewer-review.md.
+- [x] **P2-12 Viewer: file state column** (`report`; added after a Simulated-Case-1 review: the intended user knows a suspicious file but not the MFT layout, and needs to see whether a file is deleted)
+  - Done when: Findings columns are level, state, time, path, folder, rule, and Outside-baseline columns are `$SI` created, state, path (no MFT entry column; the entry stays in the detail pane). State is `deleted` or `present`; `deleted` is no longer in the facts line, and the search matches the state. The Outside-baseline data carries `deleted`. CSV/JSONL unchanged; output byte-identical across runs.
+  - Out of scope: a state filter control, other columns, CSV/JSONL columns.
+- [x] **P2-13 Viewer: state filter** (`report`; added after a Simulated-Case-1 review: the single search box cannot combine a path with "deleted only")
+  - Done when: Findings and Outside-baseline show `State:` chips `present N` / `deleted N` that filter the list like the folder chips and combine with the other filters; the state is kept in the URL hash (`state=`); the search no longer matches the state (one way to filter it). CSV/JSONL unchanged; output byte-identical across runs.
+  - Out of scope: other new filters, Summary links to the state filter, CSV/JSONL columns.
 - [ ] **P2-10 Gate material**
   - Done when: the Rewind comparison (P2-3) is summarized, and a report from Simulated-Case-1 is ready for a non-expert session. The human runs the session and ticks the gate.
   - Out of scope: optimization beyond the gate.
