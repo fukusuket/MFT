@@ -1,0 +1,32 @@
+# Sample rule for tests. Detection Rule License (DRL) 1.1.
+title: Executable created before its name, not in the Windows baseline
+id: e6eb2762-de17-4e3b-a46b-093278915f54
+status: test
+description: An executable or script that a clean install of this build does not have, whose $STANDARD_INFORMATION created time is before its $FILE_NAME created time, outside Program Files and the Windows Installer cache. Timestomping sets $SI back; installers and archives that keep the original times do the same.
+author: tool
+date: 2026-10-17
+logsource:
+  product: windows
+  category: file_event
+  service: baseline_outside
+detection:
+  selection:
+    SiCreatedBeforeFnCreated: 'true'
+    TargetFilename|endswith:
+      - '.exe'
+      - '.dll'
+      - '.msi'
+      - '.ps1'
+      - '.bat'
+      - '.cmd'
+      - '.vbs'
+      - '.js'
+      - '.hta'
+      - '.scr'
+  installed:
+    TargetFilename|startswith:
+      - 'C:\Program Files\'
+      - 'C:\Program Files (x86)\'
+      - 'C:\Windows\Installer\'
+  condition: selection and not installed
+level: medium

@@ -1,0 +1,32 @@
+# Sample rule for tests. Detection Rule License (DRL) 1.1.
+title: File with an uncommon alternate data stream
+id: 17b57f53-b8f0-4a2c-82e1-746b0a198d85
+status: test
+description: A named $DATA stream (alternate data stream) on a file, other than Zone.Identifier, the stream names Windows and common sync and security software write, and NTFS system files. Data hidden in a stream does not show in directory listings. The excluded names follow the defaults of Velociraptor's Windows.NTFS.ADSHunter.
+author: tool
+date: 2026-10-17
+logsource:
+  product: windows
+  category: create_stream_hash
+detection:
+  selection:
+    TargetFilename|contains: ':'
+  common:
+    - TargetFilename|endswith:
+        - ':Zone.Identifier'
+        - '.MetaData'
+        - '.SyncRootIdentity'
+    - TargetFilename|contains:
+        - ':SmartScreen'
+        - ':WofCompressedData'
+        - ':encryptable'
+        - ':favicon'
+        - ':AFP_AfpInfo'
+        - ':OECustomProperty'
+        - ':Win32App_1'
+        - ':com.dropbox'
+        - ':icasource'
+  system:
+    TargetFilename|startswith: 'C:\$'
+  condition: selection and not common and not system
+level: medium
