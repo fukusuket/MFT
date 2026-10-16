@@ -144,10 +144,9 @@ pub fn rows<'a>(
             }
             _ => None,
         };
-        let findings = match (rules, detect::file_event(entry, &resolution, status)) {
-            (Some(rules), Some(event)) => rules.evaluate(&event),
-            _ => Vec::new(),
-        };
+        let findings = rules
+            .map(|rules| mft_findings(rules, entry, &resolution, status))
+            .unwrap_or_default();
         Row {
             entry,
             resolution,
@@ -192,7 +191,7 @@ fn hints(entry: &Entry) -> Vec<Hint> {
         return Vec::new();
     };
     let mut hints = Vec::new();
-    if resolve::chosen_name(&entry.names).is_some_and(|name| si < name.created) {
+    if detect::si_before_fn(entry) == Some(true) {
         hints.push(Hint::SiBeforeFn);
     }
     if si.raw() % TICKS_PER_SECOND == 0 {
@@ -303,6 +302,23 @@ pub fn usn_rows<'a>(
             }
             row
         })
+}
+
+/// Matches of the `$MFT` events of one entry, each rule once, in the order `Rules::evaluate` uses.
+fn mft_findings(
+    rules: &Rules,
+    entry: &Entry,
+    resolution: &Resolution<'_>,
+    baseline: Option<Status>,
+) -> Vec<Finding> {
+    let mut events: Vec<sigma::Event> = detect::file_event(entry, resolution, baseline)
+        .into_iter()
+        .collect();
+    events.extend(detect::stream_events(entry, resolution, baseline));
+    let mut findings: Vec<Finding> = events.iter().flat_map(|e| rules.evaluate(e)).collect();
+    findings.sort_by(|a, b| b.level.cmp(&a.level).then_with(|| a.id.cmp(&b.id)));
+    findings.dedup_by(|a, b| a.id == b.id); // one rule on two streams is one finding
+    findings
 }
 
 /// Matches of every event of one USN record, in the order `Rules::evaluate` uses.
@@ -542,6 +558,29 @@ mod tests {
 
         assert_eq!(with, [vec![], vec!["rule-exe".to_string()], vec![]]);
         assert_eq!(without, 0);
+        Ok(())
+    }
+
+    #[test]
+    fn a_rule_matching_two_streams_of_a_file_is_one_finding()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let rules = rules(
+            "streams",
+            "create_stream_hash",
+            "    TargetFilename|contains: ':'\n",
+        )?;
+        let mut file = entry(40, 5, "a.txt");
+        file.streams = ["x", "y"]
+            .iter()
+            .map(|s| NtfsName::from_units(&s.encode_utf16().collect::<Vec<_>>()))
+            .collect();
+        let entries = [entry(5, 5, "."), file];
+
+        let ids: Vec<Vec<String>> = rows(&entries, &[], None, Some(&rules), None)
+            .map(|r| r.findings.into_iter().map(|f| f.id).collect())
+            .collect();
+
+        assert_eq!(ids, [vec![], vec!["rule-streams".to_string()]]);
         Ok(())
     }
 

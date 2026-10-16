@@ -9,13 +9,20 @@ use usn_parse::UsnEvent;
 /// Every logsource and field the events below can carry: rules needing anything else are skipped.
 pub const EMITTED: sigma::Emitted = sigma::Emitted {
     product: "windows",
-    categories: &["file_event", "file_delete", "file_rename", "file_change"],
+    categories: &[
+        "file_event",
+        "file_delete",
+        "file_rename",
+        "file_change",
+        "create_stream_hash",
+    ],
     services: &["baseline_outside"],
     fields: &[
         "TargetFilename",
         "SourceFilename",
         "CreationUtcTime",
         "FnCreationUtcTime",
+        "SiCreatedBeforeFnCreated",
         "UtcTime",
     ],
 };
@@ -26,24 +33,63 @@ pub fn file_event(
     resolution: &Resolution<'_>,
     baseline: Option<Status>,
 ) -> Option<Event> {
-    let is_root = matches!(resolution, Resolution::Resolved(segments) if segments.is_empty());
-    if entry.is_dir || is_root {
-        return None; // file_event is about files
-    }
-    // Phase 1 inputs are system volumes, so the drive is C: (P1-4 H1).
-    let target = format!("C:{}", resolution.path_text()?);
-    let mut fields = vec![("TargetFilename", target)];
+    let mut fields = vec![("TargetFilename", file_target(entry, resolution)?)];
     fields.extend(entry.si_created.map(|t| ("CreationUtcTime", t.sysmon())));
     fields.extend(
         resolve::chosen_name(&entry.names).map(|n| ("FnCreationUtcTime", n.created.sysmon())),
     );
+    fields.extend(si_before_fn(entry).map(|b| ("SiCreatedBeforeFnCreated", b.to_string())));
     Some(Event {
         product: "windows",
         category: "file_event",
         // "Outside baseline" is a logsource, not a field (architecture.md).
-        service: (baseline == Some(Status::Outside)).then_some("baseline_outside"),
+        service: service(baseline),
         fields,
     })
+}
+
+/// The `create_stream_hash` events for the named `$DATA` streams of a file, in attribute order.
+pub fn stream_events(
+    entry: &Entry,
+    resolution: &Resolution<'_>,
+    baseline: Option<Status>,
+) -> Vec<Event> {
+    let Some(path) = file_target(entry, resolution) else {
+        return Vec::new();
+    };
+    let service = service(baseline);
+    entry
+        .streams
+        .iter()
+        .map(|stream| Event {
+            product: "windows",
+            category: "create_stream_hash",
+            service,
+            fields: vec![("TargetFilename", format!("{path}:{stream}"))],
+        })
+        .collect()
+}
+
+/// The `baseline_outside` service for files outside the baseline.
+fn service(baseline: Option<Status>) -> Option<&'static str> {
+    (baseline == Some(Status::Outside)).then_some("baseline_outside")
+}
+
+/// The file's path with the drive, or `None` for directories, the root and unknown paths:
+/// these events are about files.
+fn file_target(entry: &Entry, resolution: &Resolution<'_>) -> Option<String> {
+    let is_root = matches!(resolution, Resolution::Resolved(segments) if segments.is_empty());
+    if entry.is_dir || is_root {
+        return None;
+    }
+    // Phase 1 inputs are system volumes, so the drive is C: (P1-4 H1).
+    Some(format!("C:{}", resolution.path_text()?))
+}
+
+/// Whether `entry`'s `$SI` created is before its shown name's `$FN` created; `None` without both.
+pub fn si_before_fn(entry: &Entry) -> Option<bool> {
+    let si = entry.si_created?;
+    resolve::chosen_name(&entry.names).map(|name| si < name.created)
 }
 
 /// The Sigma events for a USN record whose file had the path `target` (and `source` before a
@@ -60,7 +106,7 @@ pub fn usn_events(
         return Vec::new();
     }
     let time = event.time.sysmon();
-    let service = (baseline == Some(Status::Outside)).then_some("baseline_outside");
+    let service = service(baseline);
     [
         (FILE_CREATE, "file_event"),
         (RENAME_NEW_NAME, "file_rename"),
@@ -332,9 +378,94 @@ mod tests {
                     ("TargetFilename", r"C:\Windows\Temp\x.exe".to_string()),
                     ("CreationUtcTime", "2023-11-14 17:12:46.677".to_string()),
                     ("FnCreationUtcTime", "2024-02-29 12:34:56.123".to_string()),
+                    ("SiCreatedBeforeFnCreated", "true".to_string()),
                 ]
             ))
         );
+    }
+
+    #[test]
+    fn stream_events_are_create_stream_hash_events_with_the_stream_in_target_filename() {
+        let (users, exe) = (name("Users"), name("x.exe"));
+        let resolution = Resolution::Resolved(vec![&users, &exe]);
+        let mut entry = file(1, 1);
+        entry.streams = vec![name("a"), name("b")];
+
+        let events = stream_events(&entry, &resolution, Some(Status::Outside));
+
+        let target = |s: &str| vec![("TargetFilename", s.to_string())];
+        assert_eq!(
+            shown(events),
+            [
+                (
+                    "create_stream_hash",
+                    Some("baseline_outside"),
+                    target(r"C:\Users\x.exe:a")
+                ),
+                (
+                    "create_stream_hash",
+                    Some("baseline_outside"),
+                    target(r"C:\Users\x.exe:b")
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn no_stream_events_for_directories_unknown_paths_or_files_without_streams() {
+        let dir_name = name("Users");
+        let mut with_streams = file(1, 1);
+        with_streams.streams = vec![name("a")];
+        let mut dir = file(1, 1);
+        dir.streams = vec![name("a")];
+        dir.is_dir = true;
+        let named = Resolution::Resolved(vec![&dir_name]);
+
+        assert!(stream_events(&dir, &named, None).is_empty());
+        assert!(stream_events(&with_streams, &Resolution::Unknown, None).is_empty());
+        assert!(stream_events(&with_streams, &Resolution::Resolved(vec![]), None).is_empty());
+        assert!(stream_events(&file(1, 1), &named, None).is_empty());
+    }
+
+    #[test]
+    fn emitted_lists_the_category_and_field_of_stream_events() {
+        let exe = name("x.exe");
+        let mut entry = file(1, 1);
+        entry.streams = vec![name("a")];
+
+        let events = stream_events(&entry, &Resolution::Resolved(vec![&exe]), None);
+
+        assert_eq!(events.len(), 1);
+        for event in &events {
+            assert!(EMITTED.categories.contains(&event.category), "{event:?}");
+            for (field, _) in &event.fields {
+                assert!(EMITTED.fields.contains(field), "{field}");
+            }
+        }
+    }
+
+    #[test]
+    fn file_event_says_whether_si_created_is_before_fn_created() {
+        let exe = name("x.exe");
+        let resolution = Resolution::Resolved(vec![&exe]);
+        let before = |entry: &Entry| {
+            file_event(entry, &resolution, None).map(|e| {
+                e.fields
+                    .into_iter()
+                    .find(|(f, _)| *f == "SiCreatedBeforeFnCreated")
+                    .map(|(_, v)| v)
+            })
+        };
+        let mut no_si = file(1, 2);
+        no_si.si_created = None;
+        let mut no_name = file(1, 2);
+        no_name.names.clear();
+
+        assert_eq!(before(&file(1, 2)), Some(Some("true".to_string())));
+        assert_eq!(before(&file(2, 2)), Some(Some("false".to_string())));
+        assert_eq!(before(&file(3, 2)), Some(Some("false".to_string())));
+        assert_eq!(before(&no_si), Some(None));
+        assert_eq!(before(&no_name), Some(None));
     }
 
     #[test]

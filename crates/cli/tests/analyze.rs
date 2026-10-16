@@ -1105,6 +1105,14 @@ fn sample_rules_skip_system_binaries_in_winsxs() -> TestResult {
 
 /// Writes a `$MFT` holding `files` (paths like `\Users\x.exe`), directories created on the way.
 fn write_volume(input: &std::path::Path, files: &[&str]) -> TestResult {
+    let files: Vec<(&str, u64)> = files.iter().map(|&file| (file, 0)).collect();
+    write_volume_fn_created(input, &files)
+}
+
+/// [`write_volume`] with each file's `$FN` created and, after a `:` in its path, one named
+/// `$DATA` stream; every `$SI` created is 132_000_000_000_000_000 (`standard_information`),
+/// directories' `$FN` created 0.
+fn write_volume_fn_created(input: &std::path::Path, files: &[(&str, u64)]) -> TestResult {
     let at = |parent: u32| u64::from(parent) | (1 << 48);
     let entry = |flags: u16, entry: u32, parent: u32, name: &str| {
         record_with_flags(
@@ -1122,7 +1130,7 @@ fn write_volume(input: &std::path::Path, files: &[&str]) -> TestResult {
     mft.extend(entry(0x03, 5, 5, "."));
     let mut dirs: Vec<(String, u32)> = vec![(String::new(), 5)];
     let mut next = 6;
-    for file in files {
+    for &(file, fn_created) in files {
         let (parent_path, name) = file.rsplit_once('\\').ok_or("path without a backslash")?;
         let mut parent = 5;
         let mut so_far = String::new();
@@ -1138,7 +1146,16 @@ fn write_volume(input: &std::path::Path, files: &[&str]) -> TestResult {
                 }
             };
         }
-        mft.extend(entry(0x01, next, parent, name));
+        let (name, stream) = match name.split_once(':') {
+            Some((name, stream)) => (name, Some(stream)),
+            None => (name, None),
+        };
+        let mut attrs = vec![
+            standard_information(),
+            file_name_with(at(parent), &u16s(name), 1, fn_created),
+        ];
+        attrs.extend(stream.map(|stream| data(&u16s(stream), b"x", 2)));
+        mft.extend(record_with_flags(1024, 0x01, next, &attrs));
         next += 1;
     }
     std::fs::write(input, mft)?;
@@ -1149,9 +1166,18 @@ fn write_volume(input: &std::path::Path, files: &[&str]) -> TestResult {
 /// that knows only `C:\Windows\notepad.exe`, and returns each file's path and `findings` cell,
 /// in input order.
 fn sample_findings(test: &str, files: &[&str]) -> Result<Vec<(String, String)>, Box<dyn Error>> {
+    let files: Vec<(&str, u64)> = files.iter().map(|&file| (file, 0)).collect();
+    sample_findings_fn_created(test, &files)
+}
+
+/// [`sample_findings`] on [`write_volume_fn_created`].
+fn sample_findings_fn_created(
+    test: &str,
+    files: &[(&str, u64)],
+) -> Result<Vec<(String, String)>, Box<dyn Error>> {
     let dir = scratch(test)?;
     let (input, csv) = (dir.join("MFT"), dir.join("out.csv"));
-    write_volume(&input, files)?;
+    write_volume_fn_created(&input, files)?;
 
     let out = tool()
         .args(["analyze", "-i"])
@@ -1169,13 +1195,13 @@ fn sample_findings(test: &str, files: &[&str]) -> Result<Vec<(String, String)>, 
     let rows = csv_rows(&std::fs::read_to_string(&csv)?);
     Ok(files
         .iter()
-        .map(|file| {
+        .map(|&(file, _)| {
             let findings = rows
                 .iter()
-                .find(|row| row[4] == *file)
+                .find(|row| file.split(':').next() == Some(row[4].as_str()))
                 .map(|row| row[7].clone())
                 .unwrap_or_default();
-            ((*file).to_string(), findings)
+            (file.to_string(), findings)
         })
         .collect())
 }
@@ -1312,6 +1338,88 @@ fn outside_baseline_windows_binaries_skip_temp_and_servicing_folders() -> TestRe
     assert_eq!(
         matched,
         [false, false, false, false, true, true, true],
+        "{findings:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn the_timestomp_rule_skips_the_installer_cache() -> TestResult {
+    let later = 132_000_000_000_000_001; // `$FN` created after every `$SI` created
+    let findings = sample_findings_fn_created(
+        "the_timestomp_rule_skips_the_installer_cache",
+        &[
+            (r"\Windows\Installer\1a2b.msi", later),
+            (
+                r"\Windows\Installer\{0c2b5a4e-1d3f-4e5a-8b9c-0d1e2f3a4b5c}\x.exe",
+                later,
+            ),
+            (r"\Windows\Installer2\x.msi", later),
+        ],
+    )?;
+
+    let matched: Vec<bool> = findings
+        .iter()
+        .map(|(_, f)| has_finding(f, TIMESTOMPED_EXECUTABLE))
+        .collect();
+    assert_eq!(matched, [false, false, true], "{findings:?}");
+    Ok(())
+}
+
+const ALTERNATE_DATA_STREAM: &str = "medium:17b57f53-b8f0-4a2c-82e1-746b0a198d85";
+
+#[test]
+fn sample_rules_flag_an_unknown_data_stream_but_not_common_or_system_ones() -> TestResult {
+    let findings = sample_findings(
+        "sample_rules_flag_an_unknown_data_stream_but_not_common_or_system_ones",
+        &[
+            r"\Users\Public\a.txt:hidden.exe",
+            r"\Users\Public\b.txt:Zone.Identifier",
+            r"\Users\Public\c.txt:SmartScreen",
+            r"\Users\Public\d.txt:{0c2b5a4e-1d3f-4e5a-8b9c-0d1e2f3a4b5c}.SyncRootIdentity",
+            r"\$Secure:$SDS",
+            r"\Users\Public\e.txt",
+        ],
+    )?;
+
+    let matched: Vec<bool> = findings
+        .iter()
+        .map(|(_, f)| has_finding(f, ALTERNATE_DATA_STREAM))
+        .collect();
+    assert_eq!(
+        matched,
+        [true, false, false, false, false, false],
+        "{findings:?}"
+    );
+    Ok(())
+}
+
+const TIMESTOMPED_EXECUTABLE: &str = "medium:e6eb2762-de17-4e3b-a46b-093278915f54";
+
+#[test]
+fn sample_rules_flag_an_outside_baseline_executable_created_before_its_name() -> TestResult {
+    let si = 132_000_000_000_000_000; // `$SI` created of every file
+    let later = si + 1;
+    let findings = sample_findings_fn_created(
+        "sample_rules_flag_an_outside_baseline_executable_created_before_its_name",
+        &[
+            (r"\Windows\System32\FontsCache\FontsCache.exe", later),
+            (r"\Users\Public\a.ps1", later),
+            (r"\Windows\System32\FontsCache\fresh.exe", si), // `$SI` = `$FN`
+            (r"\Program Files\X\x.exe", later),
+            (r"\Program Files (x86)\X\x.dll", later),
+            (r"\Users\Public\a.txt", later),  // not an executable
+            (r"\Windows\notepad.exe", later), // in the baseline
+        ],
+    )?;
+
+    let matched: Vec<bool> = findings
+        .iter()
+        .map(|(_, f)| has_finding(f, TIMESTOMPED_EXECUTABLE))
+        .collect();
+    assert_eq!(
+        matched,
+        [true, true, false, false, false, false, false],
         "{findings:?}"
     );
     Ok(())
