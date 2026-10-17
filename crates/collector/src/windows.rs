@@ -6,7 +6,7 @@ use std::io::Write;
 use ntfs_reader::{ExtentLocation, Mft, NtfsReaderError, Volume};
 use ntfs_types::Filetime;
 
-use crate::{Collection, Extent, ExtentKind, FileSize, Meta};
+use crate::{Collection, Extent, ExtentKind, FileSize, Meta, unstored};
 
 const MFT: u64 = 0;
 const BOOT: u64 = 7;
@@ -21,6 +21,14 @@ pub enum Error {
     Ntfs {
         volume: String,
         source: NtfsReaderError,
+    },
+    #[error(
+        "{volume}: {bytes} bytes of {name} are not stored on the volume; not collected with a gap"
+    )]
+    Unstored {
+        volume: String,
+        name: &'static str,
+        bytes: u64,
     },
     #[error("{volume} has no MFT record {record}")]
     MissingRecord { volume: String, record: u64 },
@@ -84,6 +92,14 @@ pub fn collect<W: Write>(
                 },
             })
             .collect();
+        let bytes = unstored(&extents);
+        if name != "$J" && bytes > 0 {
+            return Err(Error::Unstored {
+                volume: path,
+                name,
+                bytes,
+            });
+        }
         let counts = collection.add(name, &mut reader, &extents)?;
         files.push(FileSize {
             name: name.to_owned(),

@@ -43,6 +43,18 @@ pub struct StreamCounts {
     pub lost: u64,
 }
 
+/// Bytes of `extents` that are not stored (sparse or lost). Only `$J` may have them: a gap in
+/// `$MFT`, `$Boot` or `$SDS` would shift every later byte.
+#[cfg_attr(
+    all(not(windows), not(test)),
+    expect(dead_code, reason = "used by the Windows reader")
+)]
+fn unstored(extents: &[Extent]) -> u64 {
+    (extents.iter())
+        .filter(|extent| extent.kind != ExtentKind::Stored)
+        .fold(0, |sum, extent| sum.saturating_add(extent.length))
+}
+
 /// Copies the stored extents of `source` to `sink`, in order; sparse and lost extents are
 /// counted, never padded (ADR 0005 #2). A stream without extents is copied whole.
 pub fn copy_stored(
@@ -389,6 +401,17 @@ mod tests {
             }
         );
         Ok(())
+    }
+
+    #[test]
+    fn unstored_is_the_sparse_and_lost_bytes() {
+        let extents = [
+            extent(0, 2, ExtentKind::Stored),
+            extent(2, 3, ExtentKind::Sparse),
+            extent(5, 4, ExtentKind::Lost),
+        ];
+        assert_eq!(unstored(&extents), 7);
+        assert_eq!(unstored(&extents[..1]), 0);
     }
 
     #[test]
