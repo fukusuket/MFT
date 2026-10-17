@@ -45,6 +45,37 @@ jobs:
       - run: cargo nextest run --workspace --profile ci --no-tests=pass --locked
       - run: cargo test --doc --workspace --locked
 
+  collect-windows:
+    # P3-1: collect the runner's C: (a disposable GitHub-hosted VM, no evidence) and analyze it.
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: rustup show
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - name: Build
+        run: cargo build --release --locked -p cli
+      - name: Collect, check sizes against meta.json, analyze
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          .\target\release\mozu.exe collect -o c.zip
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          Expand-Archive c.zip -DestinationPath c
+          $meta = Get-Content c\meta.json -Raw | ConvertFrom-Json
+          if ($meta.format -ne 1) { throw "meta.json format $($meta.format)" }
+          foreach ($f in $meta.files) {
+            $len = (Get-Item -LiteralPath "c\$($f.name)").Length
+            if ($len -ne $f.size) { throw "$($f.name): $len bytes, meta.json says $($f.size)" }
+          }
+          .\target\release\mozu.exe analyze -i 'c\$MFT' --usn 'c\$J' --csv out.csv
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          "zip: $((Get-Item c.zip).Length) bytes"
+          $meta | ConvertTo-Json -Depth 3
+
   coverage:
     runs-on: ubuntu-latest
     permissions:
