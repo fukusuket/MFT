@@ -224,14 +224,14 @@ test("Findings: filters change the hash, the N of M count and the rows; a row op
 
   assert.equal(count(), "1 of 2");
   assert.equal(rows().length, 1);
-  const high = screen.findAll("chip").find((c) => c.getAttribute("data-value") === "high");
-  assert.ok(high.className.includes("selected"));
+  assert.equal(control("level").value, "high");
   const row = rows()[0].textContent;
   for (const text of ["high", "2026-10-02T12:00:00.5000000Z", "\\Users\\Bob\\Downloads\\Tool.EXE", "downloads", "Tool in Downloads", "ADS: Zone.Identifier", "seen: mft"]) {
     assert.ok(row.includes(text), `${text} in ${row}`);
   }
 
-  high.dispatch("click"); // a selected chip clears its filter
+  control("level").value = "";
+  control("level").dispatch("change");
   assert.equal(count(), "2 of 2");
   assert.equal(window.location.hash, "#tab=findings");
 
@@ -264,31 +264,34 @@ test("Findings and Outside-baseline show whether each file is deleted in a state
   assert.deepEqual(states("outside"), ["present", "deleted"]);
   assert.ok(screen("findings").findAll("row")[1].find("state").className.includes("state-deleted"));
   assert.ok(!screen("findings").findAll("row")[1].find("facts").textContent.includes("deleted"));
-  // The State chips filter on the state; the search does not, so there is one way to do it.
+  // The State drop-down filters on the state; the search does not, so there is one way to do it.
   const { matchFinding, matchOutside } = load();
   assert.equal(matchFinding(report.findings[1], { ...none, q: "deleted" }), false);
   assert.equal(matchFinding(report.findings[0], { ...none, q: "present" }), false);
   assert.equal(matchOutside(report.outside[1], { ...none, q: "deleted" }), false);
 });
 
-test("State chips with counts filter both lists and keep the state in the hash", () => {
+test("the state drop-down filters both lists and keeps the state in the hash", () => {
   const { window, app } = open("#tab=findings&folder=temp");
   const screen = (name) => app.findAll("screen").find((s) => s.getAttribute("data-screen") === name);
-  const chips = (name) => screen(name).findAll("chip").filter((c) => c.getAttribute("data-key") === "state");
+  const state = (name) => screen(name).find("filter-state");
+  const choose = (name, value) => {
+    state(name).value = value;
+    state(name).dispatch("change");
+  };
   const count = (name) => screen(name).find("count").textContent;
 
-  assert.deepEqual(chips("findings").map((c) => c.textContent), ["present 1", "deleted 1"]);
-  chips("findings")[1].dispatch("click");
+  assert.deepEqual(state("findings").children.map((o) => o.textContent), ["all states", "present (1)", "deleted (1)"]);
+  choose("findings", "deleted");
   assert.equal(window.location.hash, "#tab=findings&folder=temp&state=deleted");
   assert.equal(count("findings"), "1 of 2");
-  assert.ok(chips("findings")[1].className.includes("selected"));
-  chips("findings")[0].dispatch("click"); // with folder=temp, no present file is left
+  choose("findings", "present"); // with folder=temp, no present file is left
   assert.equal(count("findings"), "0 of 2");
 
   window.go("#tab=outside&state=present");
-  assert.deepEqual(chips("outside").map((c) => c.textContent), ["present 1", "deleted 1"]);
+  assert.equal(state("outside").value, "present");
   assert.equal(count("outside"), "1 of 2");
-  chips("outside")[0].dispatch("click"); // a selected chip clears its filter
+  choose("outside", "");
   assert.equal(count("outside"), "2 of 2");
 });
 
@@ -302,24 +305,27 @@ test("Summary: the critical and high counts open Findings filtered to that level
   assert.deepEqual(shown(), ["findings"]);
 });
 
-test("Outside-baseline: per-folder counts filter the list, with time and path filters", () => {
+test("Outside-baseline: the folder drop-down filters the list, with time and path filters", () => {
   const { window, app } = open("#tab=outside");
   const screen = app.findAll("screen").find((s) => s.getAttribute("data-screen") === "outside");
   const count = () => screen.find("count").textContent;
   const rows = () => screen.findAll("row");
-  const links = screen.findAll("chip").filter((c) => c.getAttribute("data-key") === "folder");
+  const folder = screen.find("filter-folder");
+  const choose = (value) => {
+    folder.value = value;
+    folder.dispatch("change");
+  };
 
   assert.equal(count(), "2 of 2");
-  assert.deepEqual(links.map((l) => l.textContent), ["downloads 1", "temp 1"]);
   assert.equal(screen.find("filter-rule"), null); // levels and rules are for findings
-  links[1].dispatch("click");
+  choose("temp");
   assert.equal(window.location.hash, "#tab=outside&folder=temp");
   assert.equal(count(), "1 of 2");
   for (const text of ["2026-10-01T00:00:00.0000000Z", "\\Windows\\Temp\\x.dll", "deleted"]) {
     assert.ok(rows()[0].textContent.includes(text), text);
   }
 
-  links[1].dispatch("click");
+  choose("");
   screen.find("filter-to").value = "2026-10-01";
   screen.find("filter-to").dispatch("input");
   assert.equal(count(), "1 of 2");
@@ -343,6 +349,37 @@ test("a filter value from the hash that the report lacks stays visible in its se
   const options = select.children.map((o) => [o.value, o.textContent]);
   assert.deepEqual(options.at(-1), ["old-id", "old-id (not in this report)"]);
   assert.equal(select.value, "old-id");
+});
+
+test("each list's filters and its N of M count sit in one bar, most used first", () => {
+  const { app } = open("#tab=findings");
+  const bar = (name) => app.findAll("screen").find((s) => s.getAttribute("data-screen") === name).find("filters");
+  const parts = (name) => bar(name).children.map((c) => (c.className === "count" ? "count" : c.text.trim()));
+
+  assert.deepEqual(parts("findings"), ["Search", "From", "To", "Level", "Rule", "Folder", "State", "count", "Clear"]);
+  assert.deepEqual(parts("outside"), ["Search", "From", "To", "Folder", "State", "count", "Clear"]);
+});
+
+test("a window resize repaints the list to the viewport's new height", () => {
+  const many = Array.from({ length: 30 }, () => report.findings[0]);
+  const { window, app } = open("#tab=findings", { ...report, findings: many });
+  const screen = app.findAll("screen").find((s) => s.getAttribute("data-screen") === "findings");
+
+  assert.equal(screen.findAll("row").length, 11); // 400 px of 44 px rows, plus one
+  screen.find("viewport").clientHeight = 1000;
+  window.dispatch("resize");
+  assert.equal(screen.findAll("row").length, 24);
+});
+
+test("a level, folder or state from the hash that the report lacks stays visible in its drop-down", () => {
+  const { app } = open("#tab=findings&level=critical&folder=other&state=gone");
+  const screen = app.findAll("screen").find((s) => s.getAttribute("data-screen") === "findings");
+
+  for (const [key, value] of [["level", "critical"], ["folder", "other"], ["state", "gone"]]) {
+    const select = screen.find("filter-" + key);
+    assert.deepEqual(select.children.map((o) => [o.value, o.textContent]).at(-1), [value, value + " (not in this report)"]);
+    assert.equal(select.value, value);
+  }
 });
 
 test("each finding row shows its rule's author, as the Detection Rule License requires", () => {
@@ -410,22 +447,32 @@ test("the search matches any column a row shows, ignoring case", () => {
   assert.equal(matchOutside(o, { ...none, q: "downloads" }), false);
 });
 
-test("Findings: level and folder chips with counts toggle their filter; rules list their counts", () => {
+test("level, folder and state drop-downs list the values present with counts and filter both lists", () => {
   const { window, app } = open("#tab=findings");
-  const screen = app.findAll("screen").find((s) => s.getAttribute("data-screen") === "findings");
-  const chips = (key) => screen.findAll("chip").filter((c) => c.getAttribute("data-key") === key);
+  const screen = (name) => app.findAll("screen").find((s) => s.getAttribute("data-screen") === name);
+  const options = (name, key) => screen(name).find("filter-" + key).children.map((o) => o.textContent);
+  const choose = (name, key, value) => {
+    const select = screen(name).find("filter-" + key);
+    select.value = value;
+    select.dispatch("change");
+  };
+  const count = (name) => screen(name).find("count").textContent;
 
-  assert.deepEqual(chips("level").map((c) => c.textContent), ["high 1", "low 1"]);
-  assert.deepEqual(chips("folder").map((c) => c.textContent), ["downloads 1", "temp 1"]);
-  assert.deepEqual(
-    screen.find("filter-rule").children.map((o) => o.textContent),
-    ["all rules", "Tool in Downloads (1)", "DLL in Temp (1)"],
-  );
-  chips("level")[1].dispatch("click");
+  assert.deepEqual(options("findings", "level"), ["all levels", "high (1)", "low (1)"]);
+  assert.deepEqual(options("findings", "folder"), ["all folders", "downloads (1)", "temp (1)"]);
+  assert.deepEqual(options("findings", "state"), ["all states", "present (1)", "deleted (1)"]);
+  choose("findings", "level", "low");
   assert.equal(window.location.hash, "#tab=findings&level=low");
-  assert.equal(screen.find("count").textContent, "1 of 2");
-  chips("level")[1].dispatch("click");
+  assert.equal(count("findings"), "1 of 2");
+  choose("findings", "level", "");
   assert.equal(window.location.hash, "#tab=findings");
+
+  window.go("#tab=outside");
+  assert.equal(screen("outside").find("filter-level"), null); // levels and rules are for findings
+  assert.deepEqual(options("outside", "folder"), ["all folders", "downloads (1)", "temp (1)"]);
+  choose("outside", "state", "deleted");
+  assert.equal(window.location.hash, "#tab=outside&state=deleted");
+  assert.equal(count("outside"), "1 of 2");
 });
 
 test("Clear removes every filter; the filters show only in their own controls", () => {
@@ -464,7 +511,8 @@ test("a filter change replaces the history entry; only a tab change adds one", (
 
   screen.find("filter-q").value = "tool";
   screen.find("filter-q").dispatch("input");
-  screen.findAll("chip")[0].dispatch("click");
+  screen.find("filter-level").value = "high";
+  screen.find("filter-level").dispatch("change");
   assert.equal(window.location.hash, "#tab=findings&level=high&q=tool");
   screen.find("clear").dispatch("click");
   assert.equal(window.location.hash, "#tab=findings");
