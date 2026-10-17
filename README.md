@@ -1,5 +1,6 @@
-# mozu
+<p align="center"><img src="mozu.png" alt="mozu" width="480"></p>
 
+## About Mozu
 Forensic triage of Windows NTFS from `$MFT` and `$UsnJrnl:$J`, for when event logs are gone. It marks files outside a Windows baseline, runs Sigma rules and writes one self-contained HTML report. Pre-alpha (Phase 2 of [plan](docs/plan.md)).
 
 Current limits: input is a raw `$MFT` and an optional raw `$J`, not a collection directory or zip. USN V2/V3 are parsed; V4 is reported as a diagnostic. Correlation rules, ready-made baselines, collection, Timeline/File detail screens and localization are planned for Phase 3.
