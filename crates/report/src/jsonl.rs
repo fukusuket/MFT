@@ -1,4 +1,4 @@
-//! JSON Lines: one object per `$MFT` record, the CSV columns as typed fields.
+//! JSON Lines: one object per `$MFT` entry or USN record, the CSV columns as typed fields.
 
 use std::io::Write;
 
@@ -12,7 +12,7 @@ use crate::{
     reason_names, seen_name, stream_names, usn_code, usn_deleted, usn_path, usn_seen,
 };
 
-/// JSON Lines with one object per `$MFT` record.
+/// JSON Lines with one object per `$MFT` entry or USN record.
 #[derive(Debug)]
 pub struct JsonlWriter<W: Write> {
     out: W,

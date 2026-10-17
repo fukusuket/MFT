@@ -16,7 +16,7 @@ Status: **today** works with the current CLI; **Phase 3** needs an item in [plan
 
 ## U1 First look after an incident
 
-1. Get `$MFT` and `$J` from the host (KAPE, Velociraptor or FTK Imager today; `tool collect` in Phase 3).
+1. Use KAPE, Velociraptor or FTK Imager to copy the raw `$MFT` and, when available, the `$UsnJrnl:$J` data stream. Extract them as individual files: the current CLI does not read a collection directory or zip. Pass the `$MFT` file to `-i` and the `$J` file to `--usn`; quote names containing `$` so the shell does not expand them. `tool collect` is planned for Phase 3.
 2. Build or pick a baseline of the **same edition** (client vs Server); the Summary warns on a mismatch.
 3. Run with a window around the alert, in the host's local offset:
    ```sh
@@ -71,7 +71,7 @@ tool analyze -i '$MFT' --usn '$J' --rules testdata/rules --rules ~/sigma/rules/w
 
 ## U7 Own baseline
 
-Export a clean image with VanillaWindowsReference, then:
+Export a clean installation of the same Windows edition with VanillaWindowsReference. The CSV must contain a `FullName` column; the builder uses entries under `C:\` and ignores other volumes. Then run:
 
 ```sh
 tool baseline build --vwr golden-image.csv -o golden.fst
@@ -79,6 +79,8 @@ tool analyze -i '$MFT' --baseline golden.fst -o report.html
 ```
 
 Ready-made baselines per build and `--baseline auto` come in Phase 3.
+
+The baseline file does not contain edition/build metadata. Its displayed name is its filename, and the report's edition warning is a directory-based compatibility check, not proof that the Windows build matches. A VWR export can omit files, so an outside-baseline result is a review lead, not by itself evidence of compromise.
 
 ## Not covered
 

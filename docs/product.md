@@ -2,7 +2,7 @@
 
 What we build and why. How: [architecture.md](architecture.md). When: [plan.md](plan.md).
 
-Working name: `tool` (final name TBD). Inputs: `$MFT` and `$UsnJrnl:$J` only.
+Working name: `tool` (final name TBD). The current analyzer inputs are `$MFT` and `$UsnJrnl:$J`; the target collector also acquires `$Boot` and `$Secure:$SDS`.
 
 ## 1. Problem
 
@@ -61,7 +61,7 @@ Relationship to Hayabusa: complementary. Hayabusa extracts events from logs; thi
 | M8 | Self-contained HTML: Summary, Findings, Outside-baseline files, Timeline, File detail (en/ja) |
 | M9 | `findings.jsonl` and `timeline.csv` compatible with Hayabusa/Takajo timelines |
 
-Out of scope for MVP: Windows Server baselines, custom baselines, multi-host comparison, YARA, WASM, server mode, `$LogFile`, non-NTFS.
+Out of scope for MVP: Windows Server baselines, baseline sources other than the supported VanillaWindowsReference CSV and released baseline database, multi-host comparison, YARA, WASM, server mode, `$LogFile`, non-NTFS.
 
 | Success criterion | Target |
 |---|---|
@@ -72,7 +72,9 @@ Out of scope for MVP: Windows Server baselines, custom baselines, multi-host com
 | Attack-related files shown (Findings or Outside-baseline) on the attack corpus | ≥ 80 % |
 | Non-experts reach the report using only the manual | Usability test, ≥ 3 people |
 
-## 5. CLI
+## 5. Target CLI (Phase 3)
+
+This is the MVP interface, not the current command set. Today the implemented commands are `analyze` with raw `$MFT`/optional raw `$J`, and `baseline build`; see the [README quick start](../README.md#quick-start) and [current use cases](usecases.md).
 
 ```
 tool collect   [-v C:] [-o collection.zip]
@@ -130,7 +132,7 @@ Severity is shown as text, not color alone. Filter state is kept in the URL hash
 | # | Question | Current leaning |
 |---|---|---|
 | 2 | Baseline granularity | Per build, nearest UBR fallback; normalize language differences |
-| 3 | Rule level criteria | Based on the privilege needed to write the path; document in `docs/rule-levels.md` |
+| 3 | Rule level criteria | Based on false-positive tolerance; see [ADR 0016](adr/0016-rule-levels-by-false-positive-tolerance.md) |
 | 4 | Collector code signing | Sign from MVP |
 | 5 | Report size limit for file servers | MVP targets clients; spill out-of-window data to CSV |
 | 6 | Tool name | — |

@@ -47,7 +47,7 @@ all USN events + all MFT entries
   └─► Findings = matches of A + B (listed, never summed)
 ```
 
-Rules use only standard Sigma fields (`TargetFilename`, `SourceFilename`, `CreationUtcTime`, `UtcTime`), so SigmaHQ rules work unchanged. "Outside baseline" is a logsource, not a custom field.
+Supported Sigma file-event rules can be used unchanged when their logsource, fields and modifiers are among those emitted by this tool. The standard fields are `TargetFilename`, `SourceFilename`, `CreationUtcTime` and `UtcTime`; `SiCreatedBeforeFnCreated` is tool-specific. "Outside baseline" is a logsource service, not a custom field. Correlation and filter rules are not supported yet.
 
 A rule loads only if it can match what `detect` emits (`detect::EMITTED`). Otherwise it is skipped with one of these reasons; only an id used twice or an I/O error stops the run.
 
@@ -118,11 +118,25 @@ At least one of `-o`, `--csv`, `--jsonl` is required. Each file is written to a 
 | Output | Content |
 |---|---|
 | `--csv` | One row per `$MFT` entry, then one per USN record. Columns: `entry`, `sequence`, `in_use`, `name`, `path`, `path_state`, `baseline`, `findings`, `si_created`, `fn_created`, `diagnostics`, `source` (`mft`/`usn`), `usn`, `reasons`, `event_time`, `deleted`, `seen`, `streams`, `hints`, `in_window`, `folder`. Cells are formula-neutralized |
-| `--jsonl` | The same rows and fields, typed; `findings` is a list of `{level, title, id, author}` |
+| `--jsonl` | The same rows and fields, typed; `findings` is a list of `{level, id}` |
 | `-o` | One HTML file, data embedded, no external resources (CSP `default-src 'none'`). Tabs Summary, Findings, Outside-baseline; filters and tab kept in the URL hash. Lists only rows in the window. Summary shows the `Edition` (from `\Windows\System32\spp\tokens\skus\`) and warns when the baseline is of another edition |
 | `<out>.skipped-rules.csv` / `.jsonl` | Rules not loaded and why (see the table above); written beside the CSV/JSONL, or beside the HTML when it is the only output, whenever `--rules` is given |
 
 All times are UTC (ISO 8601). Paths and names are attacker input: control and bidi characters are shown as `\u{XX}` in every output; HTML is built without `innerHTML`.
+
+### Output values
+
+| Field | Values and meaning |
+|---|---|
+| `path_state` | `resolved`: built from current records; `inferred`: built partly by Rewind from `$J`; `unknown`: no path is invented |
+| `baseline` | `standard` / `outside`; empty in CSV and `null` in JSONL when no path or baseline result exists |
+| `findings` | CSV: `level:id` items separated by `;`; JSONL: `{level, id}` objects, most severe first |
+| `diagnostics` | Parser codes separated by `;` in CSV and an array in JSONL. A USN diagnostic row has unavailable record fields empty/`null` |
+| `reasons`, `streams`, `hints` | Named values separated by `;` in CSV and arrays in JSONL |
+| `seen` | Whether the file reference was observed in `mft`, `usn` or `both`; unavailable on diagnostic rows |
+| `in_window` | `true` / `false` with a window; empty in CSV and `null` in JSONL when no window was requested |
+
+CSV follows RFC-style quoting through the Rust `csv` crate. Evidence cells beginning with `=`, `+`, `-` or `@` are prefixed with `'` to prevent spreadsheet formula execution.
 
 ## Crates
 
