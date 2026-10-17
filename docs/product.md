@@ -72,9 +72,9 @@ Out of scope for MVP: Windows Server baselines, baseline sources other than the 
 | Attack-related files shown (Findings or Outside-baseline) on the attack corpus | ≥ 80 % |
 | Non-experts reach the report using only the manual | Usability test, ≥ 3 people |
 
-## 5. Target CLI (Phase 3)
+## 5. Target CLI (Phase 4)
 
-This is the MVP interface, not the current command set. Today the implemented commands are `analyze` with raw `$MFT`/optional raw `$J`, and `baseline build`; see the [README quick start](../README.md#quick-start) and [current use cases](usecases.md).
+This is the MVP interface, not the current command set; `collect` comes in Phase 3, the rest in Phase 4. Today the implemented commands are `analyze` with raw `$MFT`/optional raw `$J`, and `baseline build`; see the [README quick start](../README.md#quick-start) and [current use cases](usecases.md).
 
 ```
 mozu collect   [-v C:] [-o collection.zip]

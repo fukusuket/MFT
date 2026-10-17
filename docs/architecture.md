@@ -23,7 +23,7 @@ entries + USN ─► resolve (paths, Rewind) ─► baseline lookup, facts, fold
 rows ─► CSV / JSONL / HTML (+ skipped-rules lists), each written atomically
 ```
 
-Target (Phase 3): collection and collection-directory/zip input.
+Target: collection (Phase 3) and collection-directory/zip input (Phase 4).
 
 ```
 [collect] raw volume → $MFT, $J, $Boot, $SDS, meta.json → collection.zip
@@ -156,6 +156,6 @@ All crates below are implemented. `report`'s viewer (`viewer.js`) is plain JS te
 | `cli` | `analyze`, `baseline build`; time-window parsing, atomic outputs | analyze, baseline, detect, mft-parse, ntfs-types, report, sigma, usn-parse | `clap`, `anyhow` |
 | `xtask` | Deterministic synthetic `$MFT` for gate measurements | — | — |
 
-Phase 3 adds `collector`, built on Windows with `ntfs-reader =0.6.0` (ADR 0005), and the `collect`, `baseline update`, and `rules` CLI surfaces.
+Phase 3 adds `collector`, built on Windows with `ntfs-reader =0.6.0` (ADR 0005), and the `collect` command; Phase 4 may add the `baseline` and `rules` CLI surfaces of product.md §5.
 
 Repository plan: this one (code, AGPL-3.0); `mozu-rules` (Sigma rules + `explain/{en,ja}/`, DRL 1.1); `mozu-baselines` (fst files + generation CI). The current implementation in this repository does not consume the latter two yet.
