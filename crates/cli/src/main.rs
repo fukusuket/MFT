@@ -60,6 +60,15 @@ enum Command {
         #[arg(long, allow_hyphen_values = true)]
         tz: Option<String>,
     },
+    /// Copy $MFT, $J, $Boot and $SDS of a live NTFS volume into one zip (Windows, elevated).
+    Collect {
+        /// Volume to collect.
+        #[arg(short, long, default_value = "C:")]
+        volume: String,
+        /// Output zip; `<COMPUTERNAME>_<UTC start>.zip` in the current directory when omitted.
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+    },
     /// Windows baselines.
     #[command(subcommand)]
     Baseline(BaselineCommand),
@@ -100,8 +109,61 @@ fn main() -> anyhow::Result<()> {
             &rules,
             (from.as_deref(), to.as_deref(), tz.as_deref()),
         ),
+        Command::Collect { volume, output } => collect(&volume, output),
         Command::Baseline(BaselineCommand::Build { vwr, o }) => build_baseline(&vwr, &o),
     }
+}
+
+fn collect(
+    #[cfg_attr(
+        not(windows),
+        expect(unused_variables, reason = "collected on Windows only")
+    )]
+    volume: &str,
+    output: Option<PathBuf>,
+) -> anyhow::Result<()> {
+    let started = now();
+    let host = std::env::var("COMPUTERNAME").unwrap_or_default();
+    let output = output.unwrap_or_else(|| PathBuf::from(zip_name(&host, started)));
+    if output.exists() {
+        anyhow::bail!(
+            "{} already exists; collect never overwrites",
+            output.display()
+        );
+    }
+    #[cfg(not(windows))]
+    anyhow::bail!("mozu collect runs on Windows only");
+    #[cfg(windows)]
+    {
+        let (pending, file) = AtomicOutput::create(&output)?;
+        let tool = format!("mozu {} ({})", PROVENANCE.version, PROVENANCE.commit);
+        let (mut writer, meta) =
+            collector::collect(volume, BufWriter::new(file), (tool, host), started, now)?;
+        writer.flush()?;
+        pending.commit()?;
+        if meta.j.is_none() {
+            writeln!(
+                std::io::stderr(),
+                "warning: {volume} has no USN journal; the zip has no $J"
+            )?;
+        }
+        Ok(())
+    }
+}
+
+/// The current UTC time: the clock of a collection, read when it starts and ends.
+fn now() -> Filetime {
+    // 100 ns ticks from 1601-01-01 to 1970-01-01.
+    const UNIX_EPOCH: u64 = 116_444_736_000_000_000;
+    let ticks = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|since| since.as_nanos() / 100)
+        .unwrap_or_default();
+    Filetime::from_raw(
+        u64::try_from(ticks)
+            .unwrap_or(u64::MAX)
+            .saturating_add(UNIX_EPOCH),
+    )
 }
 
 fn analyze(
@@ -466,4 +528,56 @@ fn build_baseline(vwr: &Path, out: &Path) -> anyhow::Result<()> {
     writer.flush()?;
     pending.commit()?;
     Ok(())
+}
+
+/// `<host>_<yyyymmddThhmmssZ>.zip`: the default name of a collection started at `started`.
+/// Any character of `host` other than an ASCII letter, digit or hyphen becomes `_`.
+fn zip_name(host: &str, started: Filetime) -> String {
+    let host: String = host
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    let host = if host.is_empty() { "host" } else { &host };
+    // `YYYY-MM-DDTHH:MM:SS.fffffffZ` → `YYYYMMDDTHHMMSS`.
+    let time: String = (started.iso8601().chars().take(19))
+        .filter(|c| !matches!(c, '-' | ':'))
+        .collect();
+    format!("{host}_{time}Z.zip")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn zip_name_is_the_host_and_the_utc_start_time() {
+        let started = Filetime::from_utc((2026, 10, 17), (1, 2, 3));
+        assert_eq!(
+            started.map(|t| zip_name("PC-042", t)).as_deref(),
+            Some("PC-042_20261017T010203Z.zip")
+        );
+    }
+
+    #[test]
+    fn zip_name_keeps_only_letters_digits_and_hyphens_of_the_host() {
+        let started = Filetime::from_utc((2026, 10, 17), (1, 2, 3));
+        let names: Vec<_> = ["..\\a/b", "x\u{7}y", ""]
+            .into_iter()
+            .filter_map(|host| started.map(|t| zip_name(host, t)))
+            .collect();
+        assert_eq!(
+            names,
+            [
+                "___a_b_20261017T010203Z.zip",
+                "x_y_20261017T010203Z.zip",
+                "host_20261017T010203Z.zip"
+            ]
+        );
+    }
 }
