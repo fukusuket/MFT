@@ -49,19 +49,6 @@ Quote names with `$` so the shell does not expand them.
 
 **5. Open `report.html`.** Start at Summary, click the critical/high count, read each finding.
 
-## Options
-
-| Option | Meaning |
-|---|---|
-| `-i <file>` | Raw `$MFT` (required) |
-| `--usn <file>` | Raw `$J`. Needed for deletes, renames and event times |
-| `--baseline <file>` | Baseline from `mozu baseline build` |
-| `--rules <dir>` | Sigma rule directory; repeatable. Without it no rules run |
-| `--from`, `--to`, `--tz` | Time window and its UTC offset. Filters the report only; detection runs on everything |
-| `-o`, `--csv`, `--jsonl` | Outputs; at least one is required |
-
-Rules that could not load are listed in `<output>.skipped-rules.csv` / `.jsonl`.
-
 ## What it cannot tell you
 
 - Who or which process created a file, or whether it ran
