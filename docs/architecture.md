@@ -12,7 +12,7 @@ How the tool is built. Decisions behind it: [adr/](adr/). Library choices: [rese
 
 ## Pipeline
 
-Today `tool analyze` reads a raw `$MFT` and an optional raw `$J`:
+Today `mozu analyze` reads a raw `$MFT` and an optional raw `$J`:
 
 ```
 --rules dirs ─► load rules (skip what cannot match)        --baseline .fst ─► load baseline
@@ -158,4 +158,4 @@ All crates below are implemented. `report`'s viewer (`viewer.js`) is plain JS te
 
 Phase 3 adds `collector`, built on Windows with `ntfs-reader =0.6.0` (ADR 0005), and the `collect`, `baseline update`, and `rules` CLI surfaces.
 
-Repository plan: this one (code, AGPL-3.0); `tool-rules` (Sigma rules + `explain/{en,ja}/`, DRL 1.1); `tool-baselines` (fst files + generation CI). The current implementation in this repository does not consume the latter two yet.
+Repository plan: this one (code, AGPL-3.0); `mozu-rules` (Sigma rules + `explain/{en,ja}/`, DRL 1.1); `mozu-baselines` (fst files + generation CI). The current implementation in this repository does not consume the latter two yet.

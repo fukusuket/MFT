@@ -6,7 +6,7 @@ Status: **today** works with the current CLI; **Phase 3** needs an item in [plan
 
 | # | Use case | User | Status |
 |---|---|---|---|
-| U1 | Ransomware or EDR alert: what happened on this host? | IT admin (primary) | today, with files copied by KAPE/Velociraptor/FTK Imager; `tool collect` in Phase 3 |
+| U1 | Ransomware or EDR alert: what happened on this host? | IT admin (primary) | today, with files copied by KAPE/Velociraptor/FTK Imager; `mozu collect` in Phase 3 |
 | U2 | Were event logs or Prefetch deleted? | IT admin, CSIRT | today |
 | U3 | What is new on this host that Windows does not ship? | IT admin, CSIRT | today |
 | U4 | Same rules and baseline across many hosts | CSIRT/SOC | today (one run per host) |
@@ -16,11 +16,11 @@ Status: **today** works with the current CLI; **Phase 3** needs an item in [plan
 
 ## U1 First look after an incident
 
-1. Use KAPE, Velociraptor or FTK Imager to copy the raw `$MFT` and, when available, the `$UsnJrnl:$J` data stream. Extract them as individual files: the current CLI does not read a collection directory or zip. Pass the `$MFT` file to `-i` and the `$J` file to `--usn`; quote names containing `$` so the shell does not expand them. `tool collect` is planned for Phase 3.
+1. Use KAPE, Velociraptor or FTK Imager to copy the raw `$MFT` and, when available, the `$UsnJrnl:$J` data stream. Extract them as individual files: the current CLI does not read a collection directory or zip. Pass the `$MFT` file to `-i` and the `$J` file to `--usn`; quote names containing `$` so the shell does not expand them. `mozu collect` is planned for Phase 3.
 2. Build or pick a baseline of the **same edition** (client vs Server); the Summary warns on a mismatch.
 3. Run with a window around the alert, in the host's local offset:
    ```sh
-   tool analyze -i '$MFT' --usn '$J' --baseline win11-24h2.fst --rules testdata/rules \
+   mozu analyze -i '$MFT' --usn '$J' --baseline win11-24h2.fst --rules testdata/rules \
      --from 2026-09-28 --to 2026-10-02 --tz +09:00 -o PC-042.html
    ```
 4. Open `PC-042.html`. Summary → click the critical/high count → Findings, ordered level → time.
@@ -43,7 +43,7 @@ Run the same command per host with the same `--baseline` and `--rules`; output i
 
 ```sh
 for h in hosts/*/; do
-  tool analyze -i "$h/\$MFT" --usn "$h/\$J" --baseline win11-24h2.fst --rules rules/ \
+  mozu analyze -i "$h/\$MFT" --usn "$h/\$J" --baseline win11-24h2.fst --rules rules/ \
     --jsonl "out/$(basename "$h").jsonl"
 done
 ```
@@ -66,7 +66,7 @@ The CSV opens in Timeline Explorer or a spreadsheet (formula cells are neutraliz
 `--rules` takes any number of directories of `.yml`/`.yaml` Sigma rules, subdirectories included. Use the standard fields `TargetFilename`, `SourceFilename`, `CreationUtcTime`, `UtcTime`; logsources `file_event`, `file_rename`, `file_change`, `file_delete`, or `service: baseline_outside`. Rules that cannot match are skipped and listed in `*.skipped-rules.csv` / `.jsonl` with the reason ([architecture.md](architecture.md#baseline-and-sigma)).
 
 ```sh
-tool analyze -i '$MFT' --usn '$J' --rules testdata/rules --rules ~/sigma/rules/windows/file -o report.html
+mozu analyze -i '$MFT' --usn '$J' --rules testdata/rules --rules ~/sigma/rules/windows/file -o report.html
 ```
 
 ## U7 Own baseline
@@ -74,8 +74,8 @@ tool analyze -i '$MFT' --usn '$J' --rules testdata/rules --rules ~/sigma/rules/w
 Export a clean installation of the same Windows edition with VanillaWindowsReference. The CSV must contain a `FullName` column; the builder uses entries under `C:\` and ignores other volumes. Then run:
 
 ```sh
-tool baseline build --vwr golden-image.csv -o golden.fst
-tool analyze -i '$MFT' --baseline golden.fst -o report.html
+mozu baseline build --vwr golden-image.csv -o golden.fst
+mozu analyze -i '$MFT' --baseline golden.fst -o report.html
 ```
 
 Ready-made baselines per build and `--baseline auto` come in Phase 3.
@@ -84,4 +84,4 @@ The baseline file does not contain edition/build metadata. Its displayed name is
 
 ## Not covered
 
-From NTFS metadata alone: the creating user or process, whether a file was executed, file content, activity older than the USN journal ([product.md §1](product.md#1-problem)). Not built yet: zip/collection input, `tool collect`, Timeline and File detail screens, correlation rules, en/ja ([plan.md](plan.md) Phase 3).
+From NTFS metadata alone: the creating user or process, whether a file was executed, file content, activity older than the USN journal ([product.md §1](product.md#1-problem)). Not built yet: zip/collection input, `mozu collect`, Timeline and File detail screens, correlation rules, en/ja ([plan.md](plan.md) Phase 3).
