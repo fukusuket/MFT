@@ -1,5 +1,5 @@
 # gitleaks config (ADR 0007 P1/P2). Default rules plus project-specific ones.
-title = "tool"
+title = "mozu"
 
 [extend]
 useDefault = true

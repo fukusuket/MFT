@@ -2,7 +2,7 @@
 
 What we build and why. How: [architecture.md](architecture.md). When: [plan.md](plan.md).
 
-Working name: `tool` (final name TBD). The current analyzer inputs are `$MFT` and `$UsnJrnl:$J`; the target collector also acquires `$Boot` and `$Secure:$SDS`.
+Name: `mozu`. The current analyzer inputs are `$MFT` and `$UsnJrnl:$J`; the target collector also acquires `$Boot` and `$Secure:$SDS`.
 
 ## 1. Problem
 
@@ -33,7 +33,7 @@ Design priority: the primary user must never get stuck. Expert detail goes into 
 
 ## 3. Differentiation
 
-| | **tool** | MFTECmd / `mft` crate | usnjrnl-forensic | Hayabusa | Commercial suites |
+| | **mozu** | MFTECmd / `mft` crate | usnjrnl-forensic | Hayabusa | Commercial suites |
 |---|---|---|---|---|---|
 | Purpose | NTFS triage: what to look at | Parsing | Parse + correlate + report | Event log triage | Full forensics |
 | **Windows baseline diff** | **Core** | No | No | n/a | Hash sets only |
@@ -77,16 +77,16 @@ Out of scope for MVP: Windows Server baselines, baseline sources other than the 
 This is the MVP interface, not the current command set. Today the implemented commands are `analyze` with raw `$MFT`/optional raw `$J`, and `baseline build`; see the [README quick start](../README.md#quick-start) and [current use cases](usecases.md).
 
 ```
-tool collect   [-v C:] [-o collection.zip]
-tool analyze   -i <collection.zip | dir> [--from DATE] [--to DATE] [--tz +09:00]
+mozu collect   [-v C:] [-o collection.zip]
+mozu analyze   -i <collection.zip | dir> [--from DATE] [--to DATE] [--tz +09:00]
                [--baseline auto|<name>] [--lang en|ja] [--mask-users]
                [-o report.html] [--jsonl timeline.jsonl] [--csv timeline.csv]
-tool baseline  list | update
-tool rules     list | update
+mozu baseline  list | update
+mozu rules     list | update
 ```
 
 ```
-$ tool analyze -i PC-042.zip --from 2026-09-28 --to 2026-10-02 -o PC-042.html
+$ mozu analyze -i PC-042.zip --from 2026-09-28 --to 2026-10-02 -o PC-042.html
 [1/6] Ingest     $MFT 626,688 records (3 corrupt, skipped)  $J 1,203,551 records
 [2/6] Resolve    resolved 99.2% / inferred 0.6% / unknown 0.2%
 [3/6] Baseline   Win11 24H2 26100.4061 -> nearest 26100.3915
@@ -135,4 +135,3 @@ Severity is shown as text, not color alone. Filter state is kept in the URL hash
 | 3 | Rule level criteria | Based on false-positive tolerance; see [ADR 0016](adr/0016-rule-levels-by-false-positive-tolerance.md) |
 | 4 | Collector code signing | Sign from MVP |
 | 5 | Report size limit for file servers | MVP targets clients; spill out-of-window data to CSV |
-| 6 | Tool name | — |

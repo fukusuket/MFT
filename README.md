@@ -1,4 +1,4 @@
-# tool (working name)
+# mozu
 
 Forensic triage of Windows NTFS from `$MFT` and `$UsnJrnl:$J`, for when event logs are gone. It marks files outside a Windows baseline, runs Sigma rules and writes one self-contained HTML report. Pre-alpha (Phase 2 of [plan](docs/plan.md)).
 
@@ -15,11 +15,11 @@ Current limits: input is a raw `$MFT` and an optional raw `$J`, not a collection
 ## Quick start
 
 ```sh
-cargo build --release                      # requires Rust 1.98; binary: target/release/tool
+cargo build --release                      # requires Rust 1.98; binary: target/release/mozu
 
-./target/release/tool baseline build --vwr <vwr.csv> -o win11-24h2.fst
+./target/release/mozu baseline build --vwr <vwr.csv> -o win11-24h2.fst
 
-./target/release/tool analyze -i '$MFT' --usn '$J' \
+./target/release/mozu analyze -i '$MFT' --usn '$J' \
   --baseline win11-24h2.fst --rules testdata/rules \
   --from 2026-09-28 --to 2026-10-02 --tz +09:00 \
   -o report.html --csv timeline.csv --jsonl timeline.jsonl

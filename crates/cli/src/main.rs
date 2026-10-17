@@ -1,5 +1,5 @@
-//! `tool analyze -i <$MFT> [--usn <$J>] [--csv <out>] [-o <report.html>] [--jsonl <out>] [--baseline <file>] [--rules <dir>]...`
-//! and `tool baseline build`.
+//! `mozu analyze -i <$MFT> [--usn <$J>] [--csv <out>] [-o <report.html>] [--jsonl <out>] [--baseline <file>] [--rules <dir>]...`
+//! and `mozu baseline build`.
 
 use std::ffi::OsString;
 use std::fs::{File, OpenOptions};
@@ -42,7 +42,7 @@ enum Command {
         /// JSON Lines output path: one object per record, the CSV columns as typed fields.
         #[arg(long)]
         jsonl: Option<PathBuf>,
-        /// Baseline file from `tool baseline build`; without it the `baseline` column is empty.
+        /// Baseline file from `mozu baseline build`; without it the `baseline` column is empty.
         #[arg(long)]
         baseline: Option<PathBuf>,
         /// Directory of Sigma rules (`.yml`/`.yaml`, subdirectories included); may be repeated.

@@ -9,7 +9,7 @@ publish.workspace = true
 repository.workspace = true
 
 [[bin]]
-name = "tool" # placeholder until the tool is named (product.md §7)
+name = "mozu"
 path = "src/main.rs"
 
 [dependencies]

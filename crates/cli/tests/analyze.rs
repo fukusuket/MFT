@@ -52,7 +52,7 @@ fn small_volume_mft() -> Vec<u8> {
 }
 
 fn tool() -> Command {
-    Command::new(env!("CARGO_BIN_EXE_tool"))
+    Command::new(env!("CARGO_BIN_EXE_mozu"))
 }
 
 fn assert_no_temporary_outputs(dir: &std::path::Path) -> TestResult {
@@ -703,7 +703,7 @@ fn html_report_lists_findings_and_the_outside_baseline_files() -> TestResult {
     assert_eq!(data["summary"]["rules"], rule_files);
     let footer = &data["footer"];
     assert_eq!(footer["license"], "AGPL-3.0-only");
-    assert_eq!(footer["source_url"], "https://github.com/fukusuket/MFT");
+    assert_eq!(footer["source_url"], "https://github.com/fukusuket/mozu");
     let commit = footer["commit"].as_str().unwrap_or_default();
     assert!(
         commit == "unknown"
@@ -1689,7 +1689,7 @@ fn usn_rule_hits(
     usn_hits(&dir, usn_volume_mft(), &events, &rules, &baseline_args)
 }
 
-/// The `findings` cell of each USN row after `tool analyze` on `mft` and a `$J` of `events`
+/// The `findings` cell of each USN row after `mozu analyze` on `mft` and a `$J` of `events`
 /// (file entry, parent entry, reason, name), with `rules` and `extra` arguments.
 fn usn_hits(
     dir: &std::path::Path,
