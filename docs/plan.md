@@ -209,21 +209,21 @@ Goal: add `$J` to the same end-to-end path: USN events with their paths at the t
 
 ## Phase 3 (v0.3): collect
 
-Goal: M1 of [product.md §4](product.md#4-mvp): `mozu collect` on a live Windows 10/11 client writes `$MFT`, `$J`, `$Boot`, `$Secure:$SDS` and `meta.json` into one zip. The collector depends on no analysis crate and its output is checked with the current analyzer (`-i <$MFT> --usn <$J>`), so this phase needs nothing from the Phase 1 and 2 gate items (P1-6, P2-10) and runs while they are pending. Gate (H4): on the Windows VM (Phase 0), `mozu collect` writes a zip ≤ 100 MB whose files match the SHA-256 in its `meta.json`, and the extracted `$MFT` and `$J` analyze with the current CLI without a fatal error; collection time recorded.
+Goal: M1 of [product.md §4](product.md#4-mvp): `mozu collect` on a live Windows 10/11 client writes `$MFT`, `$J`, `$Boot`, `$Secure:$SDS` and `meta.json` into one zip. The collector depends on no analysis crate and its output is checked with the current analyzer (`-i <$MFT> --usn <$J>`), so this phase needs nothing from the Phase 1 and 2 gate items (P1-6, P2-10) and runs while they are pending. Gate (H4): on the Windows VM (Phase 0), `mozu collect` writes a zip ≤ 100 MB whose entries pass their CRC32 check and match the sizes in its `meta.json`, and the extracted `$MFT` and `$J` analyze with the current CLI without a fatal error; collection time recorded.
 
-- [ ] **ADR P3-0: zip and collection format**
+- [x] **ADR P3-0: zip and collection format** ([ADR 0024](adr/0024-collection-zip-format.md): `rawzip` + `flate2`, flat layout, `meta.json` without OS facts or hashes)
   - Proposal: one dependency for writing and, in Phase 4, reading zip (candidate `zip`, default features off, deflate only); `meta.json` fields (tool version, host name, OS build and UBR, edition, UI language, volume serial, `$J` first stored offset and sparse/lost bytes per ADR 0005, size and SHA-256 per file, UTC collection time), each read from the live system by the collector; limits for reading a zip later (entry count, uncompressed size, ratio, no paths outside the root). Collector code signing (product.md §7 Q4) and who holds the certificate.
   - Done when: ADR accepted, dependency vetted (`cargo vet`, `deny.toml`).
   - Out of scope: the code.
-- [ ] **P3-1 `collector` + `mozu collect`** (new crate `collector`, `cfg(windows)`; ADR 0005, ADR P3-0; M1)
+- [ ] **P3-1 `collector` + `mozu collect`** (new crate `collector`, `cfg(windows)`; ADR 0005, ADR 0024; M1)
   - Done when: `mozu collect [-v C:] [-o <zip>]` writes `$MFT`, `$J` (stored extents only), `$Boot`, `$Secure:$SDS` and `meta.json` into one zip, written atomically and never over an existing file; not elevated, a non-NTFS volume or a missing `$J` → a message, not a panic; `cargo check --target x86_64-pc-windows-msvc` in CI; a Windows runner job collects, checks each file against `meta.json`, extracts the zip and runs `mozu analyze -i <$MFT> --usn <$J>` on it. Pure parts (the `meta.json` writer, zip layout, sparse/lost byte counts) are unit-tested on every platform.
   - Out of scope: reading the zip in `analyze` (P4-1), using `meta.json` in analysis, VSS, volumes other than NTFS, remote collection, uploading.
-  - Human steps: approve the Windows CI job; sign the release binary (ADR P3-0).
+  - Human steps: approve the Windows CI job; sign the release binary (ADR 0024).
 - [ ] **P3-P Prune before the gate** (`collector`, `cli`; AGENTS.md)
-  - Done when: every `pub` item, `collect` flag and `meta.json` field is listed with M1, ADR P3-0 or the Phase 4 item that reads it; those without one are removed after human approval.
+  - Done when: every `pub` item, `collect` flag and `meta.json` field is listed with M1, ADR 0024 or the Phase 4 item that reads it; those without one are removed after human approval.
   - Out of scope: adding anything.
 - [ ] **P3-G Gate material**
-  - Done when: on the Windows VM, collection time, zip size, the hash check and the analysis of the extracted files are recorded in `docs/research/collect.md`. The human runs it again if needed and ticks the gate.
+  - Done when: on the Windows VM, collection time, zip size, the CRC32 and size check and the analysis of the extracted files are recorded in `docs/research/collect.md`. The human runs it again if needed and ticks the gate.
   - Out of scope: optimization beyond the gate.
 
 ## Phase 4 (v0.4, MVP): input, baselines, correlations, File detail
@@ -246,7 +246,7 @@ Decisions before the first slice of each track (H2):
   - Done when: ADR accepted.
   - Out of scope: the code.
 - [ ] **ADR P4-0b: host build and language from `$MFT`** (track B)
-  - Proposal: without `meta.json` (KAPE, Velociraptor, FTK input), infer the build and UBR from the highest `10.0.<build>.<ubr>` version among in-use `\Windows\WinSxS\amd64_microsoft-windows-os-kernel_*` folders, and the UI language from in-use `\Windows\System32\<ll-CC>\` folders; edition as P2-9e. `meta.json` wins when present. Facts only; no guessing beyond these names.
+  - Proposal: without `meta.json` (KAPE, Velociraptor, FTK input), infer the build and UBR from the highest `10.0.<build>.<ubr>` version among in-use `\Windows\WinSxS\amd64_microsoft-windows-os-kernel_*` folders, and the UI language from in-use `\Windows\System32\<ll-CC>\` folders; edition as P2-9e. The same for every input, `mozu collect` zips included (ADR 0024). Facts only; no guessing beyond these names.
   - Done when: ADR accepted, with the inference checked by hand on the local hosts (counts in the ADR).
   - Out of scope: registry parsing.
 - [ ] **ADR P4-0c: correlations** (track C)
@@ -267,8 +267,8 @@ Decisions before the first slice of each track (H2):
   - Out of scope: the code.
 
 Track A: input
-- [ ] **P4-1 Collection directory and zip input** (`cli`, `analyze`; ADR P3-0; M2)
-  - Done when: `-i` accepts a raw `$MFT` (as today), a directory or a zip, and finds `$MFT` and `$J` in the layouts of `mozu collect`, KAPE (`C/$MFT`, `C/$Extend/$UsnJrnl%3A$J`), Velociraptor (`uploads/ntfs/…/$MFT`, URL-encoded names) and FTK Imager exports; `meta.json` is read when present. `--usn` still overrides. A missing or ambiguous `$MFT` fails with a message naming the candidates. The zip limits of ADR P3-0 hold (tests with a zip bomb and a `../` entry). Synthetic layouts in tests, no evidence. Output byte-identical whether the input is a directory or the same files zipped.
+- [ ] **P4-1 Collection directory and zip input** (`cli`, `analyze`; ADR 0024; M2)
+  - Done when: `-i` accepts a raw `$MFT` (as today), a directory or a zip, and finds `$MFT` and `$J` in the layouts of `mozu collect`, KAPE (`C/$MFT`, `C/$Extend/$UsnJrnl%3A$J`), Velociraptor (`uploads/ntfs/…/$MFT`, URL-encoded names) and FTK Imager exports; `meta.json` is read when present. `--usn` still overrides. A missing or ambiguous `$MFT` fails with a message naming the candidates. The zip rules of ADR 0024 hold (tests with a zip bomb and a `../` entry). Synthetic layouts in tests, no evidence. Output byte-identical whether the input is a directory or the same files zipped.
   - Out of scope: `$SDS` and `$Boot` use (P4-11), E01/VHDX images, multi-volume collections.
 - [ ] **P4-2 USN V4** (`usn-parse`; M3)
   - Done when: V4 range-tracking records are parsed (`FileRef`s, reason, USN, extent count) and counted on the Summary instead of being a `Diagnostic`; they give no event and no row (V3 records carry the same operation). Proptest and fuzz target cover V4. Synthetic V4 records from the test builder.
