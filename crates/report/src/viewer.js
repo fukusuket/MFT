@@ -74,7 +74,7 @@ const viewer = (function () {
   }
 
   // The lowercased text of every column a row shows, for the search. The state is left out:
-  // its chips filter it.
+  // its drop-down filters it.
   function joined(columns) {
     return columns.filter((c) => c !== null && c !== undefined).join("\n").toLowerCase();
   }
@@ -193,9 +193,9 @@ const viewer = (function () {
       screens[shown].redraws.forEach((redraw) => redraw());
     }
 
-    // A list screen's filters, most used first: search and time range, the level, folder and
-    // state chips with their counts in `rows`, then the rule. Each control writes its key of the state
-    // and reads it back on every draw.
+    // A list screen's filter bar, most used first: search and time range, then the level, rule,
+    // folder and state drop-downs with their counts in `rows`, the count node it returns, and
+    // Clear. Each control writes its key of the state and reads it back on every draw.
     function filters(screen, rows, keys) {
       const bar = screen.node.appendChild(el("div", undefined, "filters"));
       const inputs = [
@@ -208,60 +208,56 @@ const viewer = (function () {
         input.addEventListener("input", () => go({ ...state, [key]: input.value }));
         return [key, input];
       });
-      bar.appendChild(el("button", "Clear", "clear")).addEventListener("click", () =>
-        go({ ...parseHash(""), tab: state.tab }),
-      );
-
-      const chips = [];
-      for (const [key, values, title, of] of [
-        ["level", LEVELS, "Level", (r) => r.level],
-        ["folder", FOLDERS, "Folder", (r) => r.folder],
-        ["state", STATES, "State", (r) => fileState(r)[0]],
-      ]) {
-        if (!keys.includes(key)) continue;
+      // Each drop-down's options: all, then the values in `rows` with their counts.
+      const counted = (values, of) => {
         const counts = new Map();
         rows.map(of).forEach((v) => counts.set(v, (counts.get(v) || 0) + 1));
-        const line = screen.node.appendChild(el("div", title + ": ", "chips"));
-        for (const value of values.filter((v) => counts.has(v))) {
-          const chip = line.appendChild(el("button", value + " " + counts.get(value), "chip"));
-          chip.setAttribute("data-key", key);
-          chip.setAttribute("data-value", value);
-          chip.addEventListener("click", () => go({ ...state, [key]: state[key] === value ? "" : value }));
-          chips.push([key, value, chip]);
-        }
-      }
-
-      let rule = null;
-      if (keys.includes("rule")) {
+        return values.filter((v) => counts.has(v)).map((v) => [v, v + " (" + counts.get(v) + ")"]);
+      };
+      // Rules by level as in LEVELS, then title, then id, so the order is total.
+      const ruleOptions = () => {
         const rules = new Map(); // id → its level, title and row count
         rows.forEach((r) => {
           const seen = rules.get(r.id) || { level: r.level, title: r.title, n: 0 };
           rules.set(r.id, { ...seen, n: seen.n + 1 });
         });
-        // Level as in LEVELS, then title, then id, so the order is total.
         const compare = (x, y) => (x < y ? -1 : x > y ? 1 : 0);
         const order = ([ia, a], [ib, b]) =>
           LEVELS.indexOf(a.level) - LEVELS.indexOf(b.level) || compare(a.title, b.title) || compare(ia, ib);
-        rule = screen.node.appendChild(el("label", "Rule ")).appendChild(el("select", undefined, "filter-rule"));
-        const options = [["", "all rules"], ...[...rules].sort(order).map(([id, r]) => [id, r.title + " (" + r.n + ")"])];
-        for (const [value, label] of options) rule.appendChild(el("option", label)).value = value;
-        rule.addEventListener("change", () => go({ ...state, rule: rule.value }));
-      }
+        return [...rules].sort(order).map(([id, r]) => [id, r.title + " (" + r.n + ")"]);
+      };
+      const selects = [
+        ["level", "Level", () => counted(LEVELS, (r) => r.level)],
+        ["rule", "Rule", ruleOptions],
+        ["folder", "Folder", () => counted(FOLDERS, (r) => r.folder)],
+        ["state", "State", () => counted(STATES, (r) => fileState(r)[0])],
+      ]
+        .filter(([key]) => keys.includes(key))
+        .map(([key, title, options]) => {
+          const select = bar.appendChild(el("label", title + " ")).appendChild(el("select", undefined, "filter-" + key));
+          for (const [value, label] of [["", "all " + key + "s"], ...options()]) select.appendChild(el("option", label)).value = value;
+          select.addEventListener("change", () => go({ ...state, [key]: select.value }));
+          return [key, select];
+        });
+      const count = bar.appendChild(el("span", undefined, "count"));
+      bar.appendChild(el("button", "Clear", "clear")).addEventListener("click", () =>
+        go({ ...parseHash(""), tab: state.tab }),
+      );
 
       screen.redraws.push(() => {
         for (const [key, input] of inputs) {
           if (input.value !== state[key]) input.value = state[key];
           if (key !== "q") input.className = "filter-" + key + (validTime(state[key]) ? "" : " invalid");
         }
-        for (const [key, value, chip] of chips) chip.className = state[key] === value ? "chip selected" : "chip";
-        if (rule !== null) {
-          // A rule from a shared link that this report lacks is offered, so the filter shows.
-          if (!Array.from(rule.children).some((o) => o.value === state.rule)) {
-            rule.appendChild(el("option", state.rule + " (not in this report)")).value = state.rule;
+        for (const [key, select] of selects) {
+          // A value from a shared link that this report lacks is offered, so the filter shows.
+          if (!Array.from(select.children).some((o) => o.value === state[key])) {
+            select.appendChild(el("option", state[key] + " (not in this report)")).value = state[key];
           }
-          if (rule.value !== state.rule) rule.value = state.rule;
+          if (select.value !== state[key]) select.value = state[key];
         }
       });
+      return count;
     }
 
     // A virtual-scroll list: only the rows in view exist in the DOM (ADR 0020). `fill` puts
@@ -296,6 +292,7 @@ const viewer = (function () {
         );
       }
       viewport.addEventListener("scroll", paint);
+      window.addEventListener("resize", paint); // the list fills the window, so its height follows
       return (next) => {
         rows = next;
         spacer.style.height = Math.min(rows.length * ROW_HEIGHT, SPACER_CAP) + "px";
@@ -323,9 +320,8 @@ const viewer = (function () {
 
     function outside(screen) {
       const node = screen.node;
-      filters(screen, data.outside, ["folder", "state"]);
+      const count = filters(screen, data.outside, ["folder", "state"]);
       const texts = data.outside.map(outsideText); // built at load, so no search pays for it
-      const count = node.appendChild(el("p", undefined, "count"));
       const show = list(
         node,
         ["Created ($SI, UTC)", "State", "Path"],
@@ -346,9 +342,8 @@ const viewer = (function () {
 
     function findings(screen) {
       const node = screen.node;
-      filters(screen, data.findings, ["level", "rule", "folder", "state"]);
+      const count = filters(screen, data.findings, ["level", "rule", "folder", "state"]);
       const texts = data.findings.map(findingText); // built at load, so no search pays for it
-      const count = node.appendChild(el("p", undefined, "count"));
       const show = list(node, ["Level", "State", "Time (UTC)", "Path", "Folder", "Rule"], (row, f) => {
         row.appendChild(
           line([

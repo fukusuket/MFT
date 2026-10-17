@@ -32,8 +32,11 @@ const heap = Math.round(process.memoryUsage().heapUsed / 2 ** 20);
 
 const app = document.getElementById("app");
 const screen = (name) => app.findAll("screen").find((s) => s.getAttribute("data-screen") === name);
-const chip = (name, key, value) =>
-  screen(name).findAll("chip").find((c) => c.getAttribute("data-key") === key && c.getAttribute("data-value") === value);
+const choose = (name, key, value) => {
+  const select = screen(name).find("filter-" + key);
+  select.value = value;
+  select.dispatch("change");
+};
 const type = (name, key, value) => {
   const input = screen(name).find("filter-" + key);
   input.value = value;
@@ -53,13 +56,9 @@ const clear = (name) => screen(name).find("clear").dispatch("click");
 
 const level = base.findings[0].level;
 const folder = base.outside[0].folder;
-timed("findings: level chip", () => chip("findings", "level", level).dispatch("click"), () => clear("findings"));
-timed("findings: folder chip", () => chip("findings", "folder", base.findings[0].folder).dispatch("click"), () => clear("findings"));
-timed("findings: rule", () => {
-  const rule = screen("findings").find("filter-rule");
-  rule.value = base.findings[0].id;
-  rule.dispatch("change");
-}, () => clear("findings"));
+timed("findings: level", () => choose("findings", "level", level), () => clear("findings"));
+timed("findings: folder", () => choose("findings", "folder", base.findings[0].folder), () => clear("findings"));
+timed("findings: rule", () => choose("findings", "rule", base.findings[0].id), () => clear("findings"));
 timed("findings: time from", () => type("findings", "from", base.findings[0].created?.slice(0, 10) ?? "2000-01-01"), () => clear("findings"));
 timed("findings: search, first", () => type("findings", "q", "exe"), () => clear("findings"), 1);
 timed("findings: search", () => type("findings", "q", "svchost"), () => clear("findings"));
@@ -67,7 +66,7 @@ timed("findings: search", () => type("findings", "q", "svchost"), () => clear("f
 t = performance.now();
 app.findAll("tab")[2].dispatch("click");
 results.push(["outside: open tab (filter + draw)", ms(t)]);
-timed("outside: folder chip", () => chip("outside", "folder", folder).dispatch("click"), () => clear("outside"));
+timed("outside: folder", () => choose("outside", "folder", folder), () => clear("outside"));
 timed("outside: search, first", () => type("outside", "q", "exe"), () => clear("outside"), 1);
 timed("outside: search", () => type("outside", "q", "svchost"), () => clear("outside"));
 
