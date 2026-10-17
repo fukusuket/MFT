@@ -1,45 +1,43 @@
 # Use cases
 
-How the tool is used, step by step. Users and needs: [product.md §2](product.md#2-target-users). Outputs: [architecture.md](architecture.md#outputs).
+Recipes for the current CLI. Setup and options: [README](../README.md#quick-start). Users: [product.md §2](product.md#2-target-users). Output columns: [architecture.md](architecture.md#outputs).
 
-Status: **today** works with the current CLI; **Phase 3** needs an item in [plan.md](plan.md).
-
-| # | Use case | User | Status |
-|---|---|---|---|
-| U1 | Ransomware or EDR alert: what happened on this host? | IT admin (primary) | today, with files copied by KAPE/Velociraptor/FTK Imager; `mozu collect` in Phase 3 |
-| U2 | Were event logs or Prefetch deleted? | IT admin, CSIRT | today |
-| U3 | What is new on this host that Windows does not ship? | IT admin, CSIRT | today |
-| U4 | Same rules and baseline across many hosts | CSIRT/SOC | today (one run per host) |
-| U5 | Raw records into my own tools | DFIR | today |
-| U6 | Own rules or SigmaHQ rules | CSIRT, DFIR | today |
-| U7 | Own golden image as the baseline | Low-budget security staff | today, from a VanillaWindowsReference CSV |
+| # | I want to… | Section |
+|---|---|---|
+| U1 | See what happened after a ransomware or EDR alert | [First look](#u1-first-look-after-an-incident) |
+| U2 | Know whether event logs or Prefetch were deleted | [Log deletion](#u2-log-or-trace-deletion) |
+| U3 | List what Windows does not ship | [Outside the baseline](#u3-outside-the-baseline) |
+| U4 | Run the same check on many hosts | [Many hosts](#u4-many-hosts) |
+| U5 | Use the rows in `jq` or Timeline Explorer | [Own tools](#u5-own-tools-jq-timeline-explorer) |
+| U6 | Add my own or SigmaHQ rules | [Own rules](#u6-own-rules) |
+| U7 | Use my golden image as the baseline | [Own baseline](#u7-own-baseline) |
 
 ## U1 First look after an incident
 
-1. Use KAPE, Velociraptor or FTK Imager to copy the raw `$MFT` and, when available, the `$UsnJrnl:$J` data stream. Extract them as individual files: the current CLI does not read a collection directory or zip. Pass the `$MFT` file to `-i` and the `$J` file to `--usn`; quote names containing `$` so the shell does not expand them. `mozu collect` is planned for Phase 3.
-2. Build or pick a baseline of the **same edition** (client vs Server); the Summary warns on a mismatch.
-3. Run with a window around the alert, in the host's local offset:
+1. **Collect** the raw `$MFT` and `$UsnJrnl:$J` with KAPE, Velociraptor or FTK Imager. Extract them as plain files (zip and collection directories are not read yet).
+2. **Baseline:** use one of the same edition (client vs Server). The Summary warns on a mismatch.
+3. **Run** with a window around the alert, in the host's UTC offset:
    ```sh
    mozu analyze -i '$MFT' --usn '$J' --baseline win11-24h2.fst --rules testdata/rules \
      --from 2026-09-28 --to 2026-10-02 --tz +09:00 -o PC-042.html
    ```
-4. Open `PC-042.html`. Summary → click the critical/high count → Findings, ordered level → time.
-5. For each finding read the facts line (`deleted`, ADS, `seen`, hints); select the row to see why it matched.
-6. Check the Summary window warning: no USN data before a date means no findings can exist there, not that nothing happened.
+4. **Open** `PC-042.html` → Summary → click the critical/high count → Findings.
+5. **Read** each finding's facts (`deleted`, ADS, `seen`, hints). Select the row to see why it matched.
+6. **Check the window warning.** "No USN data before X" means findings cannot exist there, not that nothing happened.
 
-Next steps lie outside NTFS metadata (who created a file, whether it ran, its content): collect the file, check EDR, Prefetch, services.
+**Next:** NTFS metadata cannot say who created a file, whether it ran, or what it contains. Collect the file; check EDR, Prefetch and services.
 
 ## U2 Log or trace deletion
 
-Event logs wiped → log-based tools see nothing. With `--usn`, `FILE_DELETE` of `C:\Windows\System32\winevt\Logs\*.evtx` and of Prefetch files are findings (sample rules `event_log_deleted.yml`, `prefetch_deleted.yml`). Run without `--from/--to` to see the whole journal.
+Run with `--usn`. Deleted `C:\Windows\System32\winevt\Logs\*.evtx` and Prefetch files become findings (`event_log_deleted.yml`, `prefetch_deleted.yml`). Omit `--from`/`--to` to see the whole journal.
 
 ## U3 Outside the baseline
 
-The Outside-baseline tab lists files whose path is not in the baseline, with counts per folder (`public`, `downloads`, `temp`, `programdata`, …). Click a folder, then narrow by time or path. Files appear here even when no rule matched: unknown tools have no signature.
+Open the **Outside-baseline** tab: files not in the baseline, counted per folder (`public`, `downloads`, `temp`, `programdata`, …). Click a folder, then narrow by time or path. Files show here even without a rule match, so unknown tools are not missed.
 
 ## U4 Many hosts
 
-Run the same command per host with the same `--baseline` and `--rules`; output is byte-identical for the same input, so reports can be diffed and archived.
+Same `--baseline` and `--rules` per host. Same input → same bytes, so reports can be diffed and archived.
 
 ```sh
 for h in hosts/*/; do
@@ -50,38 +48,48 @@ done
 
 ## U5 Own tools (jq, Timeline Explorer)
 
-`--csv` and `--jsonl` hold every row, in or out of the window; `in_window` marks the window.
+`--csv` and `--jsonl` hold every row; `in_window` marks the window.
 
 ```sh
-# Findings only: top level, time, path
+# Findings: level, time, path
 jq -c 'select(.findings != []) | [.findings[0].level, .event_time // .si_created, .path]' timeline.jsonl
 # Deleted files outside the baseline
 jq -c 'select(.deleted and .baseline == "outside") | .path' timeline.jsonl
 ```
 
-The CSV opens in Timeline Explorer or a spreadsheet (formula cells are neutralized).
+The CSV opens in Timeline Explorer or a spreadsheet; formula cells are neutralized.
 
 ## U6 Own rules
 
-`--rules` takes any number of directories of `.yml`/`.yaml` Sigma rules, subdirectories included. Use the standard fields `TargetFilename`, `SourceFilename`, `CreationUtcTime`, `UtcTime`; logsources `file_event`, `file_rename`, `file_change`, `file_delete`, or `service: baseline_outside`. Rules that cannot match are skipped and listed in `*.skipped-rules.csv` / `.jsonl` with the reason ([architecture.md](architecture.md#baseline-and-sigma)).
+Pass `--rules` once per directory (`.yml`/`.yaml`, subdirectories included).
 
 ```sh
 mozu analyze -i '$MFT' --usn '$J' --rules testdata/rules --rules ~/sigma/rules/windows/file -o report.html
 ```
 
+| Supported | Values |
+|---|---|
+| Fields | `TargetFilename`, `SourceFilename`, `CreationUtcTime`, `UtcTime` |
+| Logsources | `file_event`, `file_rename`, `file_change`, `file_delete`, `service: baseline_outside` |
+
+Rules that cannot match are skipped and listed with the reason in `*.skipped-rules.csv` / `.jsonl` ([reasons](architecture.md#baseline-and-sigma)).
+
 ## U7 Own baseline
 
-Export a clean installation of the same Windows edition with VanillaWindowsReference. The CSV must contain a `FullName` column; the builder uses entries under `C:\` and ignores other volumes. Then run:
+Export a clean install of the same edition with VanillaWindowsReference. The CSV needs a `FullName` column; only `C:\` entries are used.
 
 ```sh
 mozu baseline build --vwr golden-image.csv -o golden.fst
 mozu analyze -i '$MFT' --baseline golden.fst -o report.html
 ```
 
-Ready-made baselines per build and `--baseline auto` come in Phase 3.
+Keep in mind:
+- The `.fst` stores no edition or build. The report shows its filename; the edition warning is a folder-based check, not a build match.
+- A VWR export can miss files. "Outside baseline" is a lead, not evidence of compromise.
 
-The baseline file does not contain edition/build metadata. Its displayed name is its filename, and the report's edition warning is a directory-based compatibility check, not proof that the Windows build matches. A VWR export can omit files, so an outside-baseline result is a review lead, not by itself evidence of compromise.
+Ready-made baselines and `--baseline auto` come in Phase 3.
 
 ## Not covered
 
-From NTFS metadata alone: the creating user or process, whether a file was executed, file content, activity older than the USN journal ([product.md §1](product.md#1-problem)). Not built yet: zip/collection input, `mozu collect`, Timeline and File detail screens, correlation rules, en/ja ([plan.md](plan.md) Phase 3).
+- From NTFS metadata: creating user or process, execution, file content, activity older than the USN journal ([product.md §1](product.md#1-problem)).
+- Not built yet: zip/collection input, `mozu collect`, Timeline and File detail screens, correlation rules, en/ja ([plan.md](plan.md) Phase 3).
