@@ -20,35 +20,6 @@ mozu reads NTFS metadata (`$MFT` and `$UsnJrnl:$J`), hides files that a clean Wi
 
 Same input → byte-identical output.
 
-## Quick start
-
-**1. Build** (Rust 1.98):
-
-```sh
-cargo build --release        # → target/release/mozu
-```
-
-**2. Get the evidence.** Copy the raw `$MFT` and, if you can, `$UsnJrnl:$J` from the host with KAPE, Velociraptor or FTK Imager. Extract them as two plain files.
-
-**3. Build a baseline** from a [VanillaWindowsReference](https://github.com/AndrewRathbun/VanillaWindowsReference) CSV of the **same Windows edition** (client vs Server):
-
-```sh
-mozu baseline build --vwr <vwr.csv> -o win11-24h2.fst
-```
-
-**4. Analyze.** Set the window around the incident, in the host's UTC offset:
-
-```sh
-mozu analyze -i '$MFT' --usn '$J' \
-  --baseline win11-24h2.fst --rules testdata/rules \
-  --from 2026-09-28 --to 2026-10-02 --tz +09:00 \
-  -o report.html
-```
-
-Quote names with `$` so the shell does not expand them.
-
-**5. Open `report.html`.** Start at Summary, click the critical/high count, read each finding.
-
 ## What it cannot tell you
 
 - Who or which process created a file, or whether it ran
