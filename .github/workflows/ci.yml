@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 
 # Least privilege (ADR 0007 P8): jobs get only what they need.
 permissions: {}
