@@ -1,6 +1,6 @@
 # Plan
 
-Current phase: **2**. Tick items as they land (same change). Every item states **Done when** (checkable) and **Out of scope**; agents do nothing outside it. Flow per item: H1 tests approved → TDD cycles on a branch → H3 human review and merge (AGENTS.md). Scope: [product.md](product.md). Design: [architecture.md](architecture.md).
+Current phase: **2** (gate pending); Phase 3 runs alongside, as it does not depend on the Phase 1–2 gates. Tick items as they land (same change). Every item states **Done when** (checkable) and **Out of scope**; agents do nothing outside it. Flow per item: H1 tests approved → TDD cycles on a branch → H3 human review and merge (AGENTS.md). Scope: [product.md](product.md). Design: [architecture.md](architecture.md).
 
 ## Phases
 
@@ -9,7 +9,8 @@ Current phase: **2**. Tick items as they land (same change). Every item states *
 | 0 | Spikes S1–S4, `ntfs-types` | ✅ 2026-10-06. ADR 0003–0006 accepted; AGENTS.md, `deny.toml`, `NOTICE` updated | 1–1.5 wk |
 | 1 (v0.1) | Walking skeleton: `$MFT` → baseline (VanillaWindowsReference Win11 24H2) → a few Sigma rules → minimal HTML + CSV | Outside-baseline files in the window < 10 % of all files on a real host; 1 GB `$MFT` in ≤ 1 min, ≤ 2 GB RAM | 2–3 wk |
 | **2 (v0.2)** | USN + Rewind, facts, time window, own generic rules + loading external rule sets, viewer (Summary, Findings, Outside-baseline) | A non-expert decides the next step from a report; Rewind resolution ≥ usnjrnl_rewind | 4–6 wk |
-| 3 (v0.3, MVP) | `collect`, own baseline CI, Win10 22H2 / Win11 25H2, correlations, Timeline, File detail, en/ja, accuracy CI | MVP success criteria in [product.md §4](product.md#4-mvp) | 6–8 wk |
+| 3 (v0.3) | `collect`: `collector` crate, zip with `meta.json` (independent of the Phase 1–2 gates) | On the Windows VM: zip ≤ 100 MB, files match `meta.json`, extracted `$MFT`/`$J` analyze without a fatal error | 1–2 wk |
+| 4 (v0.4, MVP) | Zip/directory input, own baseline CI, Win10 22H2 / Win11 25H2, correlations, Timeline, File detail, en/ja, accuracy CI | MVP success criteria in [product.md §4](product.md#4-mvp) | 6–8 wk |
 
 ## Phase 0
 
@@ -206,6 +207,146 @@ Goal: add `$J` to the same end-to-end path: USN events with their paths at the t
   - Done when: the Rewind comparison (P2-3) is summarized, and a report from Simulated-Case-1 is ready for a non-expert session. The human runs the session and ticks the gate.
   - Out of scope: optimization beyond the gate.
 
+## Phase 3 (v0.3): collect
+
+Goal: M1 of [product.md §4](product.md#4-mvp): `mozu collect` on a live Windows 10/11 client writes `$MFT`, `$J`, `$Boot`, `$Secure:$SDS` and `meta.json` into one zip. The collector depends on no analysis crate and its output is checked with the current analyzer (`-i <$MFT> --usn <$J>`), so this phase needs nothing from the Phase 1 and 2 gate items (P1-6, P2-10) and runs while they are pending. Gate (H4): on the Windows VM (Phase 0), `mozu collect` writes a zip ≤ 100 MB whose entries pass their CRC32 check and match the sizes in its `meta.json`, and the extracted `$MFT` and `$J` analyze with the current CLI without a fatal error; collection time recorded.
+
+- [x] **ADR P3-0: zip and collection format** ([ADR 0024](adr/0024-collection-zip-format.md): `rawzip` + `flate2`, flat layout, `meta.json` without OS facts or hashes)
+  - Proposal: one dependency for writing and, in Phase 4, reading zip (candidate `zip`, default features off, deflate only); `meta.json` fields (tool version, host name, OS build and UBR, edition, UI language, volume serial, `$J` first stored offset and sparse/lost bytes per ADR 0005, size and SHA-256 per file, UTC collection time), each read from the live system by the collector; limits for reading a zip later (entry count, uncompressed size, ratio, no paths outside the root). Collector code signing (product.md §7 Q4) and who holds the certificate.
+  - Done when: ADR accepted, dependency vetted (`cargo vet`, `deny.toml`).
+  - Out of scope: the code.
+- [x] **P3-1 `collector` + `mozu collect`** (new crate `collector`, `cfg(windows)`; ADR 0005, ADR 0024; M1)
+  - Done when: `mozu collect [-v C:] [-o <zip>]` writes `$MFT`, `$J` (stored extents only), `$Boot`, `$Secure:$SDS` and `meta.json` into one zip, written atomically and never over an existing file; not elevated, a non-NTFS volume or a missing `$J` → a message, not a panic; `cargo check --target x86_64-pc-windows-msvc` in CI; a Windows runner job collects, checks each file against `meta.json`, extracts the zip and runs `mozu analyze -i <$MFT> --usn <$J>` on it. Pure parts (the `meta.json` writer, zip layout, sparse/lost byte counts) are unit-tested on every platform.
+  - Out of scope: reading the zip in `analyze` (P4-1), using `meta.json` in analysis, VSS, volumes other than NTFS, remote collection, uploading.
+  - Human steps: approve the Windows CI job; sign the release binary (ADR 0024).
+- [ ] **P3-P Prune before the gate** (`collector`, `cli`; AGENTS.md)
+  - Done when: every `pub` item, `collect` flag and `meta.json` field is listed with M1, ADR 0024 or the Phase 4 item that reads it; those without one are removed after human approval.
+  - Out of scope: adding anything.
+- [ ] **P3-G Gate material**
+  - Done when: on the Windows VM, collection time, peak memory (the whole `$MFT` is held in memory), zip size, the CRC32 and size check and the analysis of the extracted files are recorded in `docs/research/collect.md`. The human runs it again if needed and ticks the gate.
+  - Out of scope: optimization beyond the gate.
+
+## Phase 4 (v0.4, MVP): input, baselines, correlations, File detail
+
+Goal: the rest of the MVP of [product.md §4](product.md#4-mvp): the primary user runs `mozu analyze` on the zip from `mozu collect` with a matching ready-made baseline and decides the next step from one HTML report. Each slice keeps `mozu analyze` working end to end. Gate (H4): the MVP success criteria in product.md §4, measured by P4-G.
+
+Starts after the Phase 1, 2 and 3 gates are ticked: P4-20 extends the P1-6 generator, track D builds on the P2-10 session, and P4-1 and P4-6 use the Phase 3 zip. Tracks A–D can run in parallel after their ADRs; E comes last. Viewer items draw on [research/viewer-review.md](research/viewer-review.md) (its Stage A leftovers U1–U4, U8 and Stage B).
+
+| Track | Items | Product |
+|---|---|---|
+| A Input | P4-1, P4-2 | M2, M3 |
+| B Baseline | ADR P4-0a, ADR P4-0b, P4-3 – P4-7 | M5 |
+| C Detection | ADR P4-0c, P4-8 – P4-11 | M6, facts |
+| D Report | ADR P4-0d, ADR P4-0e, P4-12 – P4-18 | M8, M9 |
+| E Gate | ADR P4-0f, P4-19 – P4-21, P4-P, P4-G | §4 criteria |
+
+Decisions before the first slice of each track (H2):
+- [ ] **ADR P4-0a: baseline file and source** (track B)
+  - Proposal: a baseline file carries a small header (format and normalization version, Windows edition, build and UBR, language, source, build date) before the `fst` bytes, so `--baseline auto`, the nearest-UBR fallback and the Summary need no side file. Ready-made baselines are built from a clean install **plus** updates (Windows Update, Defender, Edge, a few days of idle use), collected with `mozu collect` from a VM, via `mozu baseline build --mft <$MFT>`; VWR CSV stays as a source. Normalization stays a Rust table: the build tool is the same crate, so there is still no second consumer (revisits ADR 0012's "YAML in Phase 3"). Where the baselines are released (`mozu-baselines` repo release vs a directory next to the binary).
+  - Done when: ADR accepted.
+  - Out of scope: the code.
+- [ ] **ADR P4-0b: host build and language from `$MFT`** (track B)
+  - Proposal: without `meta.json` (KAPE, Velociraptor, FTK input), infer the build and UBR from the highest `10.0.<build>.<ubr>` version among in-use `\Windows\WinSxS\amd64_microsoft-windows-os-kernel_*` folders, and the UI language from in-use `\Windows\System32\<ll-CC>\` folders; edition as P2-9e. The same for every input, `mozu collect` zips included (ADR 0024). Facts only; no guessing beyond these names.
+  - Done when: ADR accepted, with the inference checked by hand on the local hosts (counts in the ADR).
+  - Out of scope: registry parsing.
+- [ ] **ADR P4-0c: correlations** (track C)
+  - Proposal: support `event_count` and `temporal_ordered` (M6) through `rsigma-eval`; other types stay skipped with a reason. Only USN events take part (they have an event time; `$MFT` rows do not). Time is whole seconds (ADR 0003 #3). A correlation finding is attached to each contributing row, with the correlation's own `level`; its `group-by` may use only emitted fields. Events are fed in USN order, so output stays byte-identical.
+  - Done when: ADR accepted.
+  - Out of scope: the code, new fields such as host or user.
+- [ ] **ADR P4-0d: a finding is a file** (track D; viewer-review.md U1)
+  - Proposal: one Findings item per file (entry + sequence) with all its matched rules and USN events; its level is the highest matched level and its time the file's first event; order stays level → time; rows without an entry stay one per event; Summary counts become file counts. Nothing is scored. CSV/JSONL stay one row per record.
+  - Done when: ADR accepted. ADR 0023 accepted or rejected in the same review.
+  - Out of scope: the code.
+- [ ] **ADR P4-0e: Hayabusa/Takajo-compatible outputs** (track D; M9)
+  - Proposal: `--findings-jsonl` writes one object per finding with Hayabusa's JSONL timeline keys (`Timestamp`, `RuleTitle`, `Level`, `Computer`, `Channel` = `NTFS`, `EventID` = USN reason or `MFT`, `RecordID`, `Details`, `RuleID`), so Takajo and Timeline Explorer can merge it with Hayabusa output. Whether the existing `--csv` keeps its columns (recommended: yes; it is the full timeline) and how `Computer` is filled (`meta.json` host name, else empty).
+  - Done when: ADR accepted, field mapping checked against a current Hayabusa JSONL sample.
+  - Out of scope: the code, Hayabusa CSV profiles other than the default.
+- [ ] **ADR P4-0f: attack corpus and accuracy measurement** (track E)
+  - Proposal: the corpus is public images and generated hosts (Simulated-Case-1, Yamato, plus an Atomic Red Team run on a Win11 VM), kept outside the repo; for each host a label file lists the attack-related paths (written by the human, outside the repo). `cargo run -p xtask -- accuracy <report.jsonl> <labels>` prints shown/missed per label (Findings or Outside-baseline). "Accuracy CI" means this check runs on demand on the maintainer's machine, not on GitHub (evidence never leaves it).
+  - Done when: ADR accepted, corpus and label owners named.
+  - Out of scope: the code.
+
+Track A: input
+- [ ] **P4-1 Collection directory and zip input** (`cli`, `analyze`; ADR 0024; M2)
+  - Done when: `-i` accepts a raw `$MFT` (as today), a directory or a zip, and finds `$MFT` and `$J` in the layouts of `mozu collect`, KAPE (`C/$MFT`, `C/$Extend/$UsnJrnl%3A$J`), Velociraptor (`uploads/ntfs/…/$MFT`, URL-encoded names) and FTK Imager exports; `meta.json` is read when present. `--usn` still overrides. A missing or ambiguous `$MFT` fails with a message naming the candidates. The zip rules of ADR 0024 hold (tests with a zip bomb and a `../` entry). Synthetic layouts in tests, no evidence. Output byte-identical whether the input is a directory or the same files zipped.
+  - Out of scope: `$SDS` and `$Boot` use (P4-11), E01/VHDX images, multi-volume collections.
+- [ ] **P4-2 USN V4** (`usn-parse`; M3)
+  - Done when: V4 range-tracking records are parsed (`FileRef`s, reason, USN, extent count) and counted on the Summary instead of being a `Diagnostic`; they give no event and no row (V3 records carry the same operation). Proptest and fuzz target cover V4. Synthetic V4 records from the test builder.
+  - Out of scope: detection on ranges, extent offsets in outputs.
+
+Track B: baseline
+- [ ] **P4-3 Baseline from a clean `$MFT`** (`baseline`, `cli`; ADR P4-0a)
+  - Done when: `mozu baseline build --mft <$MFT | collection> -o <file>` builds a baseline from in-use file paths with the same normalization as analysis; output byte-identical across runs; the file header of ADR P4-0a is written and read (old header-less files refused with a message); `--vwr` keeps working and writes the same header with the metadata given on the command line.
+  - Out of scope: `auto` selection, release packaging.
+- [ ] **P4-4 Normalization for updated images** (`baseline`; viewer-review.md R-1)
+  - Done when: versioned folders of WindowsApps packages, Edge and Defender platform updates normalize to placeholders (one unit test each, look-alike names that must not normalize); normalization version bumped (old baselines refused); on Simulated-Case-1 and the Windows VM the outside-baseline share in the window is re-measured against the < 5 % target and recorded in `docs/research/baseline-poc.md`.
+  - Out of scope: rule exclusions for the VC++ runtime (judge them by the baseline, not by rules).
+- [ ] **P4-5 `--baseline auto` and nearest build** (`baseline`, `analyze`, `cli`, `report`; ADR P4-0b)
+  - Done when: `--baseline auto` picks, from a baselines directory, the file with the host's edition and language and the same build, nearest UBR at or below the host's (else nearest above); Summary shows the chosen file, its metadata and the host's inferred build, and warns on no match (analysis then runs without a baseline). `--baseline <file>` still works and is checked against the host the same way (warning, not failure). Unit tests for the selection order.
+  - Out of scope: downloading baselines.
+- [ ] **P4-6 Ready-made baselines** (data; human builds the VMs)
+  - Done when: baselines for Win10 22H2, Win11 24H2 and Win11 25H2 x64, en-US and ja-JP, Pro, built by P4-3 from updated VMs; each recorded (build, UBR, source, SHA-256) in `docs/research/baseline-poc.md`; outside-baseline share on a used VM of each build recorded.
+  - Out of scope: Server and other editions (product.md §4 out of scope).
+  - Human steps: install and update the six VMs, run `mozu collect`, keep the zips outside the repo.
+- [ ] **P4-7 Baseline build CI** (`.github/workflows` or the `mozu-baselines` repo per ADR P4-0a)
+  - Done when: from the stored collections, CI rebuilds every baseline and checks the result byte-identical to the released file; a baseline release lists build, UBR and SHA-256.
+  - Out of scope: building the VMs in CI (GitHub runners are Server only).
+  - Human steps: create the repo or release, store the collections.
+
+Track C: detection
+- [ ] **P4-8 Correlations in `sigma` and `detect`** (ADR P4-0c; M6)
+  - Done when: `event_count` and `temporal_ordered` rules load and fire on USN events; other correlation types are skipped with `correlation type not supported: …`; a correlation whose base rule is skipped is skipped too; findings carry the correlation's id, title and level; tests with synthetic journals (threshold reached, not reached, out of order, timespan edge); output byte-identical across runs. Changes the expectation of `correlation_and_filter_documents_are_skipped_but_the_rules_beside_them_load` (H5, approved with this item).
+  - Out of scope: filter rules, `value_count` and other types, new fields.
+- [ ] **P4-9 Own correlation rules** (`testdata/rules`; ADR 0016, ADR 0019; product.md P1, primary user = ransomware responder)
+  - Done when: 2–3 generic correlation rules, list and levels approved at H1; candidates: many files renamed to one new extension in a short time, many deletes in one folder in a short time, `.evtx` delete followed by Prefetch delete. Each has an e2e test and a near-miss; per-rule counts on the 12 local hosts in the hand-over (0 expected on hosts without ransomware).
+  - Out of scope: product names, thresholds per host.
+- [ ] **P4-10 Rule YAML as evidence** (`sigma`, `report`; ADR 0023, if accepted)
+  - Done when: as ADR 0023's Consequences; the detail pane shows the matched rule's YAML; the rule text escapes control characters except line breaks and tabs (attacker-name tests still pass); output byte-identical across runs.
+  - Out of scope: en/ja rule texts, `explain/` texts.
+- [ ] **P4-11 Owner SID from `$Secure:$SDS`** (new crate `sds-parse` or `mft-parse`, decided at H1; `analyze`, `report`; product.md §6)
+  - Done when: `$SI` `security_id` → `$SDS` entry → owner SID; well-known SIDs get their name (`S-1-5-18` SYSTEM, `S-1-5-32-544` Administrators); the owner is a fact (CSV/JSONL column `owner`, HTML detail) and never orders findings; `$SDS` absent → empty; corrupt entries → `Diagnostic`; proptest no-panic and a fuzz target.
+  - Out of scope: DACLs, resolving domain SIDs to names, a Sigma field for the owner.
+
+Track D: report
+- [ ] **P4-12 One item per file in Findings** (`report`; ADR P4-0d; viewer-review.md U1, U2)
+  - Done when: per the ADR; the time cell names its source (`$SI created`, `$FN created`, `USN <reason>`); a rename item shows the old path (U4); desktop6 high items drop from 62 to the file count (hand-over). H5: Summary count expectations change, approved with this item. CSV/JSONL unchanged; output byte-identical across runs.
+  - Out of scope: File detail, Outside-baseline.
+- [ ] **P4-13 File detail** (`mft-parse`, `analyze`, `report`; product.md §6; viewer-review.md U3, H4, H5, H8, H9)
+  - Done when: from a Findings or Outside-baseline row, a detail view shows: path and state, matched rules (P4-10), all `$SI`/`$FN` times (M/A/C/E), size, owner (P4-11), ADS, hints as sentences (U8), the file's USN lifecycle in order, `$MFT` entry and sequence, and "what NTFS cannot tell" (product.md §1). Kept in the URL hash. JS tests for opening, hash round trip and lifecycle order.
+  - Out of scope: resident data content, hex view.
+- [ ] **P4-14 Timeline** (`report`; product.md §6; viewer-review.md H3)
+  - Done when: a Timeline tab lists in-window USN events and `$MFT` times of finding and outside-baseline files by time; a row offers "± 5 min" around its time; the pivot is in the URL hash; same virtual scroll and performance as P2-9c (1 M rows, ≤ 200 ms filter).
+  - Out of scope: a time zone switch, the activity sparkline, a "same folder" pivot (the search does it).
+- [ ] **P4-15 Outside-baseline by directory** (`report`; viewer-review.md H2; product.md P7)
+  - Done when: the top-most directories not in the baseline are listed with file count and first created time, in an explicit order (first created, then path); clicking one filters the list; rows show deleted, MFT-only/USN-only, hints and `$FN` created (H8); on desktop6 the three remote-access tool folders are on the first screen (hand-over).
+  - Out of scope: ranking by count, product names, the privilege grouping of product.md §6 (removed from product.md in this item unless the human keeps it).
+- [ ] **P4-16 Summary guidance** (`report`; product.md §6)
+  - Done when: OS build (P4-5), baseline used and its metadata, key events (critical/high files, deleted `.evtx`) and "what this report cannot tell you" are shown; no scores or rankings.
+  - Out of scope: the sparkline, new counts.
+- [ ] **P4-17 en/ja** (`report`, `cli`; M8)
+  - Done when: `--lang en|ja` selects the viewer's UI text (labels, warnings, fact sentences, "what NTFS cannot tell"); one table of strings in `viewer.js`, a JS test that every key exists in both languages; default `en`; output byte-identical per language. Rule titles and YAML stay as written.
+  - Out of scope: CSV/JSONL headers, translating rules, a language switch inside the report.
+- [ ] **P4-18 Findings JSONL for Hayabusa/Takajo** (`report`, `cli`; ADR P4-0e; M9)
+  - Done when: `--findings-jsonl` writes the ADR's fields, one finding per line, level → time; a sample loads in Takajo and merges with a Hayabusa timeline (checked by the human); atomic write and overwrite checks as P1-7; byte-identical across runs.
+  - Out of scope: Hayabusa CSV profiles, changing `--csv`/`--jsonl`.
+
+Track E: measurement and gate
+- [ ] **P4-19 Accuracy measurement** (`xtask`; ADR P4-0f)
+  - Done when: `xtask accuracy` as in the ADR, with unit tests on synthetic labels; results per corpus host recorded in `docs/research/accuracy.md` against the ≥ 80 % target, with each missed label explained (no evidence-derived names beyond what the ADR allows).
+  - Out of scope: tuning rules inside this item (follow-up items name the gap).
+- [ ] **P4-20 Performance with `$J`** (`xtask`; extends P1-6)
+  - Done when: the synthetic generator also writes a 32 MB `$J`; `mozu analyze` on 1 GB `$MFT` + 32 MB `$J` with all own rules and a baseline is ≤ 1 min and ≤ 2 GB peak RSS on the Mac, recorded in `docs/research/baseline-poc.md`.
+  - Out of scope: optimization beyond the target.
+- [ ] **P4-21 User manual** (`docs/`; product.md §4 "using only the manual")
+  - Done when: one page in en and ja: download, `mozu collect` on the client, `mozu analyze` with `--baseline auto`, reading the report, next steps; README and usecases.md link it and drop what it replaces.
+  - Out of scope: developer docs.
+- [ ] **P4-P Prune before the gate** (all crates; AGENTS.md)
+  - Done when: every feature, `pub` item, CLI flag, report row and output field is listed with the need or test that justifies it; those without one are removed after human approval. Candidates: `--mask-users`, `mozu rules list`, `mozu baseline list|update`, `mozu rules update` from product.md §5 (not built unless an item needs them), `-i <$MFT> --usn` vs directory input.
+  - Out of scope: adding anything.
+- [ ] **P4-G Gate material**
+  - Done when: each product.md §4 criterion has a measured value with its source (P3-G, P4-4/P4-6, P4-19, P4-20); usability session plan for ≥ 3 non-experts with the manual (as `research/phase2-gate.md`). The human runs the sessions and ticks the gate.
+  - Out of scope: optimization beyond the gate.
+
 ## Risks
 
 | Risk | Fallback |
@@ -215,3 +356,7 @@ Goal: add `$J` to the same end-to-end path: USN events with their paths at the t
 | `ntfs-reader` cannot skip the `$J` sparse region | `ntfs-core` `NtfsFs` approach |
 | VanillaWindowsReference lacks hidden/system files | Supplement with one clean-VM `$MFT` in Phase 1 |
 | Drift from ported `ntfs-core` code | Record source commit in `NOTICE`; review upstream periodically |
+| Build or language cannot be inferred from `$MFT` (ADR P4-0b) | `meta.json` from `mozu collect`; otherwise `--baseline <file>` with the Summary warning |
+| Updated-image baselines still leave > 5 % outside | More normalization (P4-4); revisit the target with the measurement, as in Phase 1 |
+| No client Windows in CI | Baseline VMs and collector checks on the maintainer's VM; CI only rebuilds from stored collections |
+| `rsigma-eval` correlations behave differently from Hayabusa | Synthetic journal tests in P4-8; pin the version |

@@ -87,9 +87,9 @@ Keep in mind:
 - The `.fst` stores no edition or build. The report shows its filename; the edition warning is a folder-based check, not a build match.
 - A VWR export can miss files. "Outside baseline" is a lead, not evidence of compromise.
 
-Ready-made baselines and `--baseline auto` come in Phase 3.
+Ready-made baselines and `--baseline auto` come in Phase 4.
 
 ## Not covered
 
 - From NTFS metadata: creating user or process, execution, file content, activity older than the USN journal ([product.md §1](product.md#1-problem)).
-- Not built yet: zip/collection input, `mozu collect`, Timeline and File detail screens, correlation rules, en/ja ([plan.md](plan.md) Phase 3).
+- Not built yet: zip/collection input, `mozu collect`, Timeline and File detail screens, correlation rules, en/ja ([plan.md](plan.md) Phases 3–4).

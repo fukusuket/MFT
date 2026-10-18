@@ -1,0 +1,22 @@
+[package]
+name = "collector"
+description = "Copy $MFT, $J, $Boot and $SDS from a live NTFS volume into one zip"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+ntfs-types = { path = "../ntfs-types" }
+flate2 = "=1.1.10" # ADR 0024
+rawzip = "=0.5.2" # ADR 0024
+serde = { version = "=1.0.229", features = ["derive"] } # ADR 0010
+serde_json = "=1.0.151" # ADR 0010
+
+[target.'cfg(windows)'.dependencies]
+ntfs-reader = "=0.6.0" # ADR 0005
+thiserror = "=2.0.21" # ADR 0010
+
+[lints]
+workspace = true

@@ -27,9 +27,9 @@ Same input → byte-identical output.
 - Activity older than the USN journal
 - "Outside baseline" is a lead, not proof of compromise
 
-## Not yet (Phase 3)
+## Not yet
 
-Zip or collection-directory input, `mozu collect`, ready-made baselines, correlation rules, Timeline and File detail screens, Japanese UI. USN V4 records are reported, not parsed.
+`mozu collect` (Phase 3). Zip or collection-directory input, ready-made baselines, correlation rules, Timeline and File detail screens, Japanese UI (Phase 4). USN V4 records are reported, not parsed.
 
 ## Docs
 
