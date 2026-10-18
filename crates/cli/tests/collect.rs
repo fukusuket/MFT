@@ -43,3 +43,28 @@ fn collect_refuses_an_existing_output_and_leaves_it_unchanged() -> TestResult {
     assert_eq!(std::fs::read(&zip)?, b"keep");
     Ok(())
 }
+
+#[test]
+fn collect_accepts_only_a_drive_letter_and_a_colon_as_the_volume() -> TestResult {
+    let dir = scratch("collect_bad_volume")?;
+    let zip = dir.join("c.zip");
+    let _ = std::fs::remove_file(&zip);
+    for volume in [
+        "PhysicalDrive0",
+        r"C:\",
+        r"GLOBALROOT\Device\X",
+        "C:\u{1b}[2J",
+        "1:",
+    ] {
+        let out = Command::new(env!("CARGO_BIN_EXE_mozu"))
+            .args(["collect", "-v", volume, "-o"])
+            .arg(&zip)
+            .output()?;
+        assert!(!out.status.success());
+        let stderr = String::from_utf8(out.stderr)?;
+        assert!(stderr.contains("drive letter"), "{volume:?}: {stderr}");
+        assert!(!stderr.contains('\u{1b}'));
+    }
+    assert!(std::fs::read_dir(&dir)?.next().is_none());
+    Ok(())
+}

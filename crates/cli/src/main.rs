@@ -114,14 +114,11 @@ fn main() -> anyhow::Result<()> {
     }
 }
 
-fn collect(
-    #[cfg_attr(
-        not(windows),
-        expect(unused_variables, reason = "collected on Windows only")
-    )]
-    volume: &str,
-    output: Option<PathBuf>,
-) -> anyhow::Result<()> {
+fn collect(volume: &str, output: Option<PathBuf>) -> anyhow::Result<()> {
+    // Opened as `\\.\<volume>` with administrator rights: nothing but a drive.
+    if !matches!(volume.as_bytes(), [letter, b':'] if letter.is_ascii_alphabetic()) {
+        anyhow::bail!("-v must be a drive letter and a colon, e.g. C:");
+    }
     let started = now();
     let host = std::env::var("COMPUTERNAME").unwrap_or_default();
     let output = output.unwrap_or_else(|| PathBuf::from(zip_name(&host, started)));

@@ -215,7 +215,7 @@ Goal: M1 of [product.md §4](product.md#4-mvp): `mozu collect` on a live Windows
   - Proposal: one dependency for writing and, in Phase 4, reading zip (candidate `zip`, default features off, deflate only); `meta.json` fields (tool version, host name, OS build and UBR, edition, UI language, volume serial, `$J` first stored offset and sparse/lost bytes per ADR 0005, size and SHA-256 per file, UTC collection time), each read from the live system by the collector; limits for reading a zip later (entry count, uncompressed size, ratio, no paths outside the root). Collector code signing (product.md §7 Q4) and who holds the certificate.
   - Done when: ADR accepted, dependency vetted (`cargo vet`, `deny.toml`).
   - Out of scope: the code.
-- [ ] **P3-1 `collector` + `mozu collect`** (new crate `collector`, `cfg(windows)`; ADR 0005, ADR 0024; M1)
+- [x] **P3-1 `collector` + `mozu collect`** (new crate `collector`, `cfg(windows)`; ADR 0005, ADR 0024; M1)
   - Done when: `mozu collect [-v C:] [-o <zip>]` writes `$MFT`, `$J` (stored extents only), `$Boot`, `$Secure:$SDS` and `meta.json` into one zip, written atomically and never over an existing file; not elevated, a non-NTFS volume or a missing `$J` → a message, not a panic; `cargo check --target x86_64-pc-windows-msvc` in CI; a Windows runner job collects, checks each file against `meta.json`, extracts the zip and runs `mozu analyze -i <$MFT> --usn <$J>` on it. Pure parts (the `meta.json` writer, zip layout, sparse/lost byte counts) are unit-tested on every platform.
   - Out of scope: reading the zip in `analyze` (P4-1), using `meta.json` in analysis, VSS, volumes other than NTFS, remote collection, uploading.
   - Human steps: approve the Windows CI job; sign the release binary (ADR 0024).
@@ -223,7 +223,7 @@ Goal: M1 of [product.md §4](product.md#4-mvp): `mozu collect` on a live Windows
   - Done when: every `pub` item, `collect` flag and `meta.json` field is listed with M1, ADR 0024 or the Phase 4 item that reads it; those without one are removed after human approval.
   - Out of scope: adding anything.
 - [ ] **P3-G Gate material**
-  - Done when: on the Windows VM, collection time, zip size, the CRC32 and size check and the analysis of the extracted files are recorded in `docs/research/collect.md`. The human runs it again if needed and ticks the gate.
+  - Done when: on the Windows VM, collection time, peak memory (the whole `$MFT` is held in memory), zip size, the CRC32 and size check and the analysis of the extracted files are recorded in `docs/research/collect.md`. The human runs it again if needed and ticks the gate.
   - Out of scope: optimization beyond the gate.
 
 ## Phase 4 (v0.4, MVP): input, baselines, correlations, File detail

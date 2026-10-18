@@ -30,6 +30,10 @@ pub enum Error {
         name: &'static str,
         bytes: u64,
     },
+    #[error(
+        "{volume}: no $UsnJrnl found, but {corrupt} MFT records are unreadable; it may be one of them"
+    )]
+    JournalUnreadable { volume: String, corrupt: u64 },
     #[error("{volume} has no MFT record {record}")]
     MissingRecord { volume: String, record: u64 },
     #[error(transparent)]
@@ -38,7 +42,8 @@ pub enum Error {
 
 /// Writes the zip of `volume` (e.g. `C:`) to `writer` and returns it with the `meta.json`
 /// written. `tool` and `host` go into `meta.json`; `now` is read once, when the copy ends.
-/// A volume without a USN journal gives no `$J` entry and `j: None`.
+/// A volume without a USN journal gives no `$J` entry and `j: None`; when `$UsnJrnl` is not found
+/// and some MFT records are unreadable, it is an error, since the journal may be among them.
 pub fn collect<W: Write>(
     volume: &str,
     writer: W,
@@ -66,6 +71,12 @@ pub fn collect<W: Write>(
             name.parent_number() == EXTEND && name.to_os_string() == OsStr::new("$UsnJrnl")
         })
     });
+    if journal.is_none() && mft.corrupt_records() > 0 {
+        return Err(Error::JournalUnreadable {
+            volume: path,
+            corrupt: mft.corrupt_records(),
+        });
+    }
     let streams = [
         ("$MFT", Some(record(MFT)?), None),
         ("$J", journal, Some("$J")),
